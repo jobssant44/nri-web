@@ -7,6 +7,8 @@ export default function NRIs({ usuario }) {
   const [filtro, setFiltro] = useState('');
   const [expandido, setExpandido] = useState(null);
   const [carregando, setCarregando] = useState(true);
+  const [dataInicio, setDataInicio] = useState('');
+  const [dataFim, setDataFim] = useState('');
 
   useEffect(() => { carregarNRIs(); }, []);
 
@@ -15,15 +17,23 @@ export default function NRIs({ usuario }) {
     const snap = await getDocs(collection(db, 'nris'));
     const lista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     lista.sort((a, b) => {
-      const toDate = s => {
-        if (!s) return new Date(0);
-        if (s.includes('/')) { const [d,m,y] = s.split('/'); return new Date(`${y}-${m}-${d}`); }
-        return new Date(s);
+      const toMs = s => {
+        if (!s) return 0;
+        if (s.includes('/')) { const [d,m,y] = s.split('/'); return new Date(`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`).getTime(); }
+        return new Date(s).getTime();
       };
-      return toDate(b.dataRecebimento) - toDate(a.dataRecebimento);
+      const diff = toMs(b.dataRecebimento) - toMs(a.dataRecebimento);
+      return diff !== 0 ? diff : (b.id > a.id ? 1 : -1);
     });
     setNris(lista);
     setCarregando(false);
+  }
+
+  function parseDDMMAAAA(s) {
+    if (!s || s.length !== 10) return null;
+    const [d, m, y] = s.split('/');
+    const dt = new Date(`${y}-${m}-${d}`);
+    return isNaN(dt) ? null : dt;
   }
 
   async function excluir(id, nf) {
@@ -32,11 +42,24 @@ export default function NRIs({ usuario }) {
     carregarNRIs();
   }
 
-  const filtradas = nris.filter(n =>
-    n.notaFiscal?.includes(filtro) ||
-    n.motorista?.toLowerCase().includes(filtro.toLowerCase()) ||
-    n.produtos?.some(p => p.nomeProduto?.toLowerCase().includes(filtro.toLowerCase()))
-  );
+  const dtInicio = parseDDMMAAAA(dataInicio);
+  const dtFim = parseDDMMAAAA(dataFim);
+
+  const filtradas = nris.filter(n => {
+    const texto = filtro.toLowerCase();
+    const passaTexto = !filtro || (
+      n.notaFiscal?.includes(filtro) ||
+      n.motorista?.toLowerCase().includes(texto) ||
+      n.produtos?.some(p =>
+        p.nomeProduto?.toLowerCase().includes(texto) ||
+        p.validade?.includes(filtro)
+      )
+    );
+    const dtNri = parseDDMMAAAA(n.dataRecebimento);
+    const passaInicio = !dtInicio || !dtNri || dtNri >= dtInicio;
+    const passaFim = !dtFim || !dtNri || dtNri <= dtFim;
+    return passaTexto && passaInicio && passaFim;
+  });
 
   if (carregando) return <div style={{ textAlign: 'center', padding: 40, color: '#666' }}>Carregando...</div>;
 
@@ -48,11 +71,31 @@ export default function NRIs({ usuario }) {
       </div>
 
       <input
-        style={{ width: '100%', padding: 12, border: '1px solid #ddd', borderRadius: 8, fontSize: 14, marginBottom: 16, boxSizing: 'border-box' }}
-        placeholder="Buscar por NF, motorista ou produto..."
+        style={{ width: '100%', padding: 12, border: '1px solid #ddd', borderRadius: 8, fontSize: 14, marginBottom: 10, boxSizing: 'border-box' }}
+        placeholder="Buscar por NF, motorista, produto ou validade..."
         value={filtro}
         onChange={e => setFiltro(e.target.value)}
       />
+
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16 }}>
+        <input
+          style={{ flex: 1, padding: 10, border: '1px solid #ddd', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }}
+          placeholder="De: DD/MM/AAAA"
+          value={dataInicio}
+          maxLength={10}
+          onChange={e => setDataInicio(e.target.value)}
+        />
+        <input
+          style={{ flex: 1, padding: 10, border: '1px solid #ddd', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }}
+          placeholder="Até: DD/MM/AAAA"
+          value={dataFim}
+          maxLength={10}
+          onChange={e => setDataFim(e.target.value)}
+        />
+        {(dataInicio || dataFim) && (
+          <button onClick={() => { setDataInicio(''); setDataFim(''); }} style={{ ...btnSecundario, color: '#aaa' }}>✕ Limpar</button>
+        )}
+      </div>
 
       {filtradas.length === 0 && <p style={{ color: '#999', textAlign: 'center', padding: 40 }}>Nenhuma NRI encontrada.</p>}
 
