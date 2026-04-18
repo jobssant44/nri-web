@@ -114,13 +114,8 @@ export default function NRIs({ usuario }) {
     const snap = await getDocs(collection(db, 'nris'));
     const lista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     lista.sort((a, b) => {
-      const toMs = s => {
-        if (!s) return 0;
-        if (s.includes('/')) { const [d,m,y] = s.split('/'); return new Date(`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`).getTime(); }
-        return new Date(s).getTime();
-      };
-      const diff = toMs(b.dataRecebimento) - toMs(a.dataRecebimento);
-      return diff !== 0 ? diff : (b.id > a.id ? 1 : -1);
+      const ts = x => x.criadoEm ? new Date(x.criadoEm).getTime() : 0;
+      return ts(b) - ts(a);
     });
     setNris(lista);
     setCarregando(false);
