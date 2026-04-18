@@ -18,7 +18,11 @@ const GRUPOS = [
   {
     label: '🔄 Reabastecimento / Ressuprimento',
     todos: true,
-    itens: [],
+    itens: [
+      { path: '/reab/dashboard', label: '📊 Dashboard IV',         todos: true },
+      { path: '/reab/lancar',    label: '➕ Lançar Abastecimento',  todos: true },
+      { path: '/reab/config',    label: '⚙️ Configurar Picking',    supervisor: true },
+    ],
   },
   {
     label: '📅 Gestão de Idade',

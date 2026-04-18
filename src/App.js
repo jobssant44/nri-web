@@ -9,6 +9,9 @@ import Usuarios from './pages/Usuarios';
 import Importar from './pages/Importar';
 import Exportar from './pages/Exportar';
 import Sidebar from './components/Sidebar';
+import LancarAbastecimento from './pages/LancarAbastecimento';
+import DashboardIV from './pages/DashboardIV';
+import ConfigPicking from './pages/ConfigPicking';
 
 export default function App() {
   const [usuario, setUsuario] = useState(null);
@@ -43,6 +46,9 @@ export default function App() {
             <Route path="/usuarios" element={usuario.nivel === 'supervisor' ? <Usuarios /> : <Navigate to="/" />} />
             <Route path="/importar" element={usuario.nivel === 'supervisor' ? <Importar /> : <Navigate to="/" />} />
             <Route path="/exportar" element={usuario.nivel === 'supervisor' ? <Exportar /> : <Navigate to="/" />} />
+            <Route path="/reab/dashboard" element={<DashboardIV />} />
+            <Route path="/reab/lancar" element={<LancarAbastecimento usuario={usuario} />} />
+            <Route path="/reab/config" element={usuario.nivel === 'supervisor' ? <ConfigPicking /> : <Navigate to="/" />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </div>
