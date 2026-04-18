@@ -51,7 +51,7 @@ function gerarBlocoEtiqueta(nri, produto) {
   const qtdTT = cxPlt > 0 ? (plt * cxPlt) + cx : (plt + cx) || produto.quantidade || '';
   const preBloquio = calcularData(produto.validade, 45);
   const bloqueio = calcularData(produto.validade, 30);
-  const curva = produto.curva || 'A';
+  const curva = produto.curva || 'C';
   return `
     <div class="etiqueta">
       <div class="linha1">
