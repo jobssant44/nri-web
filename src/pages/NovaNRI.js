@@ -83,7 +83,9 @@ export default function NovaNRI({ usuario }) {
     if (!codProduto || !nomeProduto) { alert('Selecione um produto.'); return; }
     if (!qtdPlt && !qtdCx) { alert('Preencha ao menos Qtd PLT ou Qtd CX.'); return; }
     if (!validarData(validade)) { alert('Data de validade inválida.'); return; }
-    setProdutos([...produtos, { codProduto, nomeProduto, qtdPlt, qtdCx, validade }]);
+    const produtoBase = baseProdutos.find(p => p.codigo === codProduto);
+    const cxPorPlt = produtoBase?.cxPorPlt || '';
+    setProdutos([...produtos, { codProduto, nomeProduto, qtdPlt, qtdCx, validade, cxPorPlt }]);
     setCodProduto(''); setNomeProduto(''); setQtdPlt(''); setQtdCx(''); setValidade(''); setSugestoes([]);
   }
 

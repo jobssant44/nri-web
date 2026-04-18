@@ -17,7 +17,7 @@ export default function Importar() {
       const dados = linhas.slice(1).map(l => {
         const cols = l.split(';');
         if (abaAtiva === 'produtos') {
-          return { codigo: cols[0]?.trim(), nome: cols[1]?.trim() };
+          return { codigo: cols[0]?.trim(), nome: cols[1]?.trim(), cxPorPlt: cols[21]?.trim() || '' };
         } else {
           return { codigo: cols[0]?.trim(), curva: cols[1]?.trim() };
         }

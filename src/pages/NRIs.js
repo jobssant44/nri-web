@@ -45,7 +45,10 @@ const CSS_ETIQUETA = `
 `;
 
 function gerarBlocoEtiqueta(nri, produto) {
-  const qtdTT = (parseInt(produto.qtdPlt || '0') + parseInt(produto.qtdCx || '0')) || produto.quantidade || '';
+  const plt = parseInt(produto.qtdPlt || '0');
+  const cx = parseInt(produto.qtdCx || '0');
+  const cxPlt = parseInt(produto.cxPorPlt || '0');
+  const qtdTT = cxPlt > 0 ? (plt * cxPlt) + cx : (plt + cx) || produto.quantidade || '';
   const preBloquio = calcularData(produto.validade, 45);
   const bloqueio = calcularData(produto.validade, 30);
   const curva = produto.curva || 'A';
