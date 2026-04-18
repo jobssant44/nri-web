@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 
 function calcularData(dataStr, diasSubtrair) {
@@ -106,6 +106,8 @@ export default function NRIs({ usuario }) {
   const [dataFim, setDataFim] = useState('');
   const [modoSelecao, setModoSelecao] = useState(false);
   const [selecionados, setSelecionados] = useState({});
+  const [editandoValidade, setEditandoValidade] = useState(null);
+  const [novaValidade, setNovaValidade] = useState('');
 
   useEffect(() => { carregarNRIs(); }, []);
 
@@ -132,6 +134,21 @@ export default function NRIs({ usuario }) {
     if (!window.confirm(`Deseja excluir a NRI da NF: ${nf}?`)) return;
     await deleteDoc(doc(db, 'nris', id));
     carregarNRIs();
+  }
+
+  async function salvarValidade(nri, prodIndex) {
+    if (!novaValidade || novaValidade.length !== 10) {
+      alert('Informe a data no formato DD/MM/AAAA.'); return;
+    }
+    const novosProdutos = nri.produtos.map((p, i) =>
+      i === prodIndex ? { ...p, validade: novaValidade } : p
+    );
+    try {
+      await updateDoc(doc(db, 'nris', nri.id), { produtos: novosProdutos });
+      setEditandoValidade(null);
+      setNovaValidade('');
+      carregarNRIs();
+    } catch (e) { alert('Erro: ' + e.message); }
   }
 
   function toggleSelecao(nri, produto, idx) {
@@ -286,7 +303,34 @@ export default function NRIs({ usuario }) {
                         <td style={{ padding: '8px 12px' }}>{p.nomeProduto}</td>
                         <td style={{ padding: '8px 12px' }}>{p.qtdPlt || '-'}</td>
                         <td style={{ padding: '8px 12px' }}>{p.qtdCx || '-'}</td>
-                        <td style={{ padding: '8px 12px', color: '#E31837', fontWeight: 'bold' }}>{p.validade}</td>
+                        <td style={{ padding: '8px 12px' }}>
+                          {editandoValidade === `${item.id}-${i}` ? (
+                            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                              <input
+                                value={novaValidade}
+                                maxLength={10}
+                                onChange={e => {
+                                  const n = e.target.value.replace(/[^0-9]/g, '');
+                                  let f = n;
+                                  if (n.length > 2) f = n.slice(0,2) + '/' + n.slice(2);
+                                  if (n.length > 4) f = n.slice(0,2) + '/' + n.slice(2,4) + '/' + n.slice(4,8);
+                                  setNovaValidade(f);
+                                }}
+                                style={{ width: 110, padding: '4px 8px', border: '1px solid #E31837', borderRadius: 6, fontSize: 13 }}
+                                placeholder="DD/MM/AAAA"
+                              />
+                              <button onClick={() => salvarValidade(item, i)} style={{ ...btnPDF, padding: '4px 10px' }}>✓</button>
+                              <button onClick={() => { setEditandoValidade(null); setNovaValidade(''); }} style={{ ...btnSecundario, padding: '4px 10px' }}>✕</button>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ color: '#E31837', fontWeight: 'bold' }}>{p.validade}</span>
+                              {usuario.nivel === 'supervisor' && !modoSelecao && (
+                                <button onClick={() => { setEditandoValidade(`${item.id}-${i}`); setNovaValidade(p.validade || ''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0 }} title="Editar validade">✏️</button>
+                              )}
+                            </div>
+                          )}
+                        </td>
                         <td style={{ padding: '8px 12px' }}>
                           {!modoSelecao && (
                             <button onClick={() => imprimirEtiquetas([{ nri: item, produto: p }])} style={btnPDFPequeno}>
