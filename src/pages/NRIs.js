@@ -2,6 +2,98 @@ import { useState, useEffect } from 'react';
 import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 
+function calcularData(dataStr, diasSubtrair) {
+  if (!dataStr || dataStr.length !== 10) return '';
+  const [d, m, y] = dataStr.split('/').map(Number);
+  const data = new Date(y, m - 1, d);
+  data.setDate(data.getDate() - diasSubtrair);
+  return String(data.getDate()).padStart(2, '0') + '/' +
+    String(data.getMonth() + 1).padStart(2, '0') + '/' +
+    data.getFullYear();
+}
+
+const CSS_ETIQUETA = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  @page { size: A4; margin: 8mm; }
+  body { font-family: Arial, sans-serif; }
+  .pagina { height: 277mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; }
+  .pagina:last-child { page-break-after: avoid; }
+  .etiqueta { border: 2px solid #000; width: 100%; flex: 1; display: flex; flex-direction: column; margin-bottom: 4mm; }
+  .etiqueta:last-child { margin-bottom: 0; }
+  .linha1 { display: flex; align-items: stretch; border-bottom: 2px solid #000; flex: 0; }
+  .curva { font-size: 80px; font-weight: bold; width: 100px; min-width: 100px; display: flex; align-items: center; justify-content: center; border-right: 2px solid #000; }
+  .centro { flex: 1; padding: 8px; text-align: center; border-right: 2px solid #000; }
+  .cod { font-size: 18px; font-weight: bold; text-decoration: underline; margin-bottom: 6px; }
+  .cod span { font-size: 38px; }
+  .nome { font-size: 16px; font-weight: bold; }
+  .logo { width: 120px; min-width: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px; gap: 4px; }
+  .revenda { font-size: 13px; font-weight: bold; color: #1a5fa8; text-align: center; }
+  .ambev { font-size: 24px; font-weight: bold; color: #1a5fa8; }
+  .linha2 { border-bottom: 2px solid #000; padding: 0; text-align: center; flex: 1; display: flex; align-items: center; justify-content: center; }
+  .venc-label { font-size: 28px; font-weight: bold; }
+  .venc-data { font-size: 64px; font-weight: bold; margin-left: 10px; }
+  .linha3 { display: flex; border-bottom: 2px solid #000; flex: 0; }
+  .cel { flex: 1; padding: 8px; text-align: center; border-right: 1px solid #000; }
+  .cel:last-child { border-right: none; }
+  .cel-label { font-size: 14px; font-weight: bold; }
+  .cel-valor { font-size: 16px; font-weight: bold; text-decoration: underline; }
+  .linha4 { display: flex; flex: 0; }
+  .col { flex: 1; padding: 8px; text-align: center; border-right: 1px solid #000; }
+  .col:last-child { border-right: none; }
+  .col-label { font-size: 12px; text-decoration: underline; }
+  .col-valor { font-size: 14px; font-weight: bold; }
+`;
+
+function gerarBlocoEtiqueta(nri, produto) {
+  const qtdTT = (parseInt(produto.qtdPlt || '0') + parseInt(produto.qtdCx || '0')) || produto.quantidade || '';
+  const preBloquio = calcularData(produto.validade, 45);
+  const bloqueio = calcularData(produto.validade, 30);
+  const curva = produto.curva || 'A';
+  return `
+    <div class="etiqueta">
+      <div class="linha1">
+        <div class="curva">${curva}</div>
+        <div class="centro">
+          <div class="cod">Cód: <span>${produto.codProduto}</span></div>
+          <div class="nome">${produto.nomeProduto}</div>
+        </div>
+        <div class="logo">
+          <div class="revenda">REVENDA CBM CARPINA</div>
+          <div class="ambev">ambev</div>
+        </div>
+      </div>
+      <div class="linha2">
+        <span class="venc-label">Venc: </span>
+        <span class="venc-data">${produto.validade}</span>
+      </div>
+      <div class="linha3">
+        <div class="cel"><div class="cel-label">Receb.:</div><div class="cel-valor">${nri.dataRecebimento}</div></div>
+        <div class="cel"><div class="cel-label">Pré-Bloq.:</div><div class="cel-valor">${preBloquio}</div></div>
+        <div class="cel"><div class="cel-label">Bloqueio:</div><div class="cel-valor">${bloqueio}</div></div>
+      </div>
+      <div class="linha4">
+        <div class="col"><div class="col-label">Conferente</div><div class="col-valor">${(nri.conferente || '').toUpperCase()}</div></div>
+        <div class="col"><div class="col-label">Qtde TT</div><div class="col-valor">${qtdTT}</div></div>
+        <div class="col"><div class="col-label">Origem</div><div class="col-valor">${(nri.origem || '').toUpperCase()}</div></div>
+        <div class="col"><div class="col-label">Motorista</div><div class="col-valor">${(nri.motorista || '').toUpperCase()}</div></div>
+        <div class="col"><div class="col-label">Placa do Veíc.</div><div class="col-valor">${(nri.placaCavalo || '').toUpperCase()}</div></div>
+      </div>
+    </div>`;
+}
+
+function imprimirEtiquetas(itens) {
+  const paginas = itens.map(({ nri, produto }) => {
+    const bloco = gerarBlocoEtiqueta(nri, produto);
+    return `<div class="pagina">${bloco}${bloco}${bloco}</div>`;
+  }).join('');
+  const html = `<html><head><meta charset="utf-8"/><style>${CSS_ETIQUETA}</style></head><body>${paginas}</body></html>`;
+  const janela = window.open('', '_blank');
+  janela.document.write(html);
+  janela.document.close();
+  janela.focus();
+  setTimeout(() => janela.print(), 500);
+}
+
 export default function NRIs({ usuario }) {
   const [nris, setNris] = useState([]);
   const [filtro, setFiltro] = useState('');
@@ -9,6 +101,8 @@ export default function NRIs({ usuario }) {
   const [carregando, setCarregando] = useState(true);
   const [dataInicio, setDataInicio] = useState('');
   const [dataFim, setDataFim] = useState('');
+  const [modoSelecao, setModoSelecao] = useState(false);
+  const [selecionados, setSelecionados] = useState({});
 
   useEffect(() => { carregarNRIs(); }, []);
 
@@ -42,6 +136,21 @@ export default function NRIs({ usuario }) {
     carregarNRIs();
   }
 
+  function toggleSelecao(nri, produto, idx) {
+    const chave = `${nri.id}-${idx}`;
+    setSelecionados(prev => {
+      const novo = { ...prev };
+      if (novo[chave]) delete novo[chave];
+      else novo[chave] = { nri, produto };
+      return novo;
+    });
+  }
+
+  function cancelarSelecao() {
+    setModoSelecao(false);
+    setSelecionados({});
+  }
+
   const dtInicio = parseDDMMAAAA(dataInicio);
   const dtFim = parseDDMMAAAA(dataFim);
 
@@ -61,13 +170,22 @@ export default function NRIs({ usuario }) {
     return passaTexto && passaInicio && passaFim;
   });
 
+  const qtdSelecionados = Object.keys(selecionados).length;
+
   if (carregando) return <div style={{ textAlign: 'center', padding: 40, color: '#666' }}>Carregando...</div>;
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h2 style={{ color: '#333', margin: 0 }}>Consultar NRIs</h2>
-        <button onClick={carregarNRIs} style={btnSecundario}>🔄 Atualizar</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {modoSelecao ? (
+            <button onClick={cancelarSelecao} style={btnSecundario}>✕ Cancelar seleção</button>
+          ) : (
+            <button onClick={() => setModoSelecao(true)} style={btnSelecionar}>☑ Selecionar etiquetas</button>
+          )}
+          <button onClick={carregarNRIs} style={btnSecundario}>🔄 Atualizar</button>
+        </div>
       </div>
 
       <input
@@ -97,6 +215,20 @@ export default function NRIs({ usuario }) {
         )}
       </div>
 
+      {modoSelecao && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff8f8', border: '1px solid #E31837', borderRadius: 8, padding: '10px 16px', marginBottom: 16 }}>
+          <span style={{ fontSize: 13, color: '#555' }}>
+            {qtdSelecionados === 0 ? 'Nenhuma etiqueta selecionada — expanda uma NRI e marque os produtos' : `${qtdSelecionados} etiqueta(s) selecionada(s)`}
+          </span>
+          <button
+            onClick={() => imprimirEtiquetas(Object.values(selecionados))}
+            disabled={qtdSelecionados === 0}
+            style={qtdSelecionados === 0 ? btnDesabilitado : btnPDF}>
+            📄 Gerar PDFs selecionados
+          </button>
+        </div>
+      )}
+
       {filtradas.length === 0 && <p style={{ color: '#999', textAlign: 'center', padding: 40 }}>Nenhuma NRI encontrada.</p>}
 
       {filtradas.map(item => (
@@ -119,7 +251,7 @@ export default function NRIs({ usuario }) {
               <button onClick={() => setExpandido(expandido === item.id ? null : item.id)} style={btnSecundario}>
                 {expandido === item.id ? 'Recolher ▲' : `Ver ${item.produtos?.length || 0} produto(s) ▼`}
               </button>
-              {usuario.nivel === 'supervisor' && (
+              {usuario.nivel === 'supervisor' && !modoSelecao && (
                 <button onClick={() => excluir(item.id, item.notaFiscal)} style={btnExcluir}>✕</button>
               )}
             </div>
@@ -130,21 +262,43 @@ export default function NRIs({ usuario }) {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ backgroundColor: '#f9f9f9' }}>
-                    {['Código', 'Produto', 'Qtd PLT', 'Qtd CX', 'Validade'].map(h => (
-                      <th key={h} style={{ padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #eee', color: '#666' }}>{h}</th>
+                    {modoSelecao && <th style={thStyle}>Sel.</th>}
+                    {['Código', 'Produto', 'Qtd PLT', 'Qtd CX', 'Validade', 'Etiqueta'].map(h => (
+                      <th key={h} style={thStyle}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {item.produtos?.map((p, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: '8px 12px' }}>{p.codProduto}</td>
-                      <td style={{ padding: '8px 12px' }}>{p.nomeProduto}</td>
-                      <td style={{ padding: '8px 12px' }}>{p.qtdPlt || '-'}</td>
-                      <td style={{ padding: '8px 12px' }}>{p.qtdCx || '-'}</td>
-                      <td style={{ padding: '8px 12px', color: '#E31837', fontWeight: 'bold' }}>{p.validade}</td>
-                    </tr>
-                  ))}
+                  {item.produtos?.map((p, i) => {
+                    const chaveSel = `${item.id}-${i}`;
+                    const marcado = !!selecionados[chaveSel];
+                    return (
+                      <tr key={i} style={{ borderBottom: '1px solid #eee', backgroundColor: marcado ? '#fff3f3' : 'transparent' }}>
+                        {modoSelecao && (
+                          <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={marcado}
+                              onChange={() => toggleSelecao(item, p, i)}
+                              style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#E31837' }}
+                            />
+                          </td>
+                        )}
+                        <td style={{ padding: '8px 12px' }}>{p.codProduto}</td>
+                        <td style={{ padding: '8px 12px' }}>{p.nomeProduto}</td>
+                        <td style={{ padding: '8px 12px' }}>{p.qtdPlt || '-'}</td>
+                        <td style={{ padding: '8px 12px' }}>{p.qtdCx || '-'}</td>
+                        <td style={{ padding: '8px 12px', color: '#E31837', fontWeight: 'bold' }}>{p.validade}</td>
+                        <td style={{ padding: '8px 12px' }}>
+                          {!modoSelecao && (
+                            <button onClick={() => imprimirEtiquetas([{ nri: item, produto: p }])} style={btnPDFPequeno}>
+                              📄 Etiqueta
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -156,5 +310,10 @@ export default function NRIs({ usuario }) {
 }
 
 const card = { backgroundColor: '#fff', borderRadius: 12, padding: 20, marginBottom: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)', borderLeft: '4px solid #E31837' };
+const thStyle = { padding: '8px 12px', textAlign: 'left', borderBottom: '1px solid #eee', color: '#666' };
 const btnSecundario = { padding: '8px 14px', backgroundColor: '#f5f5f5', border: '1px solid #ddd', borderRadius: 8, cursor: 'pointer', fontSize: 13 };
 const btnExcluir = { padding: '8px 12px', backgroundColor: '#fff0f0', border: '1px solid #E31837', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: '#E31837', fontWeight: 'bold' };
+const btnSelecionar = { padding: '8px 14px', backgroundColor: '#fff0f0', border: '1px solid #E31837', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: '#E31837', fontWeight: '600' };
+const btnPDF = { padding: '8px 16px', backgroundColor: '#E31837', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: '#fff', fontWeight: 'bold' };
+const btnPDFPequeno = { padding: '5px 10px', backgroundColor: '#E31837', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, color: '#fff' };
+const btnDesabilitado = { padding: '8px 16px', backgroundColor: '#ccc', border: 'none', borderRadius: 8, cursor: 'not-allowed', fontSize: 13, color: '#fff', fontWeight: 'bold' };
