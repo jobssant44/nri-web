@@ -25,6 +25,23 @@ const GRUPOS = [
     ],
   },
   {
+    label: '📈 Curva ABC',
+    todos: true,
+    itens: [
+      { path: '/curva-abc/dashboard', label: '📊 Dashboard Curva ABC', todos: true },
+      { path: '/curva-abc/importar',  label: '📥 Importar relatórios', supervisor: true },
+    ],
+  },
+  {
+    label: '🏭 Gerenciamento de Estoque',
+    todos: true,
+    itens: [
+      { path: '/estoque/dashboard',      label: '📊 Dashboard',              todos: true },
+      { path: '/estoque/contar',         label: '✅ Registrar Contagem',     todos: true },
+      { path: '/estoque/localizacoes',   label: '📍 Gerenciar Localizacoes', supervisor: true },
+    ],
+  },
+  {
     label: '📅 Gestão de Idade',
     todos: true,
     itens: [],
@@ -38,7 +55,7 @@ const GRUPOS = [
 
 export default function Sidebar({ usuario, onLogout }) {
   const loc = useLocation();
-  const [abertos, setAbertos] = useState({ 0: true });
+  const [abertos, setAbertos] = useState({ 0: true, 4: true });
 
   function toggleGrupo(idx) {
     setAbertos(prev => ({ ...prev, [idx]: !prev[idx] }));

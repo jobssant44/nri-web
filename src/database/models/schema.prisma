@@ -1,0 +1,126 @@
+// Prisma Schema para WMS - Gerenciamento de Estoque
+// Nota: Este arquivo é de referência. O projeto atual usa Firebase.
+// Incluso para arquitetura futura com banco SQL (PostgreSQL, MySQL).
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─── Tabela: Product (Produtos) ──────────────────────────────────────────
+
+model Product {
+  id                    String   @id @default(uuid())
+  name                  String
+  sku                   String   @unique
+  curve                 String   // 'A' | 'B' | 'C'
+  criticalDaysThreshold Int      // Ex: 30 dias
+  cxPorPalete           Int
+  fatorHL               Float?
+
+  // Relacionamentos
+  locations             Location[]
+  inventoryLogs         InventoryLog[]
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([sku])
+  @@index([curve])
+}
+
+// ─── Tabela: Location (Endereços) ────────────────────────────────────────
+
+model Location {
+  id                String   @id @default(uuid())
+  areaName          String   // 'EstoqueA' | 'EstoqueB' | 'EstoqueC' | 'Picking' | 'AG' | 'Marketplace'
+  areaDescription   String?
+  street            String   // Rua/Corredor
+  palettePosition   String   // Posição de palete
+
+  // Vínculo obrigatório de SKU
+  assignedSkuId     String
+  assignedProductId String
+  product           Product  @relation(fields: [assignedProductId], references: [id])
+
+  // Metadados
+  isActive          Boolean  @default(true)
+  capacity          Int?     // Capacidade de paletes
+  currentQuantity   Int?     // Quantidade atual
+  lastCountedAt     DateTime?
+
+  // Relacionamentos
+  inventoryLogs     InventoryLog[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([areaName, street, palettePosition])
+  @@index([assignedSkuId])
+  @@index([areaName])
+}
+
+// ─── Tabela: InventoryLog (Contagens) ────────────────────────────────────
+
+model InventoryLog {
+  id                    String   @id @default(uuid())
+
+  // Referências
+  productId             String
+  product               Product  @relation(fields: [productId], references: [id])
+  productSku            String   // Cópia para auditoria
+  locationId            String
+  location              Location @relation(fields: [locationId], references: [id])
+  locationAddress       String   // Cópia formatada do endereço
+
+  // Dados de contagem
+  countedQuantity       Int
+  expiryDate            DateTime
+  batchNumber           String?
+
+  // Aderência
+  isProductMatchLocation Boolean
+  isLayoutAdherent      Boolean
+  isABCAdherent         Boolean
+  adherenceScore        Int      // 0 ou 100
+
+  // Validade
+  daysUntilExpiry       Int
+  isCriticalDate        Boolean
+  isExpired             Boolean
+
+  // Rastreamento
+  conferente            String   // Usuário
+  notes                 String?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([productId])
+  @@index([locationId])
+  @@index([createdAt])
+  @@index([isABCAdherent])
+  @@index([isCriticalDate])
+  @@index([isExpired])
+}
+
+// ─── View: AdherenceSummary (Agregação para Dashboard) ─────────────────
+
+// Nota: Views em Prisma requerem manualConfig. Alternativamente, use SQL direto.
+// Este é um exemplo de como estruturar a consulta agregada.
+/*
+SELECT
+  COUNT(*) as totalCountings,
+  SUM(CASE WHEN isABCAdherent = true THEN 1 ELSE 0 END) as totalAdherent,
+  areaName,
+  product.curve,
+  expiryStatus
+FROM InventoryLog
+JOIN Location ON InventoryLog.locationId = Location.id
+JOIN Product ON InventoryLog.productId = Product.id
+GROUP BY areaName, product.curve, expiryStatus
+*/

@@ -12,6 +12,11 @@ import Sidebar from './components/Sidebar';
 import LancarAbastecimento from './pages/LancarAbastecimento';
 import DashboardIV from './pages/DashboardIV';
 import ConfigPicking from './pages/ConfigPicking';
+import DashboardCurvaABC from './pages/curva-abc/DashboardCurvaABC';
+import ImportarRelatorio from './pages/curva-abc/ImportarRelatorio';
+import CountingPage from './pages/gerenciamento-estoque/CountingPage';
+import LocationManagementPage from './pages/gerenciamento-estoque/LocationManagementPage';
+import DashboardPage from './pages/gerenciamento-estoque/DashboardPage';
 
 export default function App() {
   const [usuario, setUsuario] = useState(null);
@@ -49,6 +54,11 @@ export default function App() {
             <Route path="/reab/dashboard" element={<DashboardIV />} />
             <Route path="/reab/lancar" element={<LancarAbastecimento usuario={usuario} />} />
             <Route path="/reab/config" element={usuario.nivel === 'supervisor' ? <ConfigPicking /> : <Navigate to="/" />} />
+            <Route path="/curva-abc/dashboard" element={<DashboardCurvaABC />} />
+            <Route path="/curva-abc/importar" element={usuario.nivel === 'supervisor' ? <ImportarRelatorio /> : <Navigate to="/" />} />
+            <Route path="/estoque/dashboard" element={<DashboardPage />} />
+            <Route path="/estoque/contar" element={<CountingPage usuario={usuario} />} />
+            <Route path="/estoque/localizacoes" element={usuario.nivel === 'supervisor' ? <LocationManagementPage /> : <Navigate to="/" />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </div>
