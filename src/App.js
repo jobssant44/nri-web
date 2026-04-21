@@ -15,8 +15,10 @@ import ConfigPicking from './pages/ConfigPicking';
 import DashboardCurvaABC from './pages/curva-abc/DashboardCurvaABC';
 import ImportarRelatorio from './pages/curva-abc/ImportarRelatorio';
 import CountingPage from './pages/gerenciamento-estoque/CountingPage';
-import LocationManagementPage from './pages/gerenciamento-estoque/LocationManagementPage';
 import DashboardPage from './pages/gerenciamento-estoque/DashboardPage';
+import GerenciarLocalizacoesPage from './pages/gerenciamento-estoque/GerenciarLocalizacoesPage';
+import EndereçamentoPage from './pages/gerenciamento-estoque/EndereçamentoPage';
+import ColetasValidadePage from './pages/gerenciamento-estoque/ColetasValidadePage';
 
 export default function App() {
   const [usuario, setUsuario] = useState(null);
@@ -40,9 +42,9 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
+      <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#fafafa' }}>
         <Sidebar usuario={usuario} onLogout={logout} />
-        <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
+        <div style={{ flex: 1, marginLeft: '240px', padding: '24px', overflowY: 'auto', maxHeight: '100vh' }}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/nris" element={<NRIs usuario={usuario} />} />
@@ -58,7 +60,9 @@ export default function App() {
             <Route path="/curva-abc/importar" element={usuario.nivel === 'supervisor' ? <ImportarRelatorio /> : <Navigate to="/" />} />
             <Route path="/estoque/dashboard" element={<DashboardPage />} />
             <Route path="/estoque/contar" element={<CountingPage usuario={usuario} />} />
-            <Route path="/estoque/localizacoes" element={usuario.nivel === 'supervisor' ? <LocationManagementPage /> : <Navigate to="/" />} />
+            <Route path="/estoque/gerenciar-localizacoes" element={usuario.nivel === 'supervisor' ? <GerenciarLocalizacoesPage /> : <Navigate to="/" />} />
+            <Route path="/estoque/enderecamento" element={<EndereçamentoPage />} />
+            <Route path="/estoque/coletas-validade" element={<ColetasValidadePage />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </div>
