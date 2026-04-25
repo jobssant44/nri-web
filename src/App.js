@@ -10,7 +10,11 @@ import Importar from './pages/Importar';
 import Exportar from './pages/Exportar';
 import Sidebar from './components/Sidebar';
 import LancarAbastecimento from './pages/LancarAbastecimento';
+import ImportarVendasPage from './pages/ImportarVendasPage';
+import VendasPage from './pages/VendasPage';
 import DashboardIV from './pages/DashboardIV';
+import RegistroAbastecimentoPage from './pages/RegistroAbastecimentoPage';
+import PlanificadorIV from './pages/PlanificadorIV';
 import ConfigPicking from './pages/ConfigPicking';
 import DashboardCurvaABC from './pages/curva-abc/DashboardCurvaABC';
 import ImportarRelatorio from './pages/curva-abc/ImportarRelatorio';
@@ -22,6 +26,10 @@ import ColetasValidadePage from './pages/gerenciamento-estoque/ColetasValidadePa
 
 export default function App() {
   const [usuario, setUsuario] = useState(null);
+  const [fixado, setFixado] = useState(() => {
+    const salvo = localStorage.getItem('sidebar-fixado');
+    return salvo === null ? true : salvo === 'true';
+  });
 
   useEffect(() => {
     const salvo = localStorage.getItem('nri-usuario');
@@ -38,13 +46,20 @@ export default function App() {
     setUsuario(null);
   }
 
+  function toggleFixado() {
+    setFixado(prev => {
+      localStorage.setItem('sidebar-fixado', String(!prev));
+      return !prev;
+    });
+  }
+
   if (!usuario) return <Login onLogin={login} />;
 
   return (
     <BrowserRouter>
       <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#fafafa' }}>
-        <Sidebar usuario={usuario} onLogout={logout} />
-        <div style={{ flex: 1, marginLeft: '240px', padding: '24px', overflowY: 'auto', maxHeight: '100vh' }}>
+        <Sidebar usuario={usuario} onLogout={logout} fixado={fixado} onToggleFixado={toggleFixado} />
+        <div style={{ flex: 1, marginLeft: fixado ? '240px' : '56px', padding: '24px', overflowY: 'auto', maxHeight: '100vh', transition: 'margin-left 0.25s ease' }}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/nris" element={<NRIs usuario={usuario} />} />
@@ -56,6 +71,10 @@ export default function App() {
             <Route path="/reab/dashboard" element={<DashboardIV />} />
             <Route path="/reab/lancar" element={<LancarAbastecimento usuario={usuario} />} />
             <Route path="/reab/config" element={usuario.nivel === 'supervisor' ? <ConfigPicking /> : <Navigate to="/" />} />
+            <Route path="/reab/importar-vendas" element={usuario.nivel === 'supervisor' ? <ImportarVendasPage /> : <Navigate to="/" />} />
+            <Route path="/reab/vendas" element={<VendasPage />} />
+            <Route path="/reab/registro" element={<RegistroAbastecimentoPage usuario={usuario} />} />
+            <Route path="/reab/planificador" element={<PlanificadorIV />} />
             <Route path="/curva-abc/dashboard" element={<DashboardCurvaABC />} />
             <Route path="/curva-abc/importar" element={usuario.nivel === 'supervisor' ? <ImportarRelatorio /> : <Navigate to="/" />} />
             <Route path="/estoque/dashboard" element={<DashboardPage />} />

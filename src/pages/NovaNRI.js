@@ -32,6 +32,7 @@ export default function NovaNRI({ usuario }) {
   const [dataRecebimento, setDataRecebimento] = useState(hojeFormatado());
   const [produtos, setProdutos] = useState([]);
   const [baseProdutos, setBaseProdutos] = useState([]);
+  const [curvaMap, setCurvaMap] = useState({});
   const [listaMotoristas, setListaMotoristas] = useState([]);
   const [listaCavalos, setListaCavalos] = useState([]);
   const [listaCarretas, setListaCarretas] = useState([]);
@@ -47,18 +48,25 @@ export default function NovaNRI({ usuario }) {
   useEffect(() => { carregarDados(); }, []);
 
   async function carregarDados() {
-    const [pSnap, mSnap, cSnap, crSnap, oSnap] = await Promise.all([
+    const [pSnap, mSnap, cSnap, crSnap, oSnap, curvaSnap] = await Promise.all([
       getDocs(collection(db, 'produtos')),
       getDocs(collection(db, 'motoristas')),
       getDocs(collection(db, 'cavalos')),
       getDocs(collection(db, 'carretas')),
       getDocs(collection(db, 'origens')),
+      getDocs(collection(db, 'curva_abc')),
     ]);
     setBaseProdutos(pSnap.docs.map(d => d.data()));
     setListaMotoristas(mSnap.docs.map(d => d.data().valor));
     setListaCavalos(cSnap.docs.map(d => d.data().valor));
     setListaCarretas(crSnap.docs.map(d => d.data().valor));
     setListaOrigens(oSnap.docs.map(d => d.data().valor));
+    const curvas = {};
+    curvaSnap.docs.forEach(d => {
+      const { codigo, curva } = d.data();
+      if (codigo) curvas[String(codigo)] = curva || null;
+    });
+    setCurvaMap(curvas);
   }
 
   function buscarProduto(texto, campo) {
@@ -85,7 +93,8 @@ export default function NovaNRI({ usuario }) {
     if (!validarData(validade)) { alert('Data de validade inválida.'); return; }
     const produtoBase = baseProdutos.find(p => p.codigo === codProduto);
     const cxPorPlt = produtoBase?.cxPorPlt || '';
-    setProdutos([...produtos, { codProduto, nomeProduto, qtdPlt, qtdCx, validade, cxPorPlt }]);
+    const curva = curvaMap[String(codProduto)] || null;
+    setProdutos([...produtos, { codProduto, nomeProduto, qtdPlt, qtdCx, validade, cxPorPlt, curva }]);
     setCodProduto(''); setNomeProduto(''); setQtdPlt(''); setQtdCx(''); setValidade(''); setSugestoes([]);
   }
 

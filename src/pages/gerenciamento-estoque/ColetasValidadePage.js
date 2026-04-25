@@ -132,6 +132,13 @@ export default function ColetasValidadePage() {
 
   // ========== CONVERTER DATA ==========
 
+  function formatarDataInput(valor) {
+    const digits = valor.replace(/\D/g, '').slice(0, 8);
+    if (digits.length <= 2) return digits;
+    if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+  }
+
   function parseDataBR(dataStr) {
     if (!dataStr) return null;
     const match = dataStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
@@ -313,17 +320,21 @@ export default function ColetasValidadePage() {
     }
 
     try {
+      const resolverTs = (v) => {
+        if (!v) return null;
+        if (typeof v.toDate === 'function') return v.toDate();
+        if (v instanceof Date) return v;
+        return null;
+      };
       const dados = resultados.map(data => ({
         'Código': data.productCode || data.productId || '',
         'Produto': data.productName || '',
-        'Validade': data.expiryDate instanceof Date
-          ? data.expiryDate.toLocaleDateString('pt-BR')
-          : String(data.expiryDate || ''),
+        'Validade': (() => { const d = resolverTs(data.expiryDate); return d ? d.toLocaleDateString('pt-BR') : String(data.expiryDate || ''); })(),
         'Área': data.area || '',
         'Rua': data.street || '',
         'Posição': data.palettePosition || '',
         'Conferente': data.conferente || '',
-        'Data Contagem': data.timestamp ? new Date(data.timestamp).toLocaleDateString('pt-BR') : '',
+        'Data Contagem': (() => { const d = resolverTs(data.timestamp || data.createdAt); return d ? d.toLocaleDateString('pt-BR') : ''; })(),
       }));
 
       const ws = XLSX.utils.json_to_sheet(dados);
@@ -377,15 +388,7 @@ export default function ColetasValidadePage() {
             type="text"
             placeholder="dd/mm/aaaa"
             value={dataInicio}
-            onChange={(e) => {
-              const valor = e.target.value;
-              // Aceitar apenas números e barras
-              const valorLimpo = valor.replace(/[^\d/]/g, '');
-              // Limitar a 10 caracteres (dd/mm/aaaa)
-              if (valorLimpo.length <= 10) {
-                setDataInicio(valorLimpo);
-              }
-            }}
+            onChange={(e) => setDataInicio(formatarDataInput(e.target.value))}
             disabled={loading}
             style={dataInputStyle}
             title="Data de início (dd/mm/aaaa)"
@@ -395,15 +398,7 @@ export default function ColetasValidadePage() {
             type="text"
             placeholder="dd/mm/aaaa"
             value={dataFim}
-            onChange={(e) => {
-              const valor = e.target.value;
-              // Aceitar apenas números e barras
-              const valorLimpo = valor.replace(/[^\d/]/g, '');
-              // Limitar a 10 caracteres (dd/mm/aaaa)
-              if (valorLimpo.length <= 10) {
-                setDataFim(valorLimpo);
-              }
-            }}
+            onChange={(e) => setDataFim(formatarDataInput(e.target.value))}
             disabled={loading}
             style={dataInputStyle}
             title="Data de fim (dd/mm/aaaa)"
@@ -519,12 +514,18 @@ export default function ColetasValidadePage() {
                 </thead>
                 <tbody>
                   {resultados.map((res, idx) => {
-                    const dataValidade = res.expiryDate instanceof Date
-                      ? res.expiryDate.toLocaleDateString('pt-BR')
+                    const resolverTimestamp = (v) => {
+                      if (!v) return null;
+                      if (typeof v.toDate === 'function') return v.toDate();
+                      if (v instanceof Date) return v;
+                      return null;
+                    };
+                    const dtValidade = resolverTimestamp(res.expiryDate);
+                    const dataValidade = dtValidade
+                      ? dtValidade.toLocaleDateString('pt-BR')
                       : String(res.expiryDate || '');
-                    const dataContagem = res.timestamp
-                      ? new Date(res.timestamp).toLocaleDateString('pt-BR')
-                      : '';
+                    const dtContagem = resolverTimestamp(res.timestamp || res.createdAt);
+                    const dataContagem = dtContagem ? dtContagem.toLocaleDateString('pt-BR') : '';
 
                     return (
                       <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#fff' : '#f9f9f9' }}>

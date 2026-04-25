@@ -30,6 +30,8 @@ export function CountingForm({ conferente, onSuccess, onError }) {
   const [form, setForm] = useState(initialFormState);
   const [areas, setAreas] = useState([]);
   const [produtos, setProdutosDB] = useState([]); // Base de produtos
+  const [locationAssignments, setLocationAssignments] = useState({}); // productCode → locationId
+  const [curvaMap, setCurvaMap] = useState({}); // productCode → curva
   const [loadingAreas, setLoadingAreas] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
@@ -104,23 +106,38 @@ export function CountingForm({ conferente, onSuccess, onError }) {
   async function carregarDados() {
     setLoadingAreas(true);
     try {
-      // Carregar áreas do collection 'locations'
-      const locationsSnap = await getDocs(collection(db, 'locations'));
-      const areasSet = new Set();
-      locationsSnap.docs.forEach((d) => {
-        const area = d.data().area;
-        if (area) areasSet.add(area);
-      });
-      const areasArray = Array.from(areasSet).sort();
-      setAreas(areasArray);
+      const [locationsSnap, produtosSnap, curvaSnap] = await Promise.all([
+        getDocs(collection(db, 'locations')),
+        getDocs(collection(db, 'produtos')),
+        getDocs(collection(db, 'curva_abc')),
+      ]);
 
-      // Carregar produtos do collection 'produtos'
-      const produtosSnap = await getDocs(collection(db, 'produtos'));
-      const produtosArray = produtosSnap.docs.map(doc => ({
+      // Áreas disponíveis + mapa de localização por produto
+      const areasSet = new Set();
+      const assignments = {};
+      locationsSnap.docs.forEach((d) => {
+        const loc = d.data();
+        if (loc.area) areasSet.add(loc.area);
+        if (loc.assignedSkuId) {
+          assignments[String(loc.assignedSkuId)] = d.id; // ex: "A-1-5"
+        }
+      });
+      setAreas(Array.from(areasSet).sort());
+      setLocationAssignments(assignments);
+
+      // Base de produtos
+      setProdutosDB(produtosSnap.docs.map(doc => ({
         codigo: doc.data().codigo,
         nome: doc.data().nome,
-      }));
-      setProdutosDB(produtosArray);
+      })));
+
+      // Mapa de curva ABC
+      const curvas = {};
+      curvaSnap.docs.forEach(d => {
+        const { codigo, curva } = d.data();
+        if (codigo) curvas[String(codigo)] = curva || null;
+      });
+      setCurvaMap(curvas);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     } finally {
@@ -332,6 +349,9 @@ export function CountingForm({ conferente, onSuccess, onError }) {
             conferente: conferente || 'Conferente',
             timestamp: new Date(),
             notes: '',
+            // Snapshots para integridade histórica
+            assignedLocation: locationAssignments[String(prod.productCode)] || null,
+            productCurva: curvaMap[String(prod.productCode)] || null,
           });
 
           count++;

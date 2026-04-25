@@ -7,10 +7,12 @@ export default function ConfigPicking() {
   const [baseProdutos, setBaseProdutos] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [editando, setEditando] = useState(null);
-  const [novoForm, setNovoForm] = useState({ codProduto: '', nomeProduto: '', espacosPalete: '', mediaCxDia: '' });
+  const [novoForm, setNovoForm] = useState({ codProduto: '', nomeProduto: '', espacosPalete: '' });
   const [sugestoes, setSugestoes] = useState([]);
   const [showNovo, setShowNovo] = useState(false);
   const [importando, setImportando] = useState(false);
+  const [busca, setBusca] = useState('');
+  const [ordenacao, setOrdenacao] = useState({ coluna: 'nomeProduto', direcao: 'asc' });
 
   useEffect(() => { carregar(); }, []);
 
@@ -52,25 +54,23 @@ export default function ConfigPicking() {
 
   async function salvarNovo() {
     if (!novoForm.codProduto || !novoForm.nomeProduto) { alert('Selecione um produto.'); return; }
-    if (!novoForm.espacosPalete || !novoForm.mediaCxDia) { alert('Preencha espaços palete e média CX/dia.'); return; }
+    if (!novoForm.espacosPalete) { alert('Preencha os espaços palete.'); return; }
     const prod = baseProdutos.find(p => p.codigo === novoForm.codProduto);
     const novo = {
       codProduto: novoForm.codProduto,
       nomeProduto: novoForm.nomeProduto,
       espacosPalete: parseInt(novoForm.espacosPalete),
-      mediaCxDia: parseInt(novoForm.mediaCxDia),
       cxPorPlt: prod?.cxPorPlt ? parseInt(prod.cxPorPlt) : '',
     };
     await addDoc(collection(db, 'picking_config'), novo);
     setShowNovo(false);
-    setNovoForm({ codProduto: '', nomeProduto: '', espacosPalete: '', mediaCxDia: '' });
+    setNovoForm({ codProduto: '', nomeProduto: '', espacosPalete: '' });
     carregar();
   }
 
   async function salvarEdicao(cfg) {
     await updateDoc(doc(db, 'picking_config', cfg._id), {
       espacosPalete: parseInt(cfg.espacosPalete),
-      mediaCxDia: parseInt(cfg.mediaCxDia),
     });
     setEditando(null);
     carregar();
@@ -97,10 +97,9 @@ export default function ConfigPicking() {
         const codigo = cols[0]?.trim();
         const nome = cols[1]?.trim();
         const espacos = parseInt(cols[2]?.trim());
-        const media = parseInt(cols[3]?.trim());
-        if (!codigo || isNaN(espacos) || isNaN(media)) continue;
+        if (!codigo || isNaN(espacos)) continue;
         const prod = baseProdutos.find(p => p.codigo === codigo);
-        const dados = { codProduto: codigo, nomeProduto: nome || prod?.nome || codigo, espacosPalete: espacos, mediaCxDia: media, cxPorPlt: prod?.cxPorPlt ? parseInt(prod.cxPorPlt) : '' };
+        const dados = { codProduto: codigo, nomeProduto: nome || prod?.nome || codigo, espacosPalete: espacos, cxPorPlt: prod?.cxPorPlt ? parseInt(prod.cxPorPlt) : '' };
         if (existentes[codigo]) {
           batch.update(doc(db, 'picking_config', existentes[codigo]), dados);
         } else {
@@ -115,6 +114,36 @@ export default function ConfigPicking() {
     };
     reader.readAsText(file, 'UTF-8');
   }
+
+  function alternarOrdenacao(coluna) {
+    setOrdenacao(prev =>
+      prev.coluna === coluna
+        ? { coluna, direcao: prev.direcao === 'asc' ? 'desc' : 'asc' }
+        : { coluna, direcao: 'asc' }
+    );
+  }
+
+  function seta(coluna) {
+    if (ordenacao.coluna !== coluna) return <span style={{ color: '#ccc', marginLeft: 4 }}>↕</span>;
+    return <span style={{ marginLeft: 4 }}>{ordenacao.direcao === 'asc' ? '↑' : '↓'}</span>;
+  }
+
+  const buscaLower = busca.toLowerCase();
+  const configsFiltrados = configs
+    .filter(c =>
+      !busca ||
+      String(c.codProduto).toLowerCase().includes(buscaLower) ||
+      (c.nomeProduto || '').toLowerCase().includes(buscaLower)
+    )
+    .sort((a, b) => {
+      let vA = a[ordenacao.coluna] ?? '';
+      let vB = b[ordenacao.coluna] ?? '';
+      if (typeof vA === 'string') vA = vA.toLowerCase();
+      if (typeof vB === 'string') vB = vB.toLowerCase();
+      if (vA < vB) return ordenacao.direcao === 'asc' ? -1 : 1;
+      if (vA > vB) return ordenacao.direcao === 'asc' ? 1 : -1;
+      return 0;
+    });
 
   if (carregando) return <div style={{ textAlign: 'center', padding: 40, color: '#666' }}>Carregando...</div>;
 
@@ -132,13 +161,13 @@ export default function ConfigPicking() {
       </div>
 
       <div style={{ backgroundColor: '#f0f4ff', borderRadius: 8, padding: '10px 16px', marginBottom: 20, fontSize: 12, color: '#555' }}>
-        📋 <b>Formato do CSV:</b> Código ; Nome ; Espaços Palete ; Média CX/dia — separador ponto e vírgula, primeira linha é cabeçalho. O campo CX/plt é puxado automaticamente da base de produtos.
+        📋 <b>Formato do CSV:</b> Código ; Nome ; Espaços Palete — separador ponto e vírgula, primeira linha é cabeçalho. O campo CX/plt é puxado automaticamente da base de produtos.
       </div>
 
       {showNovo && (
         <div style={{ ...secao, marginBottom: 24, borderLeft: '4px solid #E31837' }}>
           <h3 style={{ ...secaoTitulo, color: '#E31837' }}>Novo Produto no Picking</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
             <div>
               <label style={lbl}>Código</label>
               <input style={inp} value={novoForm.codProduto} onChange={e => buscarProdutoForm(e.target.value, 'codigo')} placeholder="Código..." />
@@ -160,10 +189,6 @@ export default function ConfigPicking() {
               <label style={lbl}>Espaços Palete</label>
               <input style={inp} type="number" min="1" value={novoForm.espacosPalete} onChange={e => setNovoForm(f => ({ ...f, espacosPalete: e.target.value }))} placeholder="Ex: 2" />
             </div>
-            <div>
-              <label style={lbl}>Média CX/dia</label>
-              <input style={inp} type="number" min="1" value={novoForm.mediaCxDia} onChange={e => setNovoForm(f => ({ ...f, mediaCxDia: e.target.value }))} placeholder="Ex: 240" />
-            </div>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
             <button onClick={salvarNovo} style={btnPrimario}>✅ Salvar</button>
@@ -173,24 +198,45 @@ export default function ConfigPicking() {
       )}
 
       <div style={secao}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-          <h3 style={{ ...secaoTitulo, margin: 0 }}>Produtos Configurados ({configs.length})</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+          <h3 style={{ ...secaoTitulo, margin: 0 }}>Produtos Configurados ({configsFiltrados.length}{busca ? ` de ${configs.length}` : ''})</h3>
+          <input
+            type="text"
+            placeholder="🔍 Buscar por código ou descrição..."
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+            style={{ ...inp, width: 280, marginBottom: 0 }}
+          />
         </div>
         {configs.length === 0 ? (
           <p style={{ color: '#999', textAlign: 'center', padding: 20 }}>Nenhum produto configurado ainda.</p>
+        ) : configsFiltrados.length === 0 ? (
+          <p style={{ color: '#999', textAlign: 'center', padding: 20 }}>Nenhum produto encontrado para "{busca}".</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ backgroundColor: '#f9f9f9' }}>
-                {['Código', 'Produto', 'Espaços Palete', 'CX/PLT', 'Cap. Picking (cx)', 'Média CX/dia', 'IV Esperado', 'Ações'].map(h => (
-                  <th key={h} style={th}>{h}</th>
+                {[
+                  { label: 'Código',           col: 'codProduto' },
+                  { label: 'Produto',           col: 'nomeProduto' },
+                  { label: 'Espaços Palete',    col: 'espacosPalete' },
+                  { label: 'CX/PLT',            col: 'cxPorPlt' },
+                  { label: 'Cap. Picking (cx)', col: null },
+                  { label: 'Ações',             col: null },
+                ].map(({ label, col }) => (
+                  <th
+                    key={label}
+                    style={{ ...th, cursor: col ? 'pointer' : 'default', userSelect: 'none' }}
+                    onClick={() => col && alternarOrdenacao(col)}
+                  >
+                    {label}{col && seta(col)}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {configs.map((c, i) => {
+              {configsFiltrados.map((c, i) => {
                 const cap = c.espacosPalete && c.cxPorPlt ? c.espacosPalete * parseInt(c.cxPorPlt) : null;
-                const ivEsp = cap && c.mediaCxDia ? Math.max(0, Math.ceil(c.mediaCxDia / cap) - 1) : null;
                 const estaEditando = editando?._id === c._id;
                 return (
                   <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
@@ -203,12 +249,6 @@ export default function ConfigPicking() {
                     </td>
                     <td style={{ ...td, textAlign: 'center' }}>{c.cxPorPlt || '-'}</td>
                     <td style={{ ...td, textAlign: 'center', color: '#555' }}>{cap || '-'}</td>
-                    <td style={{ ...td, textAlign: 'center' }}>
-                      {estaEditando
-                        ? <input type="number" min="1" value={editando.mediaCxDia} onChange={e => setEditando(ed => ({ ...ed, mediaCxDia: e.target.value }))} style={{ ...inp, width: 80, textAlign: 'center' }} />
-                        : c.mediaCxDia}
-                    </td>
-                    <td style={{ ...td, textAlign: 'center', fontWeight: 'bold', color: '#1D5A9E' }}>{ivEsp ?? '-'}</td>
                     <td style={{ ...td }}>
                       {estaEditando ? (
                         <div style={{ display: 'flex', gap: 6 }}>

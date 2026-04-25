@@ -138,9 +138,9 @@ export function ImportarLocalizacoes() {
       // Validar cada linha
       rows.forEach((row, idx) => {
         const lineNumber = idx + 2; // +1 para cabeçalho, +1 para 1-indexed
-        const area = String(row[0] || '').trim().toUpperCase();
-        const rua = String(row[1] || '').trim();
-        const posicao = String(row[2] || '').trim();
+        const area = String(row['Área'] || row['Area'] || row[0] || '').trim().toUpperCase();
+        const rua = String(row['Rua'] || row[1] || '').trim();
+        const posicao = String(row['Posição'] || row['Posicao'] || row[2] || '').trim();
 
         const errosLinha = validarLinha([area, rua, posicao], lineNumber);
 
