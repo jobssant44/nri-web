@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import { useSessionFilter } from '../hooks/useSessionFilter';
 
 const ABAS = [
   { key: 'motoristas', label: 'Motoristas' },
@@ -10,7 +11,7 @@ const ABAS = [
 ];
 
 export default function Cadastros() {
-  const [abaAtiva, setAbaAtiva] = useState('motoristas');
+  const [abaAtiva, setAbaAtiva] = useSessionFilter('cad:aba', 'motoristas');
   const [dados, setDados] = useState({ motoristas: [], cavalos: [], carretas: [], origens: [] });
   const [novoItem, setNovoItem] = useState('');
   const [editandoId, setEditandoId] = useState(null);

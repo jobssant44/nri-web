@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import { useSessionFilter } from '../hooks/useSessionFilter';
 
 function formatarData(texto) {
   const n = texto.replace(/[^0-9]/g, '');
@@ -16,8 +17,8 @@ function parsearData(str) {
 }
 
 export default function Exportar() {
-  const [dataInicio, setDataInicio] = useState('');
-  const [dataFim, setDataFim] = useState('');
+  const [dataInicio, setDataInicio] = useSessionFilter('exp:inicio', '');
+  const [dataFim, setDataFim] = useSessionFilter('exp:fim', '');
   const [total, setTotal] = useState(null);
   const [carregando, setCarregando] = useState(false);
 

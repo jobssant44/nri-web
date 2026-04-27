@@ -70,8 +70,16 @@ export default function ImportarVendasPage() {
   useEffect(() => { carregarPicking(); }, []);
 
   async function carregarPicking() {
-    const snap = await getDocs(collection(db, 'picking_config'));
-    setPickingCodes(new Set(snap.docs.map(d => String(d.data().codProduto))));
+    const [snapAntigo, snapMensal] = await Promise.all([
+      getDocs(collection(db, 'picking_config')),
+      getDocs(collection(db, 'picking_config_mensal')),
+    ]);
+    const codes = new Set();
+    snapAntigo.docs.forEach(d => codes.add(String(d.data().codProduto)));
+    snapMensal.docs.forEach(d => {
+      (d.data().produtos || []).forEach(p => codes.add(String(p.codProduto)));
+    });
+    setPickingCodes(codes);
   }
 
   function processarArquivo(e) {

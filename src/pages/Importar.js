@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import { useSessionFilter } from '../hooks/useSessionFilter';
 
 export default function Importar() {
-  const [abaAtiva, setAbaAtiva] = useState('produtos');
+  const [abaAtiva, setAbaAtiva] = useSessionFilter('imp:aba', 'produtos');
   const [arquivo, setArquivo] = useState(null);
   const [preview, setPreview] = useState([]);
   const [importando, setImportando] = useState(false);

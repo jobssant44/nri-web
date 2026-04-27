@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useSessionFilter } from '../../../../hooks/useSessionFilter';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../../../firebaseConfig';
 
@@ -6,8 +7,8 @@ export function AdherenceDashboard() {
   const [loading, setLoading] = useState(false);
   const [metricas, setMetricas] = useState(null);
   const [detalhes, setDetalhes] = useState([]);
-  const [dataInicio, setDataInicio] = useState('');
-  const [dataFim, setDataFim] = useState('');
+  const [dataInicio, setDataInicio] = useSessionFilter('adher:inicio', '');
+  const [dataFim, setDataFim] = useSessionFilter('adher:fim', '');
   const [filtrosAplicados, setFiltrosAplicados] = useState(null);
   const [mensagem, setMensagem] = useState('');
 

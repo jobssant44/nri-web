@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
+import { useSessionFilter } from '../../hooks/useSessionFilter';
 import { LocationForm } from '../../modules/gerenciamento-estoque/layout/components/LocationForm';
 import { ImportarEnderecos } from '../../modules/gerenciamento-estoque/layout/components/ImportarEnderecos';
 
 export default function LocationManagementPage() {
-  const [modo, setModo] = useState('manual'); // 'manual' ou 'importar'
+  const [modo, setModo] = useSessionFilter('locmgmt:modo', 'manual');
 
   const containerStyle = {
     maxWidth: '900px',

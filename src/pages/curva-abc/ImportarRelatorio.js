@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { useSessionFilter } from '../../hooks/useSessionFilter';
 import { collection, doc, getDoc, getDocs, setDoc, writeBatch, deleteDoc } from 'firebase/firestore';
 import { db } from '../../firebaseConfig';
 import * as XLSX from 'xlsx';
@@ -384,7 +385,7 @@ function Importar0111() {
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function ImportarRelatorio() {
-  const [abaAtiva, setAbaAtiva] = useState('030236');  // '030236' | '0111'
+  const [abaAtiva, setAbaAtiva] = useSessionFilter('imprlt:aba', '030236');
 
   return (
     <div style={{ maxWidth: 900 }}>
@@ -427,7 +428,7 @@ export default function ImportarRelatorio() {
 function Importar030236() {
   const [analise,    setAnalise]    = useState(null);   // dados processados do arquivo
   const [mesesSel,   setMesesSel]   = useState({});     // { 'YYYY-MM': true/false }
-  const [buscaVerif, setBuscaVerif] = useState('');
+  const [buscaVerif, setBuscaVerif] = useSessionFilter('imprlt:busca', '');
   const [progresso,  setProgresso]  = useState(null);   // { pct, etapa }
   const [avisos,     setAvisos]     = useState([]);
   const [resultado,  setResultado]  = useState(null);

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
+import { useSessionFilter } from '../../hooks/useSessionFilter';
 import { CadastrarLocalizacao } from '../../modules/gerenciamento-estoque/layout/components/CadastrarLocalizacao';
 import { EditarLocalizacao } from '../../modules/gerenciamento-estoque/layout/components/EditarLocalizacao';
 import { ImportarLocalizacoes } from '../../modules/gerenciamento-estoque/layout/components/ImportarLocalizacoes';
 
 export default function GerenciarLocalizacoesPage() {
-  const [aba, setAba] = useState('cadastrar'); // 'cadastrar', 'editar' ou 'importar'
+  const [aba, setAba] = useSessionFilter('geroloc:aba', 'cadastrar');
 
   const containerStyle = {
     maxWidth: '1000px',

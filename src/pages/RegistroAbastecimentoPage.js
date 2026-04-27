@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, updateDoc, doc, addDoc, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import { useSessionFilter } from '../hooks/useSessionFilter';
 
 function formatarInput(valor) {
   const digits = valor.replace(/\D/g, '').slice(0, 8);
@@ -25,10 +26,10 @@ export default function RegistroAbastecimentoPage({ usuario }) {
   const [editandoData, setEditandoData] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [importando, setImportando] = useState(false);
-  const [busca, setBusca] = useState('');
-  const [filtroTipo, setFiltroTipo] = useState('todos');
-  const [dataInicio, setDataInicio] = useState('');
-  const [dataFim, setDataFim] = useState('');
+  const [busca, setBusca] = useSessionFilter('regab:busca', '');
+  const [filtroTipo, setFiltroTipo] = useSessionFilter('regab:tipo', 'todos');
+  const [dataInicio, setDataInicio] = useSessionFilter('regab:inicio', '');
+  const [dataFim, setDataFim] = useSessionFilter('regab:fim', '');
 
   const isSupervisor = usuario?.nivel === 'supervisor';
 

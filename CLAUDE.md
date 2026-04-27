@@ -38,8 +38,89 @@ React SPA (Create React App) with direct Firebase Firestore integration. No Redu
 | `curva_abc_meta` / `indices` | Sorted list of available month keys |
 | `curva_abc` | Current ABC classification used by the NRI module: `{ codigo, curva }` |
 | `produtos_fatores` | From relatório 01.11: `{ codigo, fatorHL, fatorPalete }`. Doc ID = product code |
+| `picking_config` | Products configured for picking: `{ codProduto, nomeProduto, espacosPalete, cxPorPlt }` |
+| `abastecimentos` | Reabastecimento/Ressuprimento logs: `{ codProduto, nomeProduto, tipo, qtdPaletes, dataOperacional, hora, conferente, criadoEm }` |
+| `vendas_relatorio` | Imported sales reports: `{ importadoEm, nomeArquivo, produtos[], datas[] }`. `produtos[]` has `{ codigo, descricao, vendas: { 'DD/MM/AAAA': qtd } }` |
+| `locations` | Warehouse locations: `{ area, rua, posicao, assignedSkuId }` |
+| `inventory_logs` | Counting records with `{ assignedLocation, productCurva }` snapshots saved at write time |
 
 Bulk deletes always use `writeBatch` in chunks of 450 (Firestore limit is 500).
+
+## Reabastecimento / Ressuprimento Module
+
+Routes under `/reab/`. Pages in `src/pages/`.
+
+| Page | Route | Level | Purpose |
+|---|---|---|---|
+| `DashboardIV` | `/reab/dashboard` | All | KPI summary + bar chart + sortable table |
+| `PlanificadorIV` | `/reab/planificador` | All | Month pivot: all products × all days, Plan/Real/GAP |
+| `VendasPage` | `/reab/vendas` | All | Pivot table of imported sales reports with search |
+| `LancarAbastecimento` | `/reab/lancar` | All | Daily reab/ressp entry form |
+| `RegistroAbastecimentoPage` | `/reab/registro` | All (edit: Supervisor) | Full log with inline date edit + CSV bulk import |
+| `ConfigPicking` | `/reab/config` | Supervisor | Manage picking_config: add/edit/delete/import CSV |
+| `ImportarVendasPage` | `/reab/importar-vendas` | Supervisor | Import relatório 03.02.36.08 (Excel) |
+
+### Business Rules — IV (Índice de Vendas)
+
+**Reabastecimento** — happens in the morning after delivery (D+1 relative to sales):
+- `dataOperacional` = day the restock physically happened
+- Sales reference = `dataOperacional - 1 day` (the system subtracts 1 day automatically)
+- Expected pallets = `vendas[dataRef] / cxPorPlt`
+- Status: ✅ ±20% of expected · ⚠️ >20% above · ⬇️ <80% of expected
+
+**Ressuprimento** — emergency restock at night (22:00–06:59), always a failure:
+- `dataOperacional` uses `diaOperacional()` rule: if `hora < 07:00`, use previous calendar day
+- Sales reference = `dataOperacional` itself (same day, D+0)
+- Any ressuprimento = 🚨 (operational failure — picking ran out)
+
+**Planificador IV — Planejado per day:**
+- Sunday → `—` (no operation)
+- Monday → sales of **Saturday** (skip Sunday, D-2)
+- Tuesday–Saturday → sales of previous day (D-1)
+- Future date → `0`
+- Reference date missing from vendas_relatorio → `—` (data absent, not zero sales)
+
+**`diaOperacional()` rule (used in LancarAbastecimento):**
+```js
+if (agora.getHours() < 7) agora.setDate(agora.getDate() - 1);
+return formatarData(agora); // DD/MM/AAAA
+```
+
+### Relatório 03.02.36.08 — Import (ImportarVendasPage)
+
+Columns: A=Date · B=Código · C=Descrição · D=Qtd Caixas/dia · E=Palete Fechado flag ("Sim"=ignore / "Não"=include) · F=HL
+
+**Date parsing (`parsearData`):** The report exports dates as text strings in `MM/DD/AAAA` (American) format, **not** DD/MM. Disambiguation rule:
+- If part1 > 12 → DD/MM (day is unambiguous)
+- If part2 > 12 → MM/DD (day is unambiguous)
+- Both ≤ 12 (ambiguous) → treat as **MM/DD** (this report's format)
+- Excel serial numbers → `Math.floor((serial - 25569) * 86400 * 1000)` with UTC getters
+
+Only products present in `picking_config` are kept. All others are discarded.
+`vendas_relatorio` docs are merged in PlanificadorIV (all imports, later wins per date/product).
+
+### ConfigPicking — CSV Import Format
+
+```
+Codigo ; Nome ; Espaços Palete
+```
+Separator = semicolon. First row = header. `cxPorPlt` is pulled automatically from `produtos` collection.
+
+### RegistroAbastecimentoPage — CSV Bulk Import Format
+
+```
+Codigo ; Tipo ; QtdPaletes ; DataOperacional
+```
+`Tipo` must be `reabastecimento` or `ressuprimento`. `DataOperacional` = DD/MM/AAAA.
+- **Ressuprimento**: DataOperacional = day whose sales it covers (D+0)
+- **Reabastecimento**: DataOperacional = day the restock happened (dashboard auto-applies D-1 for sales ref)
+
+### Sidebar — Collapse Behavior
+
+`Sidebar.js` uses `fixado` (boolean, persisted to `localStorage('sidebar-fixado')`) and `hovering` state:
+- `expandido = fixado || hovering` → width 240px or 56px
+- Groups collapsed by default; only the active route's group opens on mount
+- Pin button (📌 red=fixed, 📍 gray=unfixed) in header
 
 ## Curva ABC Module
 

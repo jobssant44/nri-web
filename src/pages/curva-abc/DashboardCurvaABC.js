@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
 import { db } from '../../firebaseConfig';
 import { calcularABC } from './ImportarRelatorio';
+import { useSessionFilter } from '../../hooks/useSessionFilter';
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell, ReferenceLine,
@@ -67,8 +68,8 @@ export default function DashboardCurvaABC() {
   const [indices, setIndices]       = useState([]);
   const [anos, setAnos]             = useState([]);
   const [mesesDoAno, setMesesDoAno] = useState([]);
-  const [anoSel, setAnoSel]         = useState('');
-  const [mesSel, setMesSel]         = useState('');
+  const [anoSel, setAnoSel]         = useSessionFilter('dabc:ano', '');
+  const [mesSel, setMesSel]         = useSessionFilter('dabc:mes', '');
   const [dadosM0, setDadosM0]       = useState(null);
   const [dadosM1, setDadosM1]       = useState(null);
   const [dadosM2, setDadosM2]       = useState(null);
@@ -77,13 +78,13 @@ export default function DashboardCurvaABC() {
   const [fatores, setFatores]       = useState({});
 
   // Filtros de visão
-  const [metrica, setMetrica] = useState('cx');       // cx | plt
-  const [tipo, setTipo]       = useState('armazem');  // armazem | picking | estoque
+  const [metrica, setMetrica] = useSessionFilter('dabc:metrica', 'cx');
+  const [tipo, setTipo]       = useSessionFilter('dabc:tipo', 'armazem');
 
   // Filtros de tabela
-  const [filtroCurva, setFiltroCurva] = useState('');
-  const [busca, setBusca]             = useState('');
-  const [pagina, setPagina]           = useState(1);
+  const [filtroCurva, setFiltroCurva] = useSessionFilter('dabc:curva', '');
+  const [busca, setBusca]             = useSessionFilter('dabc:busca', '');
+  const [pagina, setPagina]           = useSessionFilter('dabc:pag', 1);
 
   // ── Carregamento ──
   useEffect(() => { carregarIndices(); carregarFatores(); }, []);

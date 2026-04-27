@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useSessionFilter } from '../../hooks/useSessionFilter';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebaseConfig';
 import * as XLSX from 'xlsx';
@@ -6,9 +7,9 @@ import * as XLSX from 'xlsx';
 export default function ColetasValidadePage() {
   const [loading, setLoading] = useState(false);
   const [resultados, setResultados] = useState([]);
-  const [filtro, setFiltro] = useState('');
-  const [dataInicio, setDataInicio] = useState('');
-  const [dataFim, setDataFim] = useState('');
+  const [filtro, setFiltro] = useSessionFilter('colval:filtro', '');
+  const [dataInicio, setDataInicio] = useSessionFilter('colval:inicio', '');
+  const [dataFim, setDataFim] = useSessionFilter('colval:fim', '');
   const [mensagem, setMensagem] = useState('');
   const [tipoDetectado, setTipoDetectado] = useState('');
   const [filtrosAplicados, setFiltrosAplicados] = useState({});
