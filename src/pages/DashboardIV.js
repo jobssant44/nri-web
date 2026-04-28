@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, doc, getDoc, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, setDoc, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { useSessionFilter } from '../hooks/useSessionFilter';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts';
 
 const MESES_NOME = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
@@ -58,6 +58,9 @@ function extrairTipoEmbalagem(nome, cxPorPlt) {
 }
 
 export default function DashboardIV() {
+  const usuario = JSON.parse(localStorage.getItem('nri-usuario') || '{}');
+  const isSupervisor = usuario?.nivel === 'supervisor';
+
   const [anoSelecionado, setAnoSelecionado]       = useSessionFilter('div:ano', '');
   const [mesNumSelecionado, setMesNumSelecionado] = useSessionFilter('div:mes', '');
   const [mesesDisponiveis, setMesesDisponiveis]   = useState([]);
@@ -67,6 +70,8 @@ export default function DashboardIV() {
   const [carregando, setCarregando]               = useState(true);
   const [ordRanking, setOrdRanking]               = useSessionFilter('div:ord', { col: 'totalMovimentos', dir: 'desc' });
   const [tooltip, setTooltip]                     = useState(null);
+  const [previewConfig, setPreviewConfig]         = useState(null);
+  const [salvandoConfig, setSalvandoConfig]       = useState(false);
 
   const mesSel = anoSelecionado && mesNumSelecionado ? `${anoSelecionado}-${mesNumSelecionado}` : '';
   const anos      = [...new Set(mesesDisponiveis.map(m => m.split('-')[0]))].sort();
@@ -174,8 +179,26 @@ export default function DashboardIV() {
   // ── KPIs ──────────────────────────────────────────────────────────────────────
   const kpiReab        = abastsFiltrados.filter(a => a.tipo === 'reabastecimento').reduce((s,a) => s+(a.qtdPaletes||1), 0);
   const kpiRessp       = abastsFiltrados.filter(a => a.tipo === 'ressuprimento').reduce((s,a)  => s+(a.qtdPaletes||1), 0);
-  const kpiViagens     = abastsFiltrados.length;
   const kpiProdRessp   = produtos.filter(p => p.resspDias > 0).length;
+
+  // Evolução mês a mês (todos os registros, não só o mês selecionado)
+  const dadosEvolucao = (() => {
+    const porMes = {};
+    abastecimentos.forEach(a => {
+      const chave = dataParaChaveMes(a.dataOperacional);
+      if (!chave) return;
+      if (!porMes[chave]) porMes[chave] = { reab: 0, ressp: 0 };
+      const qtd = a.qtdPaletes || 1;
+      if (a.tipo === 'reabastecimento') porMes[chave].reab += qtd;
+      else porMes[chave].ressp += qtd;
+    });
+    return Object.entries(porMes)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([chave, v]) => {
+        const [aaaa, mm] = chave.split('-');
+        return { label: `${MESES_NOME[parseInt(mm)-1].slice(0,3)}/${aaaa.slice(2)}`, reab: v.reab, ressp: v.ressp, chave };
+      });
+  })();
   const kpiSubdim      = produtos.filter(p => p.espacosIdeal !== null && p.espacosIdeal > p.espacos).length;
 
   // ── DISTRIBUIÇÃO HORÁRIA ───────────────────────────────────────────────────────
@@ -223,8 +246,8 @@ export default function DashboardIV() {
 
   // ── PALETES MISTOS ─────────────────────────────────────────────────────────────
   const candidatosMisto = produtos.filter(p => {
-    if (!p.mediaVendas || p.capacidade === 0 || p.cxPorPlt === 0) return false;
-    return (p.mediaVendas / p.capacidade) < 0.15;
+    if (!p.mediaVendas || p.cxPorPlt === 0) return false;
+    return (p.mediaVendas / p.cxPorPlt) < 0.20;
   });
 
   const _gruposMap = {};
@@ -234,16 +257,20 @@ export default function DashboardIV() {
     _gruposMap[tipo].push(p);
   });
 
-  const gruposMisto = Object.entries(_gruposMap)
-    .filter(([, prods]) => prods.length >= 2)
+  // Singletons = produtos sem par na mesma embalagem ou sobras de chunks maiores
+  const _singletons = [];
+
+  // Paletes com sinergia (mesma embalagem, máx. 4 produtos, teto 60% do palete)
+  const gruposSinergia = Object.entries(_gruposMap)
     .flatMap(([tipo, prods]) => {
       const cxPlt    = prods[0].cxPorPlt;
+      const teto     = Math.floor(cxPlt * 0.60);
       const diasAlvo = 5;
-      // Divide em lotes de no máximo 5 produtos; descarta lotes com apenas 1
-      const chunks = [];
-      for (let i = 0; i < prods.length; i += 5) {
-        const chunk = prods.slice(i, i + 5);
+      const chunks   = [];
+      for (let i = 0; i < prods.length; i += 4) {
+        const chunk = prods.slice(i, i + 4);
         if (chunk.length >= 2) chunks.push(chunk);
+        else _singletons.push(...chunk);
       }
       const multi = chunks.length > 1;
       return chunks.map((chunk, idx) => {
@@ -253,18 +280,36 @@ export default function DashboardIV() {
           qtdCaixas: Math.max(1, Math.ceil((p.mediaVendas || 0) * diasAlvo)),
         }));
         const soma = composicao.reduce((s, p) => s + p.qtdCaixas, 0);
-        if (soma > cxPlt && soma > 0) {
-          const fator = cxPlt / soma;
+        if (soma > teto && soma > 0) {
+          const fator = teto / soma;
           composicao = composicao.map(p => ({ ...p, qtdCaixas: Math.max(1, Math.floor(p.qtdCaixas * fator)) }));
         }
         const totalFinal       = composicao.reduce((s, p) => s + p.qtdCaixas, 0);
         const espacosLiberados = chunk.reduce((s, p) => s + p.espacos, 0) - 1;
-        return { tipo: label, composicao, totalFinal, cxPlt, espacosLiberados };
+        return { tipo: label, composicao, totalFinal, cxPlt, teto, espacosLiberados, sinergia: true };
       });
     })
     .filter(g => g.espacosLiberados > 0)
     .sort((a, b) => b.espacosLiberados - a.espacosLiberados);
 
+  // Paletes diversos (sobras sem sinergia, agrupadas por maior liberação, 10% de cada palete)
+  const _sortedSingletons = [..._singletons].sort((a, b) => b.espacos - a.espacos);
+  const _gruposDiverso = [];
+  for (let i = 0; i < _sortedSingletons.length; i += 4) {
+    const chunk = _sortedSingletons.slice(i, i + 4);
+    if (chunk.length < 2) continue;
+    const composicao       = chunk.map(p => {
+      const base     = Math.max(1, Math.floor(p.cxPorPlt * 0.10));
+      const minUmDia = p.mediaVendas > 0 ? Math.ceil(p.mediaVendas) : 1;
+      return { ...p, qtdCaixas: Math.max(base, minUmDia) };
+    });
+    const espacosLiberados = chunk.reduce((s, p) => s + p.espacos, 0) - 1;
+    _gruposDiverso.push({ composicao, espacosLiberados, sinergia: false });
+  }
+  _gruposDiverso.sort((a, b) => b.espacosLiberados - a.espacosLiberados);
+  _gruposDiverso.forEach((g, i) => Object.assign(g, { tipo: `Diverso ${i + 1}`, totalFinal: null, cxPlt: null, teto: null }));
+
+  const gruposMisto        = [...gruposSinergia, ..._gruposDiverso];
   const totalEspacosMisto  = gruposMisto.reduce((s, g) => s + g.espacosLiberados, 0);
   const produtosMistoSet   = new Set(gruposMisto.flatMap(g => g.composicao.map(p => p.codProduto)));
 
@@ -284,6 +329,96 @@ export default function DashboardIV() {
 
   // ── HEATMAP PRODUTOS ATIVOS ────────────────────────────────────────────────────
   const produtosHeatmap = produtos.filter(p => p.totalMovimentos > 0 || p.maxVendas !== null);
+
+  // ── GERADOR DE PICKING PARA PRÓXIMO MÊS ───────────────────────────────────────
+  function proximoMes() {
+    if (!anoSelecionado || !mesNumSelecionado) return null;
+    const m = parseInt(mesNumSelecionado), a = parseInt(anoSelecionado);
+    return m === 12
+      ? { ano: String(a + 1), mes: '01' }
+      : { ano: String(a),     mes: String(m + 1).padStart(2, '0') };
+  }
+
+  function gerarConfigProximoMes() {
+    const prox = proximoMes();
+    if (!prox) return;
+
+    // Fase 1 — misto: reduz para 1 espaço e acumula pool
+    const novoEsp = {};
+    let pool = 0;
+    produtos.forEach(p => {
+      if (produtosMistoSet.has(p.codProduto)) {
+        novoEsp[p.codProduto] = 1;
+        pool += p.espacos - 1;
+      } else {
+        novoEsp[p.codProduto] = p.espacos;
+      }
+    });
+
+    // Fase 2 — subdimensionados por maior déficit
+    const subdim = produtos
+      .filter(p => p.espacosIdeal !== null && p.espacosIdeal > novoEsp[p.codProduto])
+      .sort((a, b) => (b.espacosIdeal - novoEsp[b.codProduto]) - (a.espacosIdeal - novoEsp[a.codProduto]));
+
+    for (const p of subdim) {
+      if (pool <= 0) break;
+      const ganho = Math.min(pool, p.espacosIdeal - novoEsp[p.codProduto]);
+      novoEsp[p.codProduto] += ganho;
+      pool -= ganho;
+    }
+
+    // Fase 3 — excedentes distribuídos por maior maxVendas (round-robin)
+    if (pool > 0) {
+      const ordenados = [...produtos]
+        .filter(p => p.maxVendas !== null)
+        .sort((a, b) => b.maxVendas - a.maxVendas);
+      let i = 0;
+      while (pool > 0 && ordenados.length > 0) {
+        novoEsp[ordenados[i % ordenados.length].codProduto]++;
+        pool--;
+        i++;
+      }
+    }
+
+    // Monta preview com motivo
+    const linhas = produtos.map(p => {
+      const novo = novoEsp[p.codProduto] ?? p.espacos;
+      const diff = novo - p.espacos;
+      let motivo = '➡️ Sem alteração';
+      if (produtosMistoSet.has(p.codProduto))    motivo = '🔀 Palete misto';
+      else if (diff > 0 && p.espacosIdeal !== null && novo <= p.espacosIdeal) motivo = '⬆️ Ganhou espaço';
+      else if (diff > 0)                          motivo = '➕ Folga extra';
+      return { codProduto: p.codProduto, nomeProduto: p.nomeProduto, cxPorPlt: p.cxPorPlt, espacosAtual: p.espacos, espacosNovo: novo, diff, motivo };
+    }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+
+    setPreviewConfig({ linhas, prox });
+  }
+
+  async function salvarConfigProximoMes() {
+    if (!previewConfig) return;
+    setSalvandoConfig(true);
+    try {
+      const { linhas, prox } = previewConfig;
+      const chave = `${prox.ano}-${prox.mes}`;
+      const produtosParaSalvar = linhas.map(l => ({
+        codProduto:    l.codProduto,
+        nomeProduto:   l.nomeProduto,
+        cxPorPlt:      l.cxPorPlt,
+        espacosPalete: l.espacosNovo,
+      }));
+      await setDoc(doc(db, 'picking_config_mensal', chave), {
+        produtos: produtosParaSalvar,
+        geradoEm: new Date().toISOString(),
+        geradoPor: usuario.nome || 'supervisor',
+        baseadoEm: `${anoSelecionado}-${mesNumSelecionado}`,
+      });
+      alert(`Configuração de picking para ${MESES_NOME[parseInt(prox.mes)-1]}/${prox.ano} salva com sucesso!`);
+      setPreviewConfig(null);
+    } catch (err) {
+      alert('Erro ao salvar: ' + err.message);
+    }
+    setSalvandoConfig(false);
+  }
 
   if (carregando) return <div style={{ textAlign:'center', padding:40, color:'#666' }}>⏳ Carregando...</div>;
 
@@ -315,6 +450,16 @@ export default function DashboardIV() {
             {mesesDoAno.map(m => <option key={m} value={m}>{MESES_NOME[parseInt(m)-1]}</option>)}
           </select>
           <button onClick={carregar} style={btn}>🔄 Atualizar</button>
+          {isSupervisor && mesSel && produtos.length > 0 && (() => {
+            const prox = proximoMes();
+            if (!prox) return null;
+            const nomeMesProx = `${MESES_NOME[parseInt(prox.mes)-1]}/${prox.ano}`;
+            return (
+              <button onClick={gerarConfigProximoMes} style={{ ...btn, backgroundColor:'#eff6ff', borderColor:'#bfdbfe', color:'#1D5A9E', fontWeight:'bold' }}>
+                📋 Sugerir Picking para {nomeMesProx}
+              </button>
+            );
+          })()}
         </div>
       </div>
 
@@ -323,9 +468,7 @@ export default function DashboardIV() {
         {[
           { label:'Paletes Reabastecidos', valor:kpiReab,      cor:'#1D5A9E', sub:'🌅 movidos durante o dia'     },
           { label:'Paletes Ressupridos',    valor:kpiRessp,     cor:'#E31837', sub:'🌙 movidos durante a noite'   },
-          { label:'Viagens do Empilhador',  valor:kpiViagens,   cor:'#7c3aed', sub:'📋 total de registros'        },
           { label:'Produtos c/ Ressupr.',   valor:kpiProdRessp, cor:'#dc2626', sub:'🚨 picking subdimensionado'   },
-          { label:'Precisam de + Espaço',   valor:kpiSubdim,    cor:'#d97706', sub:'📐 picking insuficiente'      },
         ].map(({ label, valor, cor, sub }) => (
           <div key={label} style={{ backgroundColor:'#fff', borderRadius:12, padding:'18px 20px', boxShadow:'0 2px 8px rgba(0,0,0,.08)', borderLeft:`4px solid ${cor}` }}>
             <div style={{ fontSize:34, fontWeight:'bold', color:cor, lineHeight:1 }}>{valor}</div>
@@ -334,6 +477,36 @@ export default function DashboardIV() {
           </div>
         ))}
       </div>
+
+      {/* ── EVOLUÇÃO MENSAL ── */}
+      {dadosEvolucao.length > 1 && (
+        <div style={{ ...secao, marginBottom:24 }}>
+          <h3 style={titulo}>📈 Evolução Mensal — Reabastecimento × Ressuprimento</h3>
+          <p style={{ fontSize:12, color:'#888', marginTop:-10, marginBottom:16 }}>
+            Total de paletes movidos por mês em todo o histórico de registros.
+          </p>
+          <ResponsiveContainer width="100%" height={290}>
+            <BarChart data={dadosEvolucao} margin={{ top:4, right:16, left:0, bottom:4 }} barCategoryGap="30%">
+              <XAxis dataKey="label" tick={{ fontSize:11, fill:'#666' }} />
+              <YAxis tick={{ fontSize:11, fill:'#666' }} width={45} />
+              <Tooltip
+                contentStyle={{ fontSize:12, borderRadius:8, border:'1px solid #e2e8f0' }}
+                formatter={(value, name) => [value, name === 'reab' ? 'Reabastecimento' : 'Ressuprimento']}
+              />
+              <Legend
+                formatter={v => v === 'reab' ? 'Reabastecimento' : 'Ressuprimento'}
+                wrapperStyle={{ fontSize:12, paddingTop:8 }}
+              />
+              <Bar dataKey="reab"  name="reab"  fill="#1D5A9E" radius={[4,4,0,0]}>
+                <LabelList dataKey="reab"  position="top" style={{ fontSize:10, fill:'#1D5A9E', fontWeight:'bold' }} />
+              </Bar>
+              <Bar dataKey="ressp" name="ressp" fill="#E31837" radius={[4,4,0,0]}>
+                <LabelList dataKey="ressp" position="top" style={{ fontSize:10, fill:'#E31837', fontWeight:'bold' }} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* ── MAPA DE CALOR ── */}
       {produtosHeatmap.length > 0 && dias.length > 0 && (
@@ -646,57 +819,105 @@ export default function DashboardIV() {
         <div style={{ ...secao, marginTop:20 }}>
           <h3 style={titulo}>🔀 Paletes Mistos Sugeridos</h3>
           <p style={{ fontSize:12, color:'#888', marginTop:-10, marginBottom:16 }}>
-            Produtos com rotação inferior a 10% da capacidade do espaço — candidatos a compartilhar um único palete, agrupados por tipo de embalagem.
+            Produtos com venda diária inferior a 20% da capacidade de um palete — candidatos a compartilhar um único palete. Paletes com sinergia agrupam a mesma embalagem; paletes diversos agrupam sobras de embalagens distintas.
           </p>
 
           <div style={{ padding:'10px 16px', backgroundColor:'#f0f1ff', borderRadius:8, borderLeft:'4px solid #4338ca', fontSize:12, color:'#3730a3', marginBottom:20, fontWeight:'600' }}>
-            🔀 {gruposMisto.length} palete{gruposMisto.length>1?'s':''} misto{gruposMisto.length>1?'s':''} sugerido{gruposMisto.length>1?'s':''} ·
+            🔀 {gruposSinergia.length} com sinergia · {_gruposDiverso.length} diverso{_gruposDiverso.length>1?'s':''} ·
             libera <strong>{totalEspacosMisto} espaço{totalEspacosMisto>1?'s':''} de palete</strong> no picking ·
             {candidatosMisto.length} produto{candidatosMisto.length>1?'s':''} com baixa rotação identificado{candidatosMisto.length>1?'s':''}
           </div>
 
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))', gap:16 }}>
-            {gruposMisto.map(({ tipo, composicao, totalFinal, cxPlt, espacosLiberados }) => (
-              <div key={tipo} style={{ border:'2px solid #c7d2fe', borderRadius:12, padding:16, backgroundColor:'#f8f9ff' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
-                  <div style={{ fontWeight:'bold', color:'#4338ca', fontSize:14 }}>🔀 Embalagem {tipo}</div>
-                  <span style={{ backgroundColor:'#dcfce7', color:'#166534', borderRadius:20, padding:'3px 10px', fontSize:11, fontWeight:'bold' }}>
-                    −{espacosLiberados} espaço{espacosLiberados>1?'s':''}
-                  </span>
-                </div>
-                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
-                  <thead>
-                    <tr style={{ backgroundColor:'#e0e7ff' }}>
-                      <th style={thMisto}>Produto</th>
-                      <th style={{ ...thMisto, textAlign:'center' }}>Esp. atual</th>
-                      <th style={{ ...thMisto, textAlign:'center' }}>Caixas</th>
-                      <th style={{ ...thMisto, textAlign:'center' }}>Dias</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {composicao.map((p, i) => {
-                      const diasCobertos = p.mediaVendas > 0 ? Math.floor(p.qtdCaixas / p.mediaVendas) : null;
-                      const taxa = ((p.mediaVendas / p.capacidade) * 100).toFixed(1);
-                      return (
-                        <tr key={p.codProduto} style={{ borderBottom:'1px solid #e0e7ff', backgroundColor: i%2===0 ? '#fff' : '#f0f1ff' }}>
-                          <td style={{ padding:'7px 8px' }}>
-                            <div style={{ fontWeight:'600', color:'#333' }}>{p.nomeProduto.length>28 ? p.nomeProduto.slice(0,28)+'…' : p.nomeProduto}</div>
-                            <div style={{ fontSize:10, color:'#aaa' }}>Cód: {p.codProduto} · ocupação: {taxa}%</div>
-                          </td>
-                          <td style={{ padding:'7px 8px', textAlign:'center', color:'#64748b' }}>{p.espacos}</td>
-                          <td style={{ padding:'7px 8px', textAlign:'center', fontWeight:'bold', color:'#4338ca' }}>{p.qtdCaixas}</td>
-                          <td style={{ padding:'7px 8px', textAlign:'center', color:'#666' }}>{diasCobertos !== null ? `${diasCobertos}d` : '—'}</td>
+            {gruposMisto.map(({ tipo, composicao, totalFinal, cxPlt, teto, espacosLiberados, sinergia }) => {
+              if (sinergia) {
+                return (
+                  <div key={tipo} style={{ border:'2px solid #c7d2fe', borderRadius:12, padding:16, backgroundColor:'#f8f9ff' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+                      <div style={{ fontWeight:'bold', color:'#4338ca', fontSize:14 }}>🔀 Embalagem {tipo}</div>
+                      <span style={{ backgroundColor:'#dcfce7', color:'#166534', borderRadius:20, padding:'3px 10px', fontSize:11, fontWeight:'bold' }}>
+                        −{espacosLiberados} espaço{espacosLiberados>1?'s':''}
+                      </span>
+                    </div>
+                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                      <thead>
+                        <tr style={{ backgroundColor:'#e0e7ff' }}>
+                          <th style={thMisto}>Produto</th>
+                          <th style={{ ...thMisto, textAlign:'center' }}>Esp. atual</th>
+                          <th style={{ ...thMisto, textAlign:'center' }}>Caixas</th>
+                          <th style={{ ...thMisto, textAlign:'center' }}>Dias</th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                <div style={{ marginTop:10, padding:'6px 10px', backgroundColor:'#e0e7ff', borderRadius:6, fontSize:11, display:'flex', justifyContent:'space-between' }}>
-                  <span style={{ color:'#4338ca' }}>Total do palete misto:</span>
-                  <strong style={{ color:'#4338ca' }}>{totalFinal} / {cxPlt} caixas ({Math.round(totalFinal/cxPlt*100)}% cheio)</strong>
-                </div>
-              </div>
-            ))}
+                      </thead>
+                      <tbody>
+                        {composicao.map((p, i) => {
+                          const diasCobertos = p.mediaVendas > 0 ? Math.floor(p.qtdCaixas / p.mediaVendas) : null;
+                          const taxa = ((p.mediaVendas / p.cxPorPlt) * 100).toFixed(1);
+                          return (
+                            <tr key={p.codProduto} style={{ borderBottom:'1px solid #e0e7ff', backgroundColor: i%2===0 ? '#fff' : '#f0f1ff' }}>
+                              <td style={{ padding:'7px 8px' }}>
+                                <div style={{ fontWeight:'600', color:'#333' }}>{p.nomeProduto.length>28 ? p.nomeProduto.slice(0,28)+'…' : p.nomeProduto}</div>
+                                <div style={{ fontSize:10, color:'#aaa' }}>Cód: {p.codProduto} · rotação: {taxa}%</div>
+                              </td>
+                              <td style={{ padding:'7px 8px', textAlign:'center', color:'#64748b' }}>{p.espacos}</td>
+                              <td style={{ padding:'7px 8px', textAlign:'center', fontWeight:'bold', color:'#4338ca' }}>{p.qtdCaixas}</td>
+                              <td style={{ padding:'7px 8px', textAlign:'center', color:'#666' }}>{diasCobertos !== null ? `${diasCobertos}d` : '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <div style={{ marginTop:10, padding:'6px 10px', backgroundColor:'#e0e7ff', borderRadius:6, fontSize:11, display:'flex', justifyContent:'space-between' }}>
+                      <span style={{ color:'#4338ca' }}>Total do palete misto:</span>
+                      <strong style={{ color:'#4338ca' }}>{totalFinal} / {cxPlt} cx ({Math.round(totalFinal/cxPlt*100)}% · máx 60%)</strong>
+                    </div>
+                  </div>
+                );
+              } else {
+                return (
+                  <div key={tipo} style={{ border:'2px solid #fed7aa', borderRadius:12, padding:16, backgroundColor:'#fff7ed' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                      <div style={{ fontWeight:'bold', color:'#c2410c', fontSize:14 }}>🔀 Misto {tipo}</div>
+                      <span style={{ backgroundColor:'#dcfce7', color:'#166534', borderRadius:20, padding:'3px 10px', fontSize:11, fontWeight:'bold' }}>
+                        −{espacosLiberados} espaço{espacosLiberados>1?'s':''}
+                      </span>
+                    </div>
+                    <div style={{ fontSize:10, color:'#ea580c', marginBottom:10, fontStyle:'italic' }}>
+                      Sem sinergia de embalagem · cada produto contribui com 10% do seu palete
+                    </div>
+                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                      <thead>
+                        <tr style={{ backgroundColor:'#ffedd5' }}>
+                          <th style={thMistoDiverso}>Produto</th>
+                          <th style={{ ...thMistoDiverso, textAlign:'center' }}>Esp. atual</th>
+                          <th style={{ ...thMistoDiverso, textAlign:'center' }}>Caixas</th>
+                          <th style={{ ...thMistoDiverso, textAlign:'center' }}>Dias</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {composicao.map((p, i) => {
+                          const taxa = ((p.mediaVendas / p.cxPorPlt) * 100).toFixed(1);
+                          const diasCobertos = p.mediaVendas > 0 ? Math.floor(p.qtdCaixas / p.mediaVendas) : null;
+                          return (
+                            <tr key={p.codProduto} style={{ borderBottom:'1px solid #fed7aa', backgroundColor: i%2===0 ? '#fff' : '#fff7ed' }}>
+                              <td style={{ padding:'7px 8px' }}>
+                                <div style={{ fontWeight:'600', color:'#333' }}>{p.nomeProduto.length>28 ? p.nomeProduto.slice(0,28)+'…' : p.nomeProduto}</div>
+                                <div style={{ fontSize:10, color:'#aaa' }}>Cód: {p.codProduto} · rotação: {taxa}%</div>
+                              </td>
+                              <td style={{ padding:'7px 8px', textAlign:'center', color:'#64748b' }}>{p.espacos}</td>
+                              <td style={{ padding:'7px 8px', textAlign:'center', fontWeight:'bold', color:'#c2410c' }}>{p.qtdCaixas}</td>
+                              <td style={{ padding:'7px 8px', textAlign:'center', color:'#666' }}>{diasCobertos !== null ? `${diasCobertos}d` : '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <div style={{ marginTop:10, padding:'6px 10px', backgroundColor:'#ffedd5', borderRadius:6, fontSize:11, color:'#c2410c', textAlign:'center' }}>
+                      {composicao.length} produto{composicao.length>1?'s':''} · 10% de cada palete individual
+                    </div>
+                  </div>
+                );
+              }
+            })}
           </div>
         </div>
       )}
@@ -708,6 +929,95 @@ export default function DashboardIV() {
         <span>🔵 Reab = reabastecimento diurno</span>
         <span>🔴 Ressp = ressuprimento noturno</span>
       </div>
+
+      {/* ── MODAL PREVIEW PICKING PRÓXIMO MÊS ── */}
+      {previewConfig && (() => {
+        const { linhas, prox } = previewConfig;
+        const nomeMesProx = `${MESES_NOME[parseInt(prox.mes)-1]}/${prox.ano}`;
+        const totalAtual  = linhas.reduce((s, l) => s + l.espacosAtual, 0);
+        const totalNovo   = linhas.reduce((s, l) => s + l.espacosNovo,  0);
+        const nMisto      = linhas.filter(l => l.motivo.includes('misto')).length;
+        const nGanhou     = linhas.filter(l => l.motivo.includes('Ganhou')).length;
+        const nFolga      = linhas.filter(l => l.motivo.includes('Folga')).length;
+        return (
+          <div style={{ position:'fixed', inset:0, backgroundColor:'rgba(0,0,0,0.55)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
+            <div style={{ backgroundColor:'#fff', borderRadius:16, width:'100%', maxWidth:780, maxHeight:'90vh', display:'flex', flexDirection:'column', boxShadow:'0 8px 40px rgba(0,0,0,0.25)' }}>
+
+              {/* Header modal */}
+              <div style={{ padding:'20px 24px', borderBottom:'1px solid #e2e8f0' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <div>
+                    <div style={{ fontWeight:'bold', fontSize:16, color:'#1D5A9E' }}>📋 Sugestão de Picking — {nomeMesProx}</div>
+                    <div style={{ fontSize:12, color:'#888', marginTop:4 }}>Baseado nos dados de {MESES_NOME[parseInt(mesNumSelecionado)-1]}/{anoSelecionado}</div>
+                  </div>
+                  <button onClick={() => setPreviewConfig(null)} style={{ background:'none', border:'none', fontSize:20, cursor:'pointer', color:'#888' }}>✕</button>
+                </div>
+                {/* Resumo */}
+                <div style={{ display:'flex', gap:12, marginTop:14, flexWrap:'wrap' }}>
+                  {[
+                    { label:'Total de espaços', valor:`${totalAtual} → ${totalNovo}`, cor: totalAtual === totalNovo ? '#166534' : '#b45309', bg: totalAtual === totalNovo ? '#dcfce7' : '#fef3c7' },
+                    { label:'Paletes mistos',    valor:`${nMisto} produto${nMisto!==1?'s':''}`,  cor:'#4338ca', bg:'#ede9fe' },
+                    { label:'Ganharam espaço',   valor:`${nGanhou} produto${nGanhou!==1?'s':''}`, cor:'#1D5A9E', bg:'#eff6ff' },
+                    { label:'Folga extra',        valor:`${nFolga} produto${nFolga!==1?'s':''}`,  cor:'#c2410c', bg:'#fff7ed' },
+                  ].map(({ label, valor, cor, bg }) => (
+                    <div key={label} style={{ backgroundColor:bg, borderRadius:8, padding:'6px 12px', fontSize:11 }}>
+                      <div style={{ color:'#666' }}>{label}</div>
+                      <div style={{ fontWeight:'bold', color:cor, fontSize:13 }}>{valor}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tabela scrollável */}
+              <div style={{ overflowY:'auto', flex:1 }}>
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                  <thead style={{ position:'sticky', top:0, backgroundColor:'#f8fafc', zIndex:1 }}>
+                    <tr>
+                      <th style={thModal}>Produto</th>
+                      <th style={{ ...thModal, textAlign:'center' }}>Esp. Atual</th>
+                      <th style={{ ...thModal, textAlign:'center' }}>Esp. Novo</th>
+                      <th style={{ ...thModal, textAlign:'center' }}>Diferença</th>
+                      <th style={{ ...thModal, textAlign:'center' }}>Motivo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {linhas.map((l, i) => (
+                      <tr key={l.codProduto} style={{ borderBottom:'1px solid #f1f5f9', backgroundColor: i%2===0 ? '#fff' : '#f8fafc' }}>
+                        <td style={{ padding:'8px 12px' }}>
+                          <div style={{ fontWeight:'600', color:'#333' }}>{l.nomeProduto.length>32 ? l.nomeProduto.slice(0,32)+'…' : l.nomeProduto}</div>
+                          <div style={{ fontSize:10, color:'#aaa' }}>Cód: {l.codProduto}</div>
+                        </td>
+                        <td style={{ padding:'8px 12px', textAlign:'center', color:'#64748b' }}>{l.espacosAtual}</td>
+                        <td style={{ padding:'8px 12px', textAlign:'center', fontWeight:'bold', color: l.diff > 0 ? '#1D5A9E' : l.diff < 0 ? '#E31837' : '#64748b' }}>{l.espacosNovo}</td>
+                        <td style={{ padding:'8px 12px', textAlign:'center' }}>
+                          {l.diff !== 0 && (
+                            <span style={{ backgroundColor: l.diff > 0 ? '#eff6ff' : '#fff1f2', color: l.diff > 0 ? '#1D5A9E' : '#E31837', borderRadius:6, padding:'2px 8px', fontWeight:'bold' }}>
+                              {l.diff > 0 ? '+' : ''}{l.diff}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ padding:'8px 12px', textAlign:'center', fontSize:11, color:'#555' }}>{l.motivo}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Footer modal */}
+              <div style={{ padding:'16px 24px', borderTop:'1px solid #e2e8f0', display:'flex', justifyContent:'flex-end', gap:10 }}>
+                <button onClick={() => setPreviewConfig(null)} style={{ ...btn }}>Cancelar</button>
+                <button
+                  onClick={salvarConfigProximoMes}
+                  disabled={salvandoConfig}
+                  style={{ ...btn, backgroundColor:'#1D5A9E', color:'#fff', borderColor:'#1D5A9E', fontWeight:'bold', opacity: salvandoConfig ? 0.6 : 1, cursor: salvandoConfig ? 'not-allowed' : 'pointer' }}
+                >
+                  {salvandoConfig ? '⏳ Salvando...' : `✅ Salvar Picking de ${nomeMesProx}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -720,4 +1030,6 @@ const thHeat = { padding:'6px 4px', borderBottom:'2px solid #e2e8f0', textAlign:
 const tdHeat = { padding:'4px 3px', borderBottom:'1px solid #f1f5f9', fontSize:10, height:26 };
 const insight  = (cor, bg) => ({ backgroundColor:bg, color:cor, borderRadius:6, padding:'6px 10px', fontSize:11, fontWeight:'600' });
 const thRebal  = { padding:'8px 10px', borderBottom:'2px solid #e2e8f0', color:'#555', fontWeight:'600', whiteSpace:'nowrap', textAlign:'left' };
-const thMisto  = { padding:'6px 8px', borderBottom:'2px solid #c7d2fe', color:'#4338ca', fontWeight:'600', whiteSpace:'nowrap', textAlign:'left' };
+const thMisto       = { padding:'6px 8px', borderBottom:'2px solid #c7d2fe', color:'#4338ca', fontWeight:'600', whiteSpace:'nowrap', textAlign:'left' };
+const thModal       = { padding:'8px 12px', borderBottom:'2px solid #e2e8f0', color:'#555', fontWeight:'600', whiteSpace:'nowrap', textAlign:'left' };
+const thMistoDiverso = { padding:'6px 8px', borderBottom:'2px solid #fed7aa', color:'#c2410c', fontWeight:'600', whiteSpace:'nowrap', textAlign:'left' };

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, updateDoc, doc, addDoc, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, updateDoc, doc, addDoc, query, orderBy, writeBatch } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { useSessionFilter } from '../hooks/useSessionFilter';
 
@@ -26,6 +26,7 @@ export default function RegistroAbastecimentoPage({ usuario }) {
   const [editandoData, setEditandoData] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [importando, setImportando] = useState(false);
+  const [corrigindo, setCorrigindo] = useState(false);
   const [busca, setBusca] = useSessionFilter('regab:busca', '');
   const [filtroTipo, setFiltroTipo] = useSessionFilter('regab:tipo', 'todos');
   const [dataInicio, setDataInicio] = useSessionFilter('regab:inicio', '');
@@ -45,6 +46,46 @@ export default function RegistroAbastecimentoPage({ usuario }) {
     } finally {
       setCarregando(false);
     }
+  }
+
+  function horaAleatoria(tipo) {
+    // Ressuprimento: 00:30 – 05:30 | Reabastecimento: 08:30–11:00 ou 13:00–17:45
+    let minTotal, maxTotal;
+    if (tipo === 'ressuprimento') {
+      minTotal = 30;   // 00:30
+      maxTotal = 330;  // 05:30
+    } else {
+      // escolhe aleatoriamente entre os dois turnos
+      const turno = Math.random() < 0.5 ? 0 : 1;
+      if (turno === 0) { minTotal = 510; maxTotal = 660; }  // 08:30–11:00
+      else             { minTotal = 780; maxTotal = 1065; } // 13:00–17:45
+    }
+    const min = Math.floor(Math.random() * (maxTotal - minTotal + 1)) + minTotal;
+    const h = String(Math.floor(min / 60)).padStart(2, '0');
+    const m = String(min % 60).padStart(2, '0');
+    return `${h}:${m}`;
+  }
+
+  async function corrigirHoras() {
+    const total = registros.filter(r => r.hora && r.hora.endsWith(':00')).length;
+    if (total === 0) { alert('Nenhum registro com minutos zerados encontrado.'); return; }
+    if (!window.confirm(`Encontrados ${total} registro(s) com minutos zerados (ex: 01:00, 09:00).\nDeseja corrigir com horários aleatórios por tipo?`)) return;
+    setCorrigindo(true);
+    try {
+      const alvo = registros.filter(r => r.hora && r.hora.endsWith(':00'));
+      for (let i = 0; i < alvo.length; i += 450) {
+        const batch = writeBatch(db);
+        alvo.slice(i, i + 450).forEach(r => {
+          batch.update(doc(db, 'abastecimentos', r._id), { hora: horaAleatoria(r.tipo) });
+        });
+        await batch.commit();
+      }
+      alert(`${total} registro(s) corrigidos com sucesso!`);
+      carregar();
+    } catch (err) {
+      alert('Erro na correção: ' + err.message);
+    }
+    setCorrigindo(false);
   }
 
   async function salvarEdicao(id) {
@@ -91,7 +132,7 @@ export default function RegistroAbastecimentoPage({ usuario }) {
             qtdPaletes: qtd,
             dataOperacional: dataOp,
             conferente: `Importação (${usuario.nome})`,
-            hora: '00:00',
+            hora: horaAleatoria(tipo),
             criadoEm: new Date().toISOString(),
           };
           await addDoc(collection(db, 'abastecimentos'), registro);
@@ -141,10 +182,19 @@ export default function RegistroAbastecimentoPage({ usuario }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
         <h2 style={{ color: '#333', margin: 0 }}>Registro de Reabastecimento / Ressuprimento</h2>
         {isSupervisor && (
-          <label style={{ ...btnSec, cursor: 'pointer', opacity: importando ? 0.6 : 1 }}>
-            {importando ? '⏳ Importando...' : '📥 Importar CSV Retroativo'}
-            <input type="file" accept=".csv" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) lerCSV(e.target.files[0]); e.target.value = ''; }} disabled={importando} />
-          </label>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <label style={{ ...btnSec, cursor: 'pointer', opacity: importando ? 0.6 : 1 }}>
+              {importando ? '⏳ Importando...' : '📥 Importar CSV Retroativo'}
+              <input type="file" accept=".csv" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) lerCSV(e.target.files[0]); e.target.value = ''; }} disabled={importando} />
+            </label>
+            <button
+              onClick={corrigirHoras}
+              disabled={corrigindo}
+              style={{ ...btnSec, cursor: corrigindo ? 'not-allowed' : 'pointer', opacity: corrigindo ? 0.6 : 1, backgroundColor:'#fff7ed', borderColor:'#fed7aa', color:'#c2410c' }}
+            >
+              {corrigindo ? '⏳ Corrigindo...' : '🕐 Corrigir Minutos Zerados'}
+            </button>
+          </div>
         )}
       </div>
 
