@@ -23,6 +23,7 @@ import DashboardPage from './pages/gerenciamento-estoque/DashboardPage';
 import GerenciarLocalizacoesPage from './pages/gerenciamento-estoque/GerenciarLocalizacoesPage';
 import EndereçamentoPage from './pages/gerenciamento-estoque/EndereçamentoPage';
 import ColetasValidadePage from './pages/gerenciamento-estoque/ColetasValidadePage';
+import LayoutArmazem from './pages/LayoutArmazem';
 
 export default function App() {
   const [usuario, setUsuario] = useState(null);
@@ -59,7 +60,7 @@ export default function App() {
     <BrowserRouter>
       <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#fafafa' }}>
         <Sidebar usuario={usuario} onLogout={logout} fixado={fixado} onToggleFixado={toggleFixado} />
-        <div style={{ flex: 1, marginLeft: fixado ? '240px' : '56px', padding: '24px', overflowY: 'auto', maxHeight: '100vh', transition: 'margin-left 0.25s ease' }}>
+        <div style={{ flex: 1, marginLeft: fixado ? '240px' : '56px', padding: window.location.pathname.startsWith('/armazem') ? 0 : '24px', overflowY: window.location.pathname.startsWith('/armazem') ? 'hidden' : 'auto', height: '100vh', transition: 'margin-left 0.25s ease' }}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/nris" element={<NRIs usuario={usuario} />} />
@@ -82,6 +83,7 @@ export default function App() {
             <Route path="/estoque/gerenciar-localizacoes" element={usuario.nivel === 'supervisor' ? <GerenciarLocalizacoesPage /> : <Navigate to="/" />} />
             <Route path="/estoque/enderecamento" element={<EndereçamentoPage />} />
             <Route path="/estoque/coletas-validade" element={<ColetasValidadePage />} />
+            <Route path="/armazem/layout" element={<LayoutArmazem />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </div>

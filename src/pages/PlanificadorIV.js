@@ -95,6 +95,10 @@ export default function PlanificadorIV() {
   const [busca, setBusca]                           = useSessionFilter('planiv:busca', '');
   const [ordenacao, setOrdenacao]                   = useSessionFilter('planiv:ord', { col: 'codProduto', dir: 'asc' });
   const [tooltip, setTooltip]                       = useState(null);
+  const [dataOS, setDataOS]                         = useState(() => {
+    const h = new Date();
+    return `${h.getFullYear()}-${String(h.getMonth()+1).padStart(2,'0')}-${String(h.getDate()).padStart(2,'0')}`;
+  });
 
   const mes        = anoSelecionado && mesNumSelecionado ? `${mesNumSelecionado}/${anoSelecionado}` : '';
   const anos       = [...new Set(mesesDisponiveis.map(m => m.split('-')[0]))].sort();
@@ -570,6 +574,151 @@ export default function PlanificadorIV() {
     }
   }
 
+  // ===== OS DE REABASTECIMENTO =====
+  function gerarOSReabastecimento() {
+    if (!dataOS) { alert('Selecione uma data para a OS.'); return; }
+
+    const [aaaa, mmOS, ddOS] = dataOS.split('-');
+    const dataFormatada = `${ddOS}/${mmOS}/${aaaa}`;
+    const dateObj = new Date(parseInt(aaaa), parseInt(mmOS)-1, parseInt(ddOS));
+    const isDom = dateObj.getDay() === 0;
+    if (isDom) { alert('Domingo não tem operação de reabastecimento.'); return; }
+
+    const itens = [];
+    for (const l of linhas) {
+      const dayData = l.daysData.find(d => d.dateStr === dataFormatada);
+      if (!dayData || dayData.isDom || dayData.isFuture) continue;
+      if (dayData.planejado !== null && dayData.planejado >= 1) {
+        itens.push({
+          codigo: l.codProduto,
+          nome: l.nomeProduto,
+          planejado: dayData.planejado,
+          espacosPalete: l.espacosPalete,
+          cxPorPlt: l.cxPorPlt,
+        });
+      }
+    }
+
+    if (itens.length === 0) {
+      alert(`Nenhum produto com planejado ≥ 1 para ${dataFormatada}.\n\nVerifique se o mês está carregado e se há dados de vendas para esse período.`);
+      return;
+    }
+
+    const totalPaletes = itens.reduce((s, it) => s + it.planejado, 0);
+    const logoUrl = window.location.origin + '/LogoCBM.png';
+    const agora = new Date();
+    const geradoEm = `${String(agora.getDate()).padStart(2,'0')}/${String(agora.getMonth()+1).padStart(2,'0')}/${agora.getFullYear()} ${String(agora.getHours()).padStart(2,'0')}:${String(agora.getMinutes()).padStart(2,'0')}`;
+
+    const linhasTabela = itens
+      .sort((a, b) => parseInt(a.codigo) - parseInt(b.codigo))
+      .map((item, idx) => `
+        <tr style="background:${idx % 2 === 0 ? '#ffffff' : '#f4f8ff'}">
+          <td style="padding:4px 8px;border:1px solid #ddd;text-align:center;font-weight:bold;color:#E31837;font-size:12px">${item.codigo}</td>
+          <td style="padding:4px 8px;border:1px solid #ddd;font-size:12px">${item.nome}</td>
+          <td style="padding:4px 8px;border:1px solid #ddd;text-align:center;font-weight:bold;font-size:15px;color:#1D5A9E">${item.planejado}</td>
+          <td style="padding:4px 8px;border:1px solid #ddd;text-align:center;color:#999;font-size:12px"></td>
+        </tr>
+      `).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>OS Reabastecimento ${dataFormatada}</title>
+  <style>
+    @media print {
+      body { margin: 0; }
+      @page { size: A4; margin: 14mm 12mm; }
+      .no-print { display: none !important; }
+    }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #222; padding: 0; margin: 0; }
+    .page { padding: 14px; }
+    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #E31837; padding-bottom: 8px; margin-bottom: 10px; }
+    .logo-block { display: flex; align-items: center; gap: 10px; }
+    .logo { height: 48px; object-fit: contain; }
+    .company-name { font-size: 14px; font-weight: bold; color: #1D5A9E; line-height: 1.2; }
+    .title-block  { text-align: right; }
+    .os-title     { font-size: 17px; font-weight: bold; color: #1D5A9E; letter-spacing: 0.3px; }
+    .os-date      { font-size: 13px; color: #E31837; font-weight: bold; margin-top: 2px; }
+    .os-sub       { font-size: 10px; color: #999; margin-top: 1px; }
+    .totals       { display: flex; gap: 24px; background: #eef4ff; border: 1px solid #c0cce8; border-radius: 6px; padding: 7px 16px; margin-bottom: 10px; }
+    .total-item   { text-align: center; }
+    .total-num    { font-size: 24px; font-weight: bold; color: #1D5A9E; line-height: 1; }
+    .total-label  { font-size: 10px; color: #666; margin-top: 1px; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: #1D5A9E; color: white; }
+    thead th { padding: 5px 8px; text-align: center; font-size: 11px; font-weight: bold; border: 1px solid #1a4f8a; }
+    thead th.left { text-align: left; }
+    .footer { margin-top: 10px; font-size: 10px; color: #bbb; border-top: 1px solid #eee; padding-top: 6px; display: flex; justify-content: space-between; }
+    .sign-area { margin-top: 20px; display: flex; gap: 30px; }
+    .sign-box { flex: 1; border-top: 1px solid #999; padding-top: 4px; font-size: 10px; color: #666; text-align: center; }
+  </style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div class="logo-block">
+      <img src="${logoUrl}" class="logo" onerror="this.style.display='none'" alt="CBM" />
+      <div>
+        <div class="company-name">CBM Carpina</div>
+      </div>
+    </div>
+    <div class="title-block">
+      <div class="os-title">Ordem de Serviço</div>
+      <div class="os-title" style="font-size:14px;color:#555">Reabastecimento do Picking</div>
+      <div class="os-date">📅 ${dataFormatada}</div>
+      <div class="os-sub">Gerado em ${geradoEm}</div>
+    </div>
+  </div>
+
+  <div class="totals">
+    <div class="total-item">
+      <div class="total-num">${itens.length}</div>
+      <div class="total-label">produtos</div>
+    </div>
+    <div class="total-item">
+      <div class="total-num">${totalPaletes}</div>
+      <div class="total-label">paletes planejados</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:70px">Código</th>
+        <th class="left">Produto</th>
+        <th style="width:90px">Planejado</th>
+        <th style="width:90px">Real</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${linhasTabela}
+    </tbody>
+  </table>
+
+  <div class="sign-area">
+    <div class="sign-box">Conferente Responsável</div>
+    <div class="sign-box">Supervisor</div>
+    <div class="sign-box">Hora de Início</div>
+    <div class="sign-box">Hora de Conclusão</div>
+  </div>
+
+  <div class="footer">
+    <span>CBM Carpina · Sistema de Gestão de Reabastecimento</span>
+    <span>OS — ${dataFormatada}</span>
+  </div>
+</div>
+<script>window.onload = function(){ window.print(); }</script>
+</body>
+</html>`;
+
+    const w = window.open('', '_blank', 'width=960,height=750');
+    if (!w) { alert('Popup bloqueado! Permita popups para este site e tente novamente.'); return; }
+    w.document.write(html);
+    w.document.close();
+  }
+
   if (carregando) return <div style={{ textAlign: 'center', padding: 40, color: '#666' }}>⏳ Carregando...</div>;
 
   const nSubCols = modo === 'reabastecimento' ? 3 : 1;
@@ -649,6 +798,27 @@ export default function PlanificadorIV() {
           />
           {busca && <button onClick={() => setBusca('')} style={{ ...btnSec, padding: '7px 10px' }}>✕</button>}
         </div>
+      </div>
+
+      {/* OS de Reabastecimento */}
+      <div style={{ backgroundColor: '#fff', borderRadius: 12, padding: '12px 18px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', borderLeft: '4px solid #1D5A9E' }}>
+        <span style={{ fontSize: 13, fontWeight: 'bold', color: '#1D5A9E' }}>📋 OS de Reabastecimento</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label style={{ fontSize: 12, color: '#555' }}>Data da OS:</label>
+          <input
+            type="date"
+            value={dataOS}
+            onChange={e => setDataOS(e.target.value)}
+            style={{ ...inpStyle, fontSize: 13, width: 150 }}
+          />
+        </div>
+        <button
+          onClick={gerarOSReabastecimento}
+          style={{ padding: '8px 18px', backgroundColor: '#1D5A9E', color: 'white', border: 'none', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', fontSize: 13 }}
+        >
+          🖨️ Gerar OS (PDF)
+        </button>
+        <span style={{ fontSize: 11, color: '#aaa' }}>Gera o planejado do dia selecionado</span>
       </div>
 
       {/* Widgets */}

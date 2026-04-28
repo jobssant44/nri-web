@@ -52,6 +52,14 @@ const GRUPOS = [
     ],
   },
   {
+    label: 'Mapa do Armazém',
+    icon: '🗺️',
+    todos: true,
+    itens: [
+      { path: '/armazem/layout', label: 'Layout Armazém', icon: '🏭', todos: true },
+    ],
+  },
+  {
     label: 'Gestão de Idade',
     icon: '📅',
     todos: true,
