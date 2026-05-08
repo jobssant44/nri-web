@@ -2,6 +2,32 @@ import { useState, useEffect, useRef } from 'react';
 import { collection, getDocs, query, orderBy, getDoc, doc, addDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { useSessionFilter } from '../hooks/useSessionFilter';
+import { lerCache, salvarCache, invalidarCache } from '../utils/cache';
+
+async function buscarAbastecimentos() {
+  const cached = lerCache('abastecimentos');
+  if (cached) return cached;
+  const snap = await getDocs(collection(db, 'abastecimentos'));
+  const dados = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+  salvarCache('abastecimentos', dados);
+  return dados;
+}
+
+async function buscarVendasMap() {
+  const cached = lerCache('vendasMap');
+  if (cached) return cached;
+  const snap = await getDocs(query(collection(db, 'vendas_relatorio'), orderBy('importadoEm', 'asc')));
+  const vMap = {};
+  snap.docs.forEach(d => {
+    (d.data().produtos || []).forEach(p => {
+      const cod = String(p.codigo);
+      if (!vMap[cod]) vMap[cod] = {};
+      Object.entries(p.vendas || {}).forEach(([data, qtd]) => { vMap[cod][data] = qtd; });
+    });
+  });
+  if (Object.keys(vMap).length > 0) salvarCache('vendasMap', vMap);
+  return vMap;
+}
 
 const MESES_NOME = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
@@ -135,38 +161,38 @@ export default function PlanificadorIV() {
     };
   }, [mes, modo]);
 
-  async function carregarPickingConfig(mesVal) {
+  async function carregarPickingConfig(mesVal, forcarAtualizacao = false) {
     const chave = mesParaChave(mesVal);
     if (!chave) return;
+    const cacheKey = `pickingConfig:${chave}`;
+    if (forcarAtualizacao) invalidarCache(cacheKey);
+    const cached = lerCache(cacheKey);
+    if (cached) { setPickingConfig(cached); return; }
+    let config;
     const pDoc = await getDoc(doc(db, 'picking_config_mensal', chave));
     if (pDoc.exists() && (pDoc.data().produtos || []).length > 0) {
-      setPickingConfig(pDoc.data().produtos || []);
+      config = pDoc.data().produtos || [];
     } else {
       const pSnap = await getDocs(collection(db, 'picking_config'));
-      setPickingConfig(pSnap.docs.map(d => d.data()));
+      config = pSnap.docs.map(d => d.data());
     }
+    salvarCache(cacheKey, config);
+    setPickingConfig(config);
   }
 
-  async function carregar() {
+  async function carregar(forcarAtualizacao = false) {
     setCarregando(true);
     try {
-      const [aSnap, vSnap] = await Promise.all([
-        getDocs(collection(db, 'abastecimentos')),
-        getDocs(query(collection(db, 'vendas_relatorio'), orderBy('importadoEm', 'asc'))),
-      ]);
+      if (forcarAtualizacao) invalidarCache('abastecimentos', 'vendasMap');
 
-      const vMap = {};
-      vSnap.docs.forEach(d => {
-        (d.data().produtos || []).forEach(p => {
-          const cod = String(p.codigo);
-          if (!vMap[cod]) vMap[cod] = {};
-          Object.entries(p.vendas || {}).forEach(([data, qtd]) => { vMap[cod][data] = qtd; });
-        });
-      });
+      const [abasts, vMap] = await Promise.all([
+        buscarAbastecimentos(),
+        buscarVendasMap(),
+      ]);
 
       const mesesSet = new Set();
       Object.values(vMap).forEach(cod => Object.keys(cod).forEach(d => { const c = dataParaChaveMes(d); if (c) mesesSet.add(c); }));
-      aSnap.docs.forEach(d => { const c = dataParaChaveMes(d.data().dataOperacional); if (c) mesesSet.add(c); });
+      abasts.forEach(a => { const c = dataParaChaveMes(a.dataOperacional); if (c) mesesSet.add(c); });
       const meses = [...mesesSet].sort().reverse();
       setMesesDisponiveis(meses);
 
@@ -180,9 +206,9 @@ export default function PlanificadorIV() {
         mesParaUsar = `${mesNum}/${ano}`;
       }
 
-      setAbastecimentos(aSnap.docs.map(d => ({ _id: d.id, ...d.data() })));
+      setAbastecimentos(abasts);
       setVendasMap(vMap);
-      if (mesParaUsar) await carregarPickingConfig(mesParaUsar);
+      if (mesParaUsar) await carregarPickingConfig(mesParaUsar, forcarAtualizacao);
     } catch (err) {
       console.error(err);
     } finally {
@@ -240,7 +266,9 @@ export default function PlanificadorIV() {
       const ref     = new Date(d);
       ref.setDate(ref.getDate() - (d.getDay() === 1 ? 2 : 1));
       const dataRef = formatarData(ref);
-      const vendas  = vendasMap[cod]?.[dataRef] ?? null;
+      let vendas    = vendasMap[cod]?.[dataRef] ?? null;
+      // Segunda sem dado no relatório → tratar como 0 para que terça não fique em branco
+      if (vendas === null && ref.getDay() === 1) vendas = 0;
 
       const depletionBefore = depletionAccum;
 
@@ -366,6 +394,7 @@ export default function PlanificadorIV() {
       }
 
       alert(`✅ ${registros.length} lançamento(s) inserido(s) em ${nomeMes}.`);
+      invalidarCache('abastecimentos');
       await carregar();
     } catch (err) {
       alert('Erro: ' + err.message);
@@ -432,6 +461,7 @@ export default function PlanificadorIV() {
       }
 
       alert(`✅ ${registros.length} lançamento(s) de ressuprimento inserido(s) em ${nomeMes}.`);
+      invalidarCache('abastecimentos');
       await carregar();
     } catch (err) {
       alert('Erro: ' + err.message);
@@ -510,7 +540,8 @@ export default function PlanificadorIV() {
         }
       });
 
-      // ── PASSO 4: modelo de depleção com ressuprimentos e inserir reabastecimentos
+      // ── PASSO 4: modelo de depleção — reabastecimentos foram apagados no Passo 1,
+      // portanto não existe "real" para corrigir o acumulador. Usar apenas planejado.
       const reabRegistros = [];
       for (const cfg of pickingConfig) {
         const cod = String(cfg.codProduto);
@@ -522,32 +553,25 @@ export default function PlanificadorIV() {
           const d = parsearData(dateStr);
           const isFuture = d > HOJE;
           const isDom    = d.getDay() === 0;
-          const real  = reabMapF[cod]?.[dateStr]  || 0;
           const ressp = resspMapF[cod]?.[dateStr] || 0;
           if (isDom || isFuture) {
-            if (!isFuture && cxPorPlt > 0) {
-              if (real  > 0) acc = Math.max(0, acc - real  * cxPorPlt);
-              if (ressp > 0) acc = Math.max(0, acc - ressp * cxPorPlt);
-            }
+            if (!isFuture && ressp > 0) acc = Math.max(0, acc - ressp * cxPorPlt);
             continue;
           }
           const ref = new Date(d);
           ref.setDate(ref.getDate() - (d.getDay() === 1 ? 2 : 1));
-          const vendas = vendasMap[cod]?.[formatarData(ref)] ?? null;
-          if (vendas !== null && cxPorPlt > 0) acc += vendas;
+          let vendas = vendasMap[cod]?.[formatarData(ref)] ?? null;
+          if (vendas === null && ref.getDay() === 1) vendas = 0;
+          if (vendas !== null) acc += vendas;
           let planejado = null;
-          if (cxPorPlt > 0 && vendas !== null) {
+          if (vendas !== null) {
             if (acc >= cxPorPlt) {
               const maxP = espacosPalete > 0 ? espacosPalete : Infinity;
               planejado = Math.min(Math.floor(acc / cxPorPlt), maxP);
-              acc = acc - planejado * cxPorPlt;
+              acc -= planejado * cxPorPlt;
             } else { planejado = 0; }
           }
-          if (cxPorPlt > 0) {
-            if (planejado !== null) { const e = real - planejado; if (e !== 0) acc = Math.max(0, acc - e * cxPorPlt); }
-            else if (real > 0) acc = Math.max(0, acc - real * cxPorPlt);
-          }
-          if (ressp > 0 && cxPorPlt > 0) acc = Math.max(0, acc - ressp * cxPorPlt);
+          if (ressp > 0) acc = Math.max(0, acc - ressp * cxPorPlt);
           if (planejado !== null && planejado >= 1) {
             const [dd, mm, aaaa] = dateStr.split('/');
             reabRegistros.push({ codProduto: cod, nomeProduto: cfg.nomeProduto || cod, tipo: 'reabastecimento', qtdPaletes: planejado, conferente: 'Luiz Henrique', dataOperacional: dateStr, hora: '06:00', criadoEm: new Date(`${aaaa}-${mm}-${dd}T06:00:00`).toISOString() });
@@ -566,6 +590,7 @@ export default function PlanificadorIV() {
         `• ${resspRegistros.length} ressuprimento(s) inserido(s)\n` +
         `• ${reabRegistros.length} reabastecimento(s) inserido(s)`
       );
+      invalidarCache('abastecimentos');
       await carregar();
     } catch (err) {
       alert('Erro: ' + err.message);
@@ -754,7 +779,7 @@ export default function PlanificadorIV() {
             {mesesDoAno.map(m => <option key={m} value={m}>{MESES_NOME[parseInt(m)-1]}</option>)}
           </select>
 
-          <button onClick={carregar} style={btnSec}>🔄 Atualizar</button>
+          <button onClick={() => carregar(true)} style={btnSec}>🔄 Atualizar</button>
 
           {diasMes.length > 0 && linhas.length > 0 && (
             <button

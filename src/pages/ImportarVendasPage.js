@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { collection, getDocs, addDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import { invalidarCache } from '../utils/cache';
 import * as XLSX from 'xlsx';
 
 function parsearData(valor) {
@@ -99,31 +100,44 @@ export default function ImportarVendasPage() {
         if (rows.length < 2) { setMensagem('❌ Arquivo vazio ou sem dados'); return; }
 
         const tabela = {};
+        const tabelaPrepicking = {};
+        const tabelaAvulsas = {};
         let ignoradas = 0;
         let processadas = 0;
-        let faltamPicking = 0;
+        let processadasPrepicking = 0;
 
         for (let i = 1; i < rows.length; i++) {
           const row = rows[i];
-          if (String(row[4] || '').trim() === 'Sim') { ignoradas++; continue; }
+          // Coluna F (row[5]) = Palete Fechado — só considera "Não"
+          if (String(row[5] || '').trim() !== 'Não') { ignoradas++; continue; }
 
-          const data = parsearData(row[0]);
-          const codigo = String(row[1] || '').trim();
+          const data     = parsearData(row[0]);
+          const codigo   = String(row[1] || '').trim();
           const descricao = String(row[2] || '').trim();
-          const qtd = parseFloat(String(row[3] || '0').replace(',', '.')) || 0;
+          const qtd      = parseFloat(String(row[3] || '0').replace(',', '.')) || 0;
+          const avulsas  = parseInt(String(row[4] || '0').replace(',', '.')) || 0;
 
           if (!data || !codigo) continue;
 
-          // Filtrar apenas produtos do picking_config
-          if (!pickingCodes.has(codigo)) { faltamPicking++; continue; }
+          // Unidades avulsas — todos os produtos
+          if (avulsas > 0) {
+            if (!tabelaAvulsas[codigo]) tabelaAvulsas[codigo] = { descricao, avulsas: {} };
+            tabelaAvulsas[codigo].avulsas[data] = (tabelaAvulsas[codigo].avulsas[data] || 0) + avulsas;
+          }
 
-          if (!tabela[codigo]) tabela[codigo] = { descricao, vendas: {} };
-          tabela[codigo].vendas[data] = (tabela[codigo].vendas[data] || 0) + qtd;
-          processadas++;
+          if (pickingCodes.has(codigo)) {
+            if (!tabela[codigo]) tabela[codigo] = { descricao, vendas: {} };
+            tabela[codigo].vendas[data] = (tabela[codigo].vendas[data] || 0) + qtd;
+            processadas++;
+          } else {
+            if (!tabelaPrepicking[codigo]) tabelaPrepicking[codigo] = { descricao, vendas: {} };
+            tabelaPrepicking[codigo].vendas[data] = (tabelaPrepicking[codigo].vendas[data] || 0) + qtd;
+            processadasPrepicking++;
+          }
         }
 
-        if (processadas === 0) {
-          setMensagem('⚠️ Nenhuma linha válida encontrada para produtos do picking');
+        if (processadas === 0 && processadasPrepicking === 0) {
+          setMensagem('⚠️ Nenhuma linha válida encontrada (verifique se a coluna F contém "Não")');
           return;
         }
 
@@ -135,10 +149,30 @@ export default function ImportarVendasPage() {
           .map(([codigo, v]) => ({ codigo, descricao: v.descricao, vendas: v.vendas }))
           .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
 
-        setDados({ produtos, datas });
+        const datasSetPP = new Set();
+        Object.values(tabelaPrepicking).forEach(p => Object.keys(p.vendas).forEach(d => datasSetPP.add(d)));
+        const datasPrepicking = ordenarDatas([...datasSetPP]);
 
-        const extras = faltamPicking > 0 ? ` · ${faltamPicking} linha(s) ignorada(s) (produto fora do picking)` : '';
-        setMensagem(`✅ ${processadas} linha(s) processada(s) · ${ignoradas} ignorada(s) (palete fechado)${extras} · ${produtos.length} produto(s) · ${datas.length} dia(s)`);
+        const produtosPrepicking = Object.entries(tabelaPrepicking)
+          .map(([codigo, v]) => ({ codigo, descricao: v.descricao, vendas: v.vendas }))
+          .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
+
+        const datasSetAv = new Set();
+        Object.values(tabelaAvulsas).forEach(p => Object.keys(p.avulsas).forEach(d => datasSetAv.add(d)));
+        const datasAvulsas = ordenarDatas([...datasSetAv]);
+
+        const produtosAvulsas = Object.entries(tabelaAvulsas)
+          .map(([codigo, v]) => ({ codigo, descricao: v.descricao, avulsas: v.avulsas }))
+          .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
+
+        setDados({ produtos, datas, produtosPrepicking, datasPrepicking, produtosAvulsas, datasAvulsas });
+
+        setMensagem(
+          `✅ Picking: ${processadas} linha(s) · ${produtos.length} produto(s) · ${datas.length} dia(s)` +
+          (processadasPrepicking > 0 ? ` | Pré-Picking: ${produtosPrepicking.length} produto(s)` : '') +
+          (produtosAvulsas.length > 0 ? ` | Avulsas: ${produtosAvulsas.length} produto(s)` : '') +
+          (ignoradas > 0 ? ` · ${ignoradas} linha(s) ignorada(s) (palete fechado)` : '')
+        );
       } catch (err) {
         setMensagem(`❌ Erro ao processar arquivo: ${err.message}`);
       }
@@ -152,13 +186,35 @@ export default function ImportarVendasPage() {
     setSalvando(true);
     setMensagem('');
     try {
-      await addDoc(collection(db, 'vendas_relatorio'), {
-        importadoEm: new Date(),
-        nomeArquivo,
-        produtos: dados.produtos,
-        datas: dados.datas,
-      });
-      setMensagem('✅ Relatório salvo com sucesso! Visualize na aba "Vendas".');
+      const promises = [];
+      if (dados.produtos.length > 0) {
+        promises.push(addDoc(collection(db, 'vendas_relatorio'), {
+          importadoEm: new Date(),
+          nomeArquivo,
+          produtos: dados.produtos,
+          datas: dados.datas,
+        }));
+      }
+      if (dados.produtosPrepicking.length > 0) {
+        promises.push(addDoc(collection(db, 'vendas_prepicking'), {
+          importadoEm: new Date(),
+          nomeArquivo,
+          produtos: dados.produtosPrepicking,
+          datas: dados.datasPrepicking,
+        }));
+      }
+      if (dados.produtosAvulsas.length > 0) {
+        promises.push(addDoc(collection(db, 'vendas_avulsas'), {
+          importadoEm: new Date(),
+          nomeArquivo,
+          produtos: dados.produtosAvulsas,
+          datas: dados.datasAvulsas,
+        }));
+      }
+      await Promise.all(promises);
+      // Invalida todos os caches relacionados para forçar releitura do Firebase
+      invalidarCache('vendasMap', 'vendasAllMap', 'prepicking:vendasMap', 'prepicking:avulsasMap');
+      setMensagem('✅ Relatório salvo com sucesso!');
       setDados(null);
       setNomeArquivo('');
       if (inputRef.current) inputRef.current.value = '';
@@ -174,6 +230,32 @@ export default function ImportarVendasPage() {
     setMensagem('');
     setNomeArquivo('');
     if (inputRef.current) inputRef.current.value = '';
+  }
+
+  async function limparTodosRelatorios() {
+    const confirmar = window.confirm(
+      '⚠️ Isso apagará TODOS os relatórios importados de vendas, pré-picking e avulsas do Firebase.\n\nTem certeza?'
+    );
+    if (!confirmar) return;
+    setSalvando(true);
+    setMensagem('');
+    try {
+      const colecoes = ['vendas_relatorio', 'vendas_prepicking', 'vendas_avulsas'];
+      for (const nome of colecoes) {
+        const snap = await getDocs(collection(db, nome));
+        for (let i = 0; i < snap.docs.length; i += 450) {
+          const batch = writeBatch(db);
+          snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
+      invalidarCache('vendasMap', 'vendasAllMap', 'prepicking:vendasMap', 'prepicking:avulsasMap');
+      setMensagem('✅ Todos os relatórios foram apagados do Firebase e o cache foi limpo.');
+    } catch (err) {
+      setMensagem(`❌ Erro ao apagar: ${err.message}`);
+    } finally {
+      setSalvando(false);
+    }
   }
 
   const cardStyle = { backgroundColor: '#fff', borderRadius: '8px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', marginBottom: '20px' };
@@ -236,6 +318,23 @@ export default function ImportarVendasPage() {
           Selecione um arquivo Excel (.xlsx) para processar as vendas
         </div>
       )}
+
+      {/* Zona de perigo */}
+      <div style={{ ...cardStyle, borderLeft: '4px solid #ef4444', marginTop: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 'bold', color: '#991b1b', marginBottom: 10 }}>⚠️ Zona de Perigo</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <button
+            onClick={limparTodosRelatorios}
+            disabled={salvando}
+            style={{ padding: '9px 18px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: salvando ? 'not-allowed' : 'pointer', fontSize: 13, opacity: salvando ? 0.6 : 1 }}
+          >
+            🗑️ Apagar todos os relatórios importados
+          </button>
+          <span style={{ fontSize: 12, color: '#999' }}>
+            Remove tudo de <code>vendas_relatorio</code>, <code>vendas_prepicking</code> e <code>vendas_avulsas</code> + limpa o cache local
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

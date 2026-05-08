@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { useSessionFilter } from '../hooks/useSessionFilter';
+import { lerCache, salvarCache, invalidarCache } from '../utils/cache';
 
 const MESES_NOME = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
@@ -27,34 +28,28 @@ function ordenarDatas(datas) {
   });
 }
 
-function calcularDadosMes(relatorios, mesSelecionado) {
-  if (!mesSelecionado || relatorios.length === 0) return { produtos: [], datas: [] };
-
-  // relatorios já vêm ordenados por importadoEm asc → o mais recente sobrescreve o anterior
-  const vMap = {};
-  relatorios.forEach(r => {
-    (r.produtos || []).forEach(p => {
-      const cod = String(p.codigo);
-      Object.entries(p.vendas || {}).forEach(([data, qty]) => {
-        if (dataParaChave(data) !== mesSelecionado) return;
-        if (!vMap[cod]) vMap[cod] = { descricao: p.descricao, vendas: {} };
-        vMap[cod].vendas[data] = qty;
-      });
-    });
-  });
+function calcularDadosMes(vendasAllMap, mesSelecionado) {
+  if (!mesSelecionado || !vendasAllMap || Object.keys(vendasAllMap).length === 0) return { produtos: [], datas: [] };
 
   const datasSet = new Set();
-  Object.values(vMap).forEach(p => Object.keys(p.vendas).forEach(d => datasSet.add(d)));
-  const datas = ordenarDatas([...datasSet]);
-  const produtos = Object.entries(vMap)
-    .map(([codigo, v]) => ({ codigo, descricao: v.descricao, vendas: v.vendas }))
-    .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
+  const produtos = [];
+  Object.entries(vendasAllMap).forEach(([codigo, { descricao, vendas }]) => {
+    const vendasDoMes = {};
+    Object.entries(vendas || {}).forEach(([data, qty]) => {
+      if (dataParaChave(data) !== mesSelecionado) return;
+      vendasDoMes[data] = qty;
+      datasSet.add(data);
+    });
+    if (Object.keys(vendasDoMes).length > 0) produtos.push({ codigo, descricao, vendas: vendasDoMes });
+  });
 
+  const datas = ordenarDatas([...datasSet]);
+  produtos.sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
   return { produtos, datas };
 }
 
 export default function VendasPage() {
-  const [relatorios, setRelatorios] = useState([]);
+  const [vendasAllMap, setVendasAllMap] = useState({});
   const [mesesDisponiveis, setMesesDisponiveis] = useState([]);
   const [anoSelecionado, setAnoSelecionado] = useSessionFilter('vendas:ano', '');
   const [mesNumSelecionado, setMesNumSelecionado] = useSessionFilter('vendas:mes', '');
@@ -74,24 +69,31 @@ export default function VendasPage() {
 
   useEffect(() => { carregar(); }, []);
 
-  async function carregar() {
+  async function carregar(forcarAtualizacao = false) {
     setCarregando(true);
     try {
-      const snap = await getDocs(query(collection(db, 'vendas_relatorio'), orderBy('importadoEm', 'asc')));
-      const lista = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-      setRelatorios(lista);
+      if (forcarAtualizacao) invalidarCache('vendasAllMap');
+      let vMap = lerCache('vendasAllMap');
+      if (!vMap) {
+        const snap = await getDocs(query(collection(db, 'vendas_relatorio'), orderBy('importadoEm', 'asc')));
+        vMap = {};
+        snap.docs.forEach(d => {
+          (d.data().produtos || []).forEach(p => {
+            const cod = String(p.codigo);
+            if (!vMap[cod]) vMap[cod] = { descricao: p.descricao, vendas: {} };
+            Object.entries(p.vendas || {}).forEach(([data, qty]) => { vMap[cod].vendas[data] = qty; });
+          });
+        });
+        if (Object.keys(vMap).length > 0) salvarCache('vendasAllMap', vMap);
+      }
+      setVendasAllMap(vMap);
 
       const mesesSet = new Set();
-      lista.forEach(r => {
-        (r.datas || []).forEach(d => {
-          const chave = dataParaChave(d);
-          if (chave) mesesSet.add(chave);
-        });
-      });
+      Object.values(vMap).forEach(p => Object.keys(p.vendas).forEach(d => { const c = dataParaChave(d); if (c) mesesSet.add(c); }));
       const meses = [...mesesSet].sort().reverse();
       setMesesDisponiveis(meses);
       if (meses.length > 0) {
-        const [ano, mes] = meses[0].split('-'); // mais recente
+        const [ano, mes] = meses[0].split('-');
         setAnoSelecionado(ano);
         setMesNumSelecionado(mes);
       }
@@ -102,7 +104,7 @@ export default function VendasPage() {
     }
   }
 
-  const { produtos, datas } = calcularDadosMes(relatorios, mesSelecionado);
+  const { produtos, datas } = calcularDadosMes(vendasAllMap, mesSelecionado);
 
   const produtosFiltrados = produtos.filter(p => {
     if (!busca) return true;
@@ -114,11 +116,17 @@ export default function VendasPage() {
 
   if (carregando) return <div style={{ padding: 40, textAlign: 'center', color: '#666' }}>⏳ Carregando...</div>;
 
-  if (relatorios.length === 0) return (
+  if (Object.keys(vendasAllMap).length === 0) return (
     <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
       <h1 style={{ color: '#E31837', marginBottom: '10px' }}>📊 Vendas</h1>
       <div style={{ ...cardStyle, textAlign: 'center', padding: '40px', color: '#999' }}>
-        Nenhum relatório importado ainda. Use a aba <strong>Importar Vendas 03.02.36.08</strong> para importar.
+        <div style={{ marginBottom: 16 }}>Nenhum relatório encontrado no cache. Clique em Atualizar para buscar do Firebase.</div>
+        <button
+          onClick={() => carregar(true)}
+          style={{ padding: '10px 24px', backgroundColor: '#E31837', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}
+        >
+          🔄 Atualizar
+        </button>
       </div>
     </div>
   );
@@ -165,6 +173,13 @@ export default function VendasPage() {
               &nbsp;·&nbsp;<strong>{produtos.length}</strong> produto(s)
             </div>
           )}
+
+          <button
+            onClick={() => carregar(true)}
+            style={{ padding: '7px 12px', backgroundColor: '#f5f5f5', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
+          >
+            🔄 Atualizar
+          </button>
 
           {mesSelecionado && (
             <input
