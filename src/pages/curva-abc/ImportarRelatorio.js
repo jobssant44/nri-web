@@ -46,14 +46,18 @@ export function num(val) {
 /** Arredonda para 1 decimal (caixas) */
 function r2(v) { return Math.round(v * 10) / 10; }
 
-/** Interpreta a data da célula — formato Promax: AAAA-MM-DD (texto ou com hora) */
+/** Interpreta a data da célula — formato Promax: DD/MM/AAAA (texto, aceita sufixo de hora) */
 function parseData(cell) {
   const s = String(cell || '').trim();
   if (!s) return null;
-  // AAAA-MM-DD (formato Promax) — aceita sufixo de hora: "2026-04-14 00:00:00" ou "2026-04-14T00:00:00"
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return { ano: parseInt(m[1]), mes: parseInt(m[2]) };
-  return null;
+  // DD/MM/AAAA — sem $ para aceitar "14/04/2026 0:00:00"
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return null;
+  const mes = parseInt(m[2]);
+  const ano = parseInt(m[3]);
+  // Valida mes e ano para descartar linhas que não são datas reais
+  if (mes < 1 || mes > 12 || ano < 2020 || ano > 2040) return null;
+  return { mes, ano };
 }
 
 function mesKey(ano, mes) { return `${ano}-${String(mes).padStart(2,'0')}`; }
@@ -250,7 +254,7 @@ function Importar030236() {
             prod.cxAberto  += qtdCx; // AC = "Não" → Picking
           }
 
-          prod.diasSet.add(String(dataCell).slice(0, 10)); // "AAAA-MM-DD" → chave única por dia
+          prod.diasSet.add(String(dataCell).slice(0, 10)); // "DD/MM/AAAA" → chave única por dia
           validas++;
 
           if (i % CHUNK === 0) {
