@@ -50,8 +50,8 @@ function getCampo(produto, campo) {
 
 /**
  * Retorna o valor final a ser usado no Pareto.
- * - cx: quantidade de caixas diretamente
- * - plt: caixas ÷ fatorPalete do produto (relatório 01.11)
+ * - cx:  quantidade de caixas diretamente (cxTotal / cxAberto / cxFechado)
+ * - plt: caixas ÷ fatorPalete (campo paletizacao do Catálogo de Produtos)
  *        Se o produto não tiver fator cadastrado, retorna 0 (excluído do ranking).
  */
 function getValorFinal(produto, campo, metrica, fatores) {
@@ -322,9 +322,9 @@ export default function DashboardCurvaABC() {
 
         {/* Legenda da visão */}
         <div style={{ fontSize: 12, color: '#aaa', fontStyle: 'italic' }}>
-          {tipo === 'armazem' && 'Total geral vendido (col. D)'}
-          {tipo === 'picking'  && 'Venda fracionada — D menos palete fechado (col. D − E)'}
-          {tipo === 'estoque'  && 'Somente palete fechado (col. E)'}
+          {tipo === 'armazem' && 'Total geral vendido (col. AA — todos os registros)'}
+          {tipo === 'picking'  && 'Somente picking — col. AA onde AC = "Não" (palete não fechado)'}
+          {tipo === 'estoque'  && 'Somente estoque — col. AA onde AC = "Sim" (palete fechado)'}
         </div>
       </div>
 

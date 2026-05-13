@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
-import { collection, doc, getDoc, getDocs, setDoc, writeBatch, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, setDoc, writeBatch, deleteDoc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
 import * as XLSX from 'xlsx';
 
@@ -42,33 +42,9 @@ export function num(val) {
   return isNaN(n) || n < 0 ? 0 : n;
 }
 
-/** Converte HL: igual a num() mas nunca aplica a regra de "3 dígitos = milhar"
- *  Ex: "6,21" → 6.21 | "1.234" → 1.234 (não 1234, pois HL é sempre decimal pequeno) */
-export function numHL(val) {
-  if (typeof val === 'number') return isNaN(val) || val < 0 ? 0 : val;
-  const str = String(val ?? '').trim().replace(/\s/g, '');
-  if (!str || str === '-') return 0;
-  const lastComma = str.lastIndexOf(',');
-  const lastDot   = str.lastIndexOf('.');
-  let s = str;
-  if (lastComma !== -1 && lastDot !== -1) {
-    // Dois separadores: identifica qual é decimal
-    s = lastComma > lastDot
-      ? str.replace(/\./g, '').replace(',', '.')   // "1.234,56" → 1234.56
-      : str.replace(/,/g, '');                      // "1,234.56" → 1234.56
-  } else if (lastComma !== -1) {
-    s = str.replace(',', '.');                      // "6,21" → 6.21
-  }
-  // Ponto simples: SEMPRE decimal (nunca milhar) para HL
-  // "1.234" → 1.234  |  "6.21" → 6.21
-  const n = parseFloat(s);
-  return isNaN(n) || n < 0 ? 0 : n;
-}
 
 /** Arredonda para 1 decimal (caixas) */
 function r2(v) { return Math.round(v * 10) / 10; }
-/** Arredonda para 4 decimais (HL) */
-function r4(v) { return Math.round(v * 10000) / 10000; }
 
 /** Interpreta a data da célula — suporta serial Excel, Date, DD/MM/AAAA, AAAA-MM-DD */
 function parseData(cell) {
@@ -204,10 +180,10 @@ function Importar030236() {
         const wb    = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
         const sheet = wb.Sheets[wb.SheetNames[0]];
 
-        // Limita a 6 colunas (A-F, índices 0-5)
+        // Limita até a coluna AC (índice 28)
         if (sheet['!ref']) {
           const range = XLSX.utils.decode_range(sheet['!ref']);
-          range.e.c = Math.min(range.e.c, 5);
+          range.e.c = Math.min(range.e.c, 28);
           sheet['!ref'] = XLSX.utils.encode_range(range);
         }
 
@@ -215,22 +191,20 @@ function Importar030236() {
         rowsRef.current  = rows;                         // guarda para diagnóstico
         const totalLinhas = rows.length - 1;
 
-        // ── Diagnóstico: primeiras 10 linhas ──
+        // ── Diagnóstico: primeiras 10 linhas (colunas B, T, U, AA, AC) ──
         const diag = [];
         for (let i = 0; i < rows.length && diag.length < 11; i++) {
           const r = rows[i];
           if (!r || r.every(c => c === '' || c === null || c === undefined)) continue;
+          // Extrai apenas as colunas relevantes: B=1, T=19, U=20, AA=26, AC=28
           diag.push({
             rowIdx: i,
             isCab:  i === 0,
-            cols: [r[0], r[1], r[2], r[3], r[4], r[5]].map((v, ci) => ({
+            cols: [r[1], r[19], r[20], r[26], r[28]].map((v, ci) => ({
               raw:  v,
               tipo: v instanceof Date ? 'Date' : typeof v,
-              txt:  v instanceof Date ? v.toLocaleDateString('pt-BR')
-                  : (typeof v === 'number' && ci === 0 && v > 1)
-                    ? (() => { const d = new Date(Math.round((v-25569)*86400000)); return d.toLocaleDateString('pt-BR'); })()
-                    : String(v ?? ''),
-              numInterpretado: (ci === 3 || ci === 4 || ci === 5) ? num(v) : null,
+              txt:  v instanceof Date ? v.toLocaleDateString('pt-BR') : String(v ?? ''),
+              numInterpretado: ci === 3 ? num(v) : null, // só AA (índice 3 aqui) é numérico
             })),
           });
         }
@@ -249,15 +223,12 @@ function Importar030236() {
           const row = rows[i];
           if (!row || row.every(c => c === '' || c === null || c === undefined)) continue;
 
-          // A=data  B=código  C=descrição  D=qtd cx  E=flag palete fechado  F=HL
-          const dataCell     = row[0];
-          const codigo       = String(row[1] ?? '').trim();
-          const nome         = String(row[2] ?? '').trim();
-          const qtdCx        = num(row[3]);
-          // Coluna E: flag — qualquer valor > 0 indica palete FECHADO (vai p/ Estoque)
-          const paleteFechado = num(row[4]) > 0;
-          // Coluna F: HL decimal (ex: "6,21" = 6.21) × 100
-          const hlVendido     = numHL(row[5]) * 100;
+          // B=data  T=código  U=descrição  AA=qtd cx  AC=palete fechado ("Sim"/"Não")
+          const dataCell      = row[1];                                       // coluna B
+          const codigo        = String(row[19] ?? '').trim();                 // coluna T
+          const nome          = String(row[20] ?? '').trim();                 // coluna U
+          const qtdCx         = num(row[26]);                                 // coluna AA
+          const paleteFechado = String(row[28] ?? '').trim().toLowerCase() === 'sim'; // coluna AC
 
           if (!codigo || !nome) continue;
 
@@ -278,26 +249,20 @@ function Importar030236() {
             mesesData[chave][codigo] = {
               codigo, nome,
               cxTotal: 0, cxFechado: 0, cxAberto: 0,
-              hlTotal: 0, hlFechado: 0, hlAberto: 0,
               diasSet: new Set(),
             };
           }
 
           const prod = mesesData[chave][codigo];
-          prod.cxTotal  += qtdCx;
-          prod.hlTotal  += hlVendido;
+          prod.cxTotal += qtdCx;
 
           if (paleteFechado) {
-            // Linha de palete FECHADO → Estoque
-            prod.cxFechado += qtdCx;
-            prod.hlFechado += hlVendido;
+            prod.cxFechado += qtdCx; // AC = "Sim" → Estoque
           } else {
-            // Linha fracionada / picking → Picking
-            prod.cxAberto  += qtdCx;
-            prod.hlAberto  += hlVendido;
+            prod.cxAberto  += qtdCx; // AC = "Não" → Picking
           }
 
-          prod.diasSet.add(`${dp.ano}-${dp.mes}-${String(row[0]).slice(0,10)}`);
+          prod.diasSet.add(String(dataCell).slice(0, 10)); // "DD/MM/AAAA" → chave única por dia
           validas++;
 
           if (i % CHUNK === 0) {
@@ -309,7 +274,7 @@ function Importar030236() {
 
         if (validas === 0) {
           setProgresso(null);
-          alert('Nenhuma linha válida encontrada.\nVerifique: A=data, B=código, C=descrição, D=qtd caixas, E=palete fechado, F=HL.');
+          alert('Nenhuma linha válida encontrada.\nVerifique: B=data (DD/MM/AAAA), T=código, U=descrição, AA=qtd caixas, AC=palete fechado (Sim/Não).');
           return;
         }
 
@@ -323,14 +288,9 @@ function Importar030236() {
             .map(p => ({
               codigo:        p.codigo,
               nome:          p.nome,
-              // Caixas — acumulados diretamente por flag da col E
-              cxTotal:       r2(p.cxTotal),
-              cxFechado:     r2(p.cxFechado),
-              cxAberto:      r2(p.cxAberto),
-              // HL — acumulados diretamente por flag da col E
-              hlTotal:       r4(p.hlTotal),
-              hlFechado:     r4(p.hlFechado),
-              hlAberto:      r4(p.hlAberto),
+              cxTotal:       r2(p.cxTotal),   // Armazém: todos os valores de AA
+              cxAberto:      r2(p.cxAberto),  // Picking: AA onde AC = "Não"
+              cxFechado:     r2(p.cxFechado), // Estoque: AA onde AC = "Sim"
               diasComVendas: p.diasSet.size,
             }))
             .filter(p => p.cxTotal > 0);
@@ -341,7 +301,6 @@ function Importar030236() {
             produtos,
             totalProdutos: produtos.length,
             totalCx:       r2(produtos.reduce((s, p) => s + p.cxTotal, 0)),
-            totalHL:       r4(produtos.reduce((s, p) => s + p.hlTotal, 0)),
             importadoEm:   new Date().toISOString(),
           };
         }
@@ -426,9 +385,9 @@ function Importar030236() {
     <div style={{ maxWidth: 900 }}>
       <h2 style={{ color: '#333', marginBottom: 4 }}>📥 Importar Relatório — Curva ABC</h2>
       <p style={{ color: '#888', fontSize: 14, marginBottom: 24 }}>
-        Colunas esperadas (1ª linha = cabeçalho):{' '}
-        <strong>A</strong> Data · <strong>B</strong> Código · <strong>C</strong> Descrição ·{' '}
-        <strong>D</strong> Qtd Caixas/dia · <strong>E</strong> Palete Fechado (cx) · <strong>F</strong> HL vendido
+        Formato Promax (1ª linha = cabeçalho):{' '}
+        <strong>B</strong> Data · <strong>T</strong> Código · <strong>U</strong> Descrição ·{' '}
+        <strong>AA</strong> Qtd Caixas · <strong>AC</strong> Palete Fechado (Sim/Não)
       </p>
 
       {/* ── Botão apagar tudo ── */}
@@ -450,7 +409,7 @@ function Importar030236() {
         <div style={{ backgroundColor: '#f9f9f9', border: '2px dashed #ddd', borderRadius: 10, padding: 28, textAlign: 'center', marginBottom: 16 }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>📊</div>
           <p style={{ color: '#555', fontWeight: '500', marginBottom: 4 }}>Selecione o arquivo de vendas (.xlsx, .xls, .csv)</p>
-          <p style={{ color: '#999', fontSize: 12, marginBottom: 16 }}>A planilha deve ter cabeçalho na 1ª linha. Colunas: A=Data · B=Código · C=Descrição · D=Qtd Caixas/dia · E=Palete Fechado (cx) · F=HL vendido</p>
+          <p style={{ color: '#999', fontSize: 12, marginBottom: 16 }}>Relatório Promax — 1ª linha = cabeçalho. Colunas: B=Data · T=Código · U=Descrição · AA=Qtd Caixas · AC=Palete Fechado (Sim/Não)</p>
           <input type="file" accept=".xlsx,.xls,.csv" onChange={processarArquivo}
             disabled={processando || limpando}
             style={{ fontSize: 14, cursor: 'pointer' }} />
@@ -466,7 +425,7 @@ function Importar030236() {
               <thead>
                 <tr style={{ backgroundColor: '#1a1a2e', color: '#fff' }}>
                   <th style={estilos.thD}>Linha</th>
-                  {['A — Data','B — Código','C — Descrição','D — Qtd Cx','E — Plt Fechado','F — HL'].map(h =>
+                  {['B — Data','T — Código','U — Descrição','AA — Qtd Cx','AC — Plt Fechado'].map(h =>
                     <th key={h} style={estilos.thD}>{h}</th>
                   )}
                 </tr>
@@ -628,31 +587,31 @@ function Importar030236() {
 
                   const linhasBrutas = isExato && rowsRef.current
                     ? rowsRef.current.slice(1).reduce((acc, row, idx) => {
-                        const cod = String(row[1] ?? '').trim();
+                        const cod = String(row[19] ?? '').trim(); // T = código
                         if (cod !== prod.codigo) return acc;
-                        const dp        = parseData(row[0]);
+                        const dp         = parseData(row[1]);     // B = data
                         const chaveLinha = dp ? mesKey(dp.ano, dp.mes) : null;
-                        const qtdRaw    = row[3];
-                        const qtdParsed = num(qtdRaw);
-                        const estesMes  = chaveLinha === chave;
+                        const qtdRaw     = row[26];              // coluna AA
+                        const qtdParsed  = num(qtdRaw);
+                        const estesMes   = chaveLinha === chave;
+                        const pltFechado = String(row[28] ?? '').trim(); // coluna AC
                         acc.push({
-                          linha:    idx + 2,
-                          dataFmt:  serialParaData(row[0]),
-                          dataRaw:  String(row[0] ?? ''),
+                          linha:     idx + 2,
+                          dataFmt:   serialParaData(row[1]),
+                          dataRaw:   String(row[1] ?? ''),
                           chaveLinha,
                           estesMes,
-                          qtdRaw:   String(qtdRaw ?? ''),
+                          qtdRaw:    String(qtdRaw ?? ''),
                           qtdParsed,
-                          incluido: estesMes && qtdParsed > 0,
+                          pltFechado,
+                          incluido:  estesMes && qtdParsed > 0,
                         });
                         return acc;
                       }, [])
                     : [];
 
-                  const somaLinhas     = linhasBrutas.filter(r => r.incluido).reduce((s, r) => s + r.qtdParsed, 0);
-                  const excluidas      = linhasBrutas.filter(r => !r.incluido);
-                  const outrosMeses    = excluidas.filter(r => r.chaveLinha && r.chaveLinha !== chave);
-                  const somaOutros     = outrosMeses.reduce((s, r) => s + r.qtdParsed, 0);
+                  const somaLinhas  = linhasBrutas.filter(r => r.incluido).reduce((s, r) => s + r.qtdParsed, 0);
+                  const excluidas   = linhasBrutas.filter(r => !r.incluido);
 
                   return (
                     <div key={chave} style={{ backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 14, marginBottom: 8 }}>
@@ -689,32 +648,43 @@ function Importar030236() {
                               <thead>
                                 <tr style={{ backgroundColor: '#1a1a2e', color: '#fff', position: 'sticky', top: 0 }}>
                                   <th style={estilos.thD}>Linha</th>
-                                  <th style={estilos.thD}>Data</th>
-                                  <th style={estilos.thD}>Col D (bruto)</th>
+                                  <th style={estilos.thD}>Data (B)</th>
+                                  <th style={estilos.thD}>Qtd AA (bruto)</th>
                                   <th style={estilos.thD}>Lido como</th>
-                                  <th style={estilos.thD}>Status</th>
+                                  <th style={estilos.thD}>Plt Fech (AC)</th>
+                                  <th style={estilos.thD}>Tipo / Status</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {linhasBrutas.map((r, ri) => (
-                                  <tr key={ri} style={{ backgroundColor: r.incluido ? (ri%2===0?'#fff':'#fafafa') : '#fff5f5' }}>
-                                    <td style={{ ...estilos.tdD, color: '#aaa' }}>{r.linha}</td>
-                                    <td style={estilos.tdD}>{r.dataFmt}</td>
-                                    <td style={{ ...estilos.tdD, fontFamily: 'monospace', color: '#555' }}>{r.qtdRaw || <em style={{color:'#ccc'}}>vazio</em>}</td>
-                                    <td style={{ ...estilos.tdD, fontWeight: 'bold', color: r.incluido ? '#166534' : '#dc2626' }}>
-                                      {r.qtdParsed}
-                                    </td>
-                                    <td style={{ ...estilos.tdD, color: r.incluido ? '#166534' : '#dc2626' }}>
-                                      {r.incluido ? '✓ somado' : '✗ ignorado'}
-                                    </td>
-                                  </tr>
-                                ))}
+                                {linhasBrutas.map((r, ri) => {
+                                  const isSim = r.pltFechado?.toLowerCase() === 'sim';
+                                  const tipoLabel = !r.incluido ? '✗ ignorado'
+                                    : isSim ? '📦 Estoque' : '🛒 Picking';
+                                  const tipoColor = !r.incluido ? '#dc2626'
+                                    : isSim ? '#7c3aed' : '#166534';
+                                  return (
+                                    <tr key={ri} style={{ backgroundColor: r.incluido ? (ri%2===0?'#fff':'#fafafa') : '#fff5f5' }}>
+                                      <td style={{ ...estilos.tdD, color: '#aaa' }}>{r.linha}</td>
+                                      <td style={estilos.tdD}>{r.dataFmt}</td>
+                                      <td style={{ ...estilos.tdD, fontFamily: 'monospace', color: '#555' }}>{r.qtdRaw || <em style={{color:'#ccc'}}>vazio</em>}</td>
+                                      <td style={{ ...estilos.tdD, fontWeight: 'bold', color: r.incluido ? '#166534' : '#dc2626' }}>
+                                        {r.qtdParsed}
+                                      </td>
+                                      <td style={{ ...estilos.tdD, color: isSim ? '#7c3aed' : '#166534', fontWeight: 'bold' }}>
+                                        {r.pltFechado || <em style={{color:'#ccc'}}>—</em>}
+                                      </td>
+                                      <td style={{ ...estilos.tdD, color: tipoColor, fontWeight: '600' }}>
+                                        {tipoLabel}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                               <tfoot>
                                 <tr style={{ backgroundColor: '#f0f4ff', fontWeight: 'bold' }}>
                                   <td colSpan={3} style={{ ...estilos.tdD, textAlign: 'right', color: '#333' }}>TOTAL:</td>
                                   <td style={{ ...estilos.tdD, color: '#E31837', fontWeight: 'bold' }}>{Math.round(somaLinhas * 10) / 10}</td>
-                                  <td style={estilos.tdD}>{linhasBrutas.filter(r => r.incluido).length} linhas incluídas</td>
+                                  <td colSpan={2} style={estilos.tdD}>{linhasBrutas.filter(r => r.incluido).length} linhas incluídas</td>
                                 </tr>
                               </tfoot>
                             </table>
