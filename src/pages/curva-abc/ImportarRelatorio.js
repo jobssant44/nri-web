@@ -46,23 +46,23 @@ export function num(val) {
 /** Arredonda para 1 decimal (caixas) */
 function r2(v) { return Math.round(v * 10) / 10; }
 
-/** Interpreta a data da célula — suporta serial Excel, Date, DD/MM/AAAA, AAAA-MM-DD */
+/** Interpreta a data da célula — suporta serial Excel, Date, DD/MM/AAAA (±hora), AAAA-MM-DD */
 function parseData(cell) {
   // Serial numérico do Excel (sem cellDates: coluna de data real vira número)
-  // Serial 1 = 01/01/1900; época JS = 25569 dias depois de 01/01/1900
   if (typeof cell === 'number' && cell > 1) {
     const d = new Date(Math.round((cell - 25569) * 86400 * 1000));
     if (!isNaN(d)) return { ano: d.getUTCFullYear(), mes: d.getUTCMonth() + 1 };
   }
-  // Objeto Date (caso algum engine retorne Date mesmo sem cellDates)
+  // Objeto Date
   if (cell instanceof Date && !isNaN(cell)) {
     return { ano: cell.getUTCFullYear(), mes: cell.getUTCMonth() + 1 };
   }
-  // String DD/MM/AAAA — formato brasileiro
   const s = String(cell || '').trim();
-  const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!s) return null;
+  // DD/MM/AAAA — sem $ para aceitar sufixo de hora ("14/04/2026 0:00:00")
+  const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (m1) return { mes: parseInt(m1[2]), ano: parseInt(m1[3]) };
-  // String AAAA-MM-DD
+  // AAAA-MM-DD
   const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m2) return { ano: parseInt(m2[1]), mes: parseInt(m2[2]) };
   return null;
