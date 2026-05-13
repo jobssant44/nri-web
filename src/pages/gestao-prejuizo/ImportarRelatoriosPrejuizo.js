@@ -1,24 +1,6 @@
 import { useState, useRef } from 'react';
 import { collection, addDoc, getDocs, writeBatch, doc } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
-
-// ─── Mapeamento de colunas do 03.02.37 — Troca (letra Excel → índice 0-based) ─
-// Pré-filtros: Operação (E, idx 4) = "5" · Status (J, idx 9) = "A" · Origem (BO, idx 66) = "Digitado"
-const CAMPOS_TROCA = [
-  { idx: 3,  campo: 'cliente',     label: 'Cliente' },
-  { idx: 4,  campo: 'operacao',    label: 'Operação' },
-  { idx: 6,  campo: 'data',        label: 'Data' },
-  { idx: 7,  campo: 'nota',        label: 'Nota' },
-  { idx: 9,  campo: 'status',      label: 'Status' },
-  { idx: 13, campo: 'nomeCliente', label: 'Nome Cliente' },
-  { idx: 15, campo: 'codProduto',  label: 'Cód. Produto' },
-  { idx: 16, campo: 'unidade',     label: 'Unidade' },
-  { idx: 17, campo: 'descricao',   label: 'Descrição' },
-  { idx: 19, campo: 'quantidade',  label: 'Quantidade' },
-  { idx: 20, campo: 'valor',       label: 'Valor' },
-  { idx: 66, campo: 'origem',      label: 'Origem' },
-  { idx: 77, campo: 'rn',          label: 'RN' },
-];
+import { useDb } from '../../utils/db';
 
 // ─── Mapeamento de colunas do 03.02.37 (letra Excel → índice 0-based) ────────
 // Fórmula: letra única X → charCode(X) - 65
@@ -87,6 +69,7 @@ function parsearCSV030237(texto) {
 // ─── Card 03.02.37 ────────────────────────────────────────────────────────────
 
 function Card030237() {
+  const { col, stamp } = useDb();
   const [fase, setFase] = useState('idle'); // idle | preview | salvando | salvo | erro
   const [mensagem, setMensagem] = useState('');
   const [dados, setDados] = useState(null); // { linhas, total, nomeArquivo }
@@ -132,11 +115,12 @@ function Card030237() {
     setFase('salvando');
     setMensagem('');
     try {
-      await addDoc(collection(db, 'relatorio_030237'), {
+      await addDoc(col('relatorio_030237'), {
         importadoEm: new Date(),
         nomeArquivo: dados.nomeArquivo,
         totalLinhas: dados.total,
         linhas: dados.linhas,
+        ...stamp(),
       });
       setFase('salvo');
       setMensagem(`${dados.total} linha(s) salvas com sucesso.`);
@@ -247,6 +231,7 @@ function parsearHecto(valor) {
 }
 
 function Card030147Hecto() {
+  const { col, db, stamp } = useDb();
   const [fase, setFase] = useState('idle');
   const [mensagem, setMensagem] = useState('');
   const [dados, setDados] = useState(null); // [{ data, totalHecto }]
@@ -328,7 +313,7 @@ function Card030147Hecto() {
     setMensagem('');
     try {
       // Limpa coleção antes de reimportar
-      const snap = await getDocs(collection(db, 'relatorio_030147hecto'));
+      const snap = await getDocs(col('relatorio_030147hecto'));
       for (let i = 0; i < snap.docs.length; i += 450) {
         const batch = writeBatch(db);
         snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
@@ -338,11 +323,12 @@ function Card030147Hecto() {
       for (let i = 0; i < dados.linhas.length; i += 450) {
         const batch = writeBatch(db);
         dados.linhas.slice(i, i + 450).forEach(linha => {
-          batch.set(doc(collection(db, 'relatorio_030147hecto')), {
+          batch.set(doc(col('relatorio_030147hecto')), {
             data:        linha.data,
             totalHecto:  linha.totalHecto,
             importadoEm: new Date().toISOString(),
             nomeArquivo: dados.nomeArquivo,
+            ...stamp(),
           });
         });
         await batch.commit();
@@ -426,235 +412,6 @@ function Card030147Hecto() {
           </table>
           {dados.linhas.length > 10 && (
             <div style={s.maisLinhas}>... e mais {dados.linhas.length - 10} data(s) não exibidas</div>
-          )}
-        </div>
-      )}
-
-      {fase === 'idle' && (
-        <div style={s.placeholder}>Selecione um arquivo .csv para visualizar e salvar</div>
-      )}
-    </div>
-  );
-}
-
-// ─── Card 03.02.37 — Troca ───────────────────────────────────────────────────
-
-function parsearCSVTroca(texto) {
-  const linhas = texto.split(/\r?\n/).filter(l => l.trim());
-  if (linhas.length < 2) return { linhas: [], total: 0, ignoradas: 0, amostra: null };
-
-  const sep = linhas[0].includes(';') ? ';' : ',';
-  const dados = [];
-  let ignoradas = 0;
-
-  // Amostras dos valores brutos nas colunas de filtro (diagnóstico)
-  const setsAmostra = { operacao: new Set(), status: new Set(), origem: new Set() };
-
-  for (let i = 1; i < linhas.length; i++) {
-    const cols = splitLinha(linhas[i], sep);
-    const obj = {};
-    CAMPOS_TROCA.forEach(({ idx, campo }) => {
-      obj[campo] = (cols[idx] ?? '').replace(/^"|"$/g, '').trim();
-    });
-
-    const vazia = CAMPOS_TROCA.every(({ campo }) => !obj[campo]);
-    if (vazia) continue;
-
-    // Coleta amostras (até 6 valores únicos por coluna)
-    if (setsAmostra.operacao.size < 6) setsAmostra.operacao.add(JSON.stringify(obj.operacao));
-    if (setsAmostra.status.size   < 6) setsAmostra.status.add(JSON.stringify(obj.status));
-    if (setsAmostra.origem.size   < 6) setsAmostra.origem.add(JSON.stringify(obj.origem));
-
-    // Pré-filtros — comparação numérica para Operação, string para os demais
-    const opNum = parseFloat(String(obj.operacao).trim().replace(',', '.'));
-    if (opNum !== 5)                                               { ignoradas++; continue; }
-    if (String(obj.status).trim().toUpperCase() !== 'A')          { ignoradas++; continue; }
-    if (String(obj.origem).trim().toLowerCase() !== 'digitado')   { ignoradas++; continue; }
-
-    dados.push(obj);
-  }
-
-  const amostra = {
-    operacao: [...setsAmostra.operacao].map(v => JSON.parse(v)),
-    status:   [...setsAmostra.status].map(v => JSON.parse(v)),
-    origem:   [...setsAmostra.origem].map(v => JSON.parse(v)),
-  };
-
-  return { linhas: dados, total: dados.length, ignoradas, amostra };
-}
-
-function CardTroca() {
-  const [fase,      setFase]      = useState('idle'); // idle | preview | salvando | salvo | erro
-  const [mensagem,  setMensagem]  = useState('');
-  const [dados,     setDados]     = useState(null);   // { linhas, total, ignoradas, nomeArquivo, amostra }
-  const inputRef = useRef(null);
-
-  function handleArquivo(e) {
-    const arquivo = e.target.files?.[0];
-    if (!arquivo) return;
-    if (!arquivo.name.toLowerCase().endsWith('.csv')) {
-      setFase('erro');
-      setMensagem('Selecione um arquivo .csv válido.');
-      return;
-    }
-    setFase('idle');
-    setMensagem('');
-    setDados(null);
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const texto = ev.target.result;
-        const { linhas, total, ignoradas, amostra } = parsearCSVTroca(texto);
-        if (total === 0) {
-          // Guarda amostra para diagnóstico
-          setDados({ linhas: [], total: 0, ignoradas, nomeArquivo: arquivo.name, amostra });
-          setFase('erro');
-          setMensagem('Nenhuma linha passou pelos pré-filtros. Veja abaixo os valores encontrados nas colunas de filtro.');
-          return;
-        }
-        setDados({ linhas, total, ignoradas, nomeArquivo: arquivo.name, amostra });
-        setFase('preview');
-      } catch {
-        setFase('erro');
-        setMensagem('Erro ao processar o arquivo.');
-      }
-    };
-    reader.onerror = () => { setFase('erro'); setMensagem('Falha ao ler o arquivo.'); };
-    reader.readAsText(arquivo, 'UTF-8');
-    e.target.value = '';
-  }
-
-  async function handleSalvar() {
-    if (!dados) return;
-    setFase('salvando');
-    setMensagem('');
-    try {
-      // Limpa coleção antes de reimportar
-      const snap = await getDocs(collection(db, 'relatorio_troca'));
-      for (let i = 0; i < snap.docs.length; i += 450) {
-        const batch = writeBatch(db);
-        snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
-      // Salva novo documento
-      await addDoc(collection(db, 'relatorio_troca'), {
-        importadoEm: new Date(),
-        nomeArquivo: dados.nomeArquivo,
-        totalLinhas: dados.total,
-        linhas:      dados.linhas,
-      });
-      setFase('salvo');
-      setMensagem(`${dados.total} linha(s) salvas (${dados.ignoradas} ignoradas pelos pré-filtros).`);
-      setDados(null);
-      if (inputRef.current) inputRef.current.value = '';
-    } catch (err) {
-      setFase('erro');
-      setMensagem(`Erro ao salvar no Firebase: ${err.message}`);
-    }
-  }
-
-  function handleLimpar() {
-    setFase('idle');
-    setMensagem('');
-    setDados(null);
-    if (inputRef.current) inputRef.current.value = '';
-  }
-
-  const temPreview = fase === 'preview' || fase === 'salvando';
-
-  return (
-    <div style={s.card}>
-      <div style={s.cardHeader}>
-        <span style={{ fontSize: 22 }}>🔄</span>
-        <div>
-          <div style={s.cardTitulo}>03.02.37 — Troca</div>
-          <div style={s.cardDescricao}>
-            Pré-filtros: Operação = 5 · Status = A · Origem = Digitado · {CAMPOS_TROCA.length} campos mapeados
-          </div>
-        </div>
-      </div>
-
-      <div style={s.uploadArea}>
-        <input ref={inputRef} type="file" accept=".csv" id="file-troca" style={{ display: 'none' }} onChange={handleArquivo} />
-        <label htmlFor="file-troca" style={s.botaoUpload}>📂 Selecionar CSV</label>
-
-        {temPreview && (
-          <button
-            onClick={handleSalvar}
-            disabled={fase === 'salvando'}
-            style={{ ...s.botaoSalvar, opacity: fase === 'salvando' ? 0.6 : 1, cursor: fase === 'salvando' ? 'not-allowed' : 'pointer' }}
-          >
-            {fase === 'salvando' ? '⏳ Salvando...' : '💾 Salvar no Firebase'}
-          </button>
-        )}
-
-        {(temPreview || fase === 'salvo' || fase === 'erro') && (
-          <button onClick={handleLimpar} style={s.botaoLimpar}>✕ Limpar</button>
-        )}
-      </div>
-
-      {fase === 'salvo' && <div style={{ ...s.alerta, ...s.alertaSucesso }}>✅ {mensagem}</div>}
-      {fase === 'erro'  && <div style={{ ...s.alerta, ...s.alertaErro }}>❌ {mensagem}</div>}
-
-      {/* Diagnóstico — exibido quando nenhuma linha passa */}
-      {fase === 'erro' && dados?.amostra && (
-        <div style={{ border: '1px solid #fcd34d', backgroundColor: '#fffbeb', borderRadius: 8, padding: '12px 16px', marginBottom: 12, fontSize: 12 }}>
-          <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 8 }}>🔍 Diagnóstico — valores encontrados nas colunas de filtro:</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div>
-              <span style={{ fontWeight: 600, color: '#374151' }}>Operação (col E, idx 4) — esperado: </span>
-              <code style={{ backgroundColor: '#f3f4f6', padding: '1px 5px', borderRadius: 3 }}>"5"</code>
-              <span style={{ color: '#374151' }}> · encontrado: </span>
-              {dados.amostra.operacao.map((v, i) => (
-                <code key={i} style={{ backgroundColor: '#fee2e2', padding: '1px 5px', borderRadius: 3, marginRight: 4 }}>{v || '(vazio)'}</code>
-              ))}
-            </div>
-            <div>
-              <span style={{ fontWeight: 600, color: '#374151' }}>Status (col J, idx 9) — esperado: </span>
-              <code style={{ backgroundColor: '#f3f4f6', padding: '1px 5px', borderRadius: 3 }}>"A"</code>
-              <span style={{ color: '#374151' }}> · encontrado: </span>
-              {dados.amostra.status.map((v, i) => (
-                <code key={i} style={{ backgroundColor: '#fee2e2', padding: '1px 5px', borderRadius: 3, marginRight: 4 }}>{v || '(vazio)'}</code>
-              ))}
-            </div>
-            <div>
-              <span style={{ fontWeight: 600, color: '#374151' }}>Origem (col BO, idx 66) — esperado: </span>
-              <code style={{ backgroundColor: '#f3f4f6', padding: '1px 5px', borderRadius: 3 }}>"Digitado"</code>
-              <span style={{ color: '#374151' }}> · encontrado: </span>
-              {dados.amostra.origem.map((v, i) => (
-                <code key={i} style={{ backgroundColor: '#fee2e2', padding: '1px 5px', borderRadius: 3, marginRight: 4 }}>{v || '(vazio)'}</code>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {temPreview && dados && (
-        <div style={{ ...s.alerta, ...s.alertaInfo }}>
-          📋 Arquivo: <strong>{dados.nomeArquivo}</strong> · <strong>{dados.total}</strong> linha(s) aprovadas
-          {dados.ignoradas > 0 && <> · <strong>{dados.ignoradas}</strong> ignoradas pelos pré-filtros</>}
-        </div>
-      )}
-
-      {temPreview && dados && (
-        <div style={s.tabelaWrapper}>
-          <table style={s.tabela}>
-            <thead>
-              <tr>
-                {CAMPOS_TROCA.map(c => <th key={c.campo} style={s.th}>{c.label}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {dados.linhas.slice(0, 10).map((linha, i) => (
-                <tr key={i} style={i % 2 === 0 ? s.trPar : s.trImpar}>
-                  {CAMPOS_TROCA.map(c => <td key={c.campo} style={s.td}>{linha[c.campo]}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {dados.total > 10 && (
-            <div style={s.maisLinhas}>... e mais {dados.total - 10} linha(s) não exibidas</div>
           )}
         </div>
       )}
@@ -785,7 +542,6 @@ export default function ImportarRelatoriosPrejuizo() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <Card030237 />
         <Card030147Hecto />
-        <CardTroca />
         <CardRefugo
           id="refugo_afericao"
           label="Refugo fábrica - aferição"

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { getDocs, query, orderBy } from 'firebase/firestore';
+import { useDb } from '../utils/db';
 import { useSessionFilter } from '../hooks/useSessionFilter';
 import { lerCache, salvarCache, invalidarCache } from '../utils/cache';
 
@@ -36,6 +36,7 @@ function dataParaChaveMes(dataStr) {
 const HOJE = new Date(); HOJE.setHours(0,0,0,0);
 
 export default function PrePickingPage() {
+  const { col, docRef } = useDb();
   const [anoSelecionado, setAnoSelecionado]     = useSessionFilter('prepick:ano', '');
   const [mesNumSelecionado, setMesNumSelecionado] = useSessionFilter('prepick:mes', '');
   const [mesesDisponiveis, setMesesDisponiveis]   = useState([]);
@@ -90,7 +91,7 @@ export default function PrePickingPage() {
 
       const promises = [];
       if (!vMap) promises.push(
-        getDocs(query(collection(db, 'vendas_prepicking'), orderBy('importadoEm', 'asc'))).then(snap => {
+        getDocs(query(col('vendas_prepicking'), orderBy('importadoEm', 'asc'))).then(snap => {
           const m = {};
           snap.docs.forEach(d => {
             (d.data().produtos || []).forEach(p => {
@@ -104,7 +105,7 @@ export default function PrePickingPage() {
         })
       );
       if (!aMap) promises.push(
-        getDocs(query(collection(db, 'vendas_avulsas'), orderBy('importadoEm', 'asc'))).then(snap => {
+        getDocs(query(col('vendas_avulsas'), orderBy('importadoEm', 'asc'))).then(snap => {
           const m = {};
           snap.docs.forEach(d => {
             (d.data().produtos || []).forEach(p => {

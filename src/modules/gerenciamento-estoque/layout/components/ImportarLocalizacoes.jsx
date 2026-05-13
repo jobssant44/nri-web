@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { collection, writeBatch, doc } from 'firebase/firestore';
-import { db } from '../../../../firebaseConfig';
+import { writeBatch } from 'firebase/firestore';
+import { useDb } from '../../../../utils/db';
 import * as XLSX from 'xlsx';
 
 export function ImportarLocalizacoes() {
+  const { docRef, db } = useDb();
   const [arquivo, setArquivo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState([]);
@@ -196,8 +197,7 @@ export function ImportarLocalizacoes() {
         const chunk = dadosValidos.slice(i, i + CHUNK_SIZE);
 
         chunk.forEach((localizacao) => {
-          const docRef = doc(db, 'locations', localizacao.id);
-          batch.set(docRef, {
+          batch.set(docRef('locations', localizacao.id), {
             area: localizacao.area,
             street: localizacao.street,
             palettePosition: localizacao.palettePosition,

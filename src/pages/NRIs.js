@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
+import { useUser } from '../context/UserContext';
+import { NIVEIS_SUPERVISOR } from './admin/ConfigurarEmpresaPage';
 
 function calcularData(dataStr, diasSubtrair) {
   if (!dataStr || dataStr.length !== 10) return '';
@@ -97,7 +99,9 @@ function imprimirEtiquetas(itens) {
   setTimeout(() => janela.print(), 500);
 }
 
-export default function NRIs({ usuario }) {
+export default function NRIs() {
+  const { col, docRef, colRevenda } = useDb();
+  const { usuario } = useUser();
   const [nris, setNris] = useState([]);
   const [filtro, setFiltro] = useState('');
   const [expandido, setExpandido] = useState(null);
@@ -113,7 +117,7 @@ export default function NRIs({ usuario }) {
 
   async function carregarNRIs() {
     setCarregando(true);
-    const snap = await getDocs(collection(db, 'nris'));
+    const snap = await getDocs(colRevenda('nris'));
     const lista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     lista.sort((a, b) => {
       const ts = x => x.criadoEm ? new Date(x.criadoEm).getTime() : 0;
@@ -132,7 +136,7 @@ export default function NRIs({ usuario }) {
 
   async function excluir(id, nf) {
     if (!window.confirm(`Deseja excluir a NRI da NF: ${nf}?`)) return;
-    await deleteDoc(doc(db, 'nris', id));
+    await deleteDoc(docRef('nris', id));
     carregarNRIs();
   }
 
@@ -144,7 +148,7 @@ export default function NRIs({ usuario }) {
       i === prodIndex ? { ...p, validade: novaValidade } : p
     );
     try {
-      await updateDoc(doc(db, 'nris', nri.id), { produtos: novosProdutos });
+      await updateDoc(docRef('nris', nri.id), { produtos: novosProdutos });
       setEditandoValidade(null);
       setNovaValidade('');
       carregarNRIs();
@@ -266,7 +270,7 @@ export default function NRIs({ usuario }) {
               <button onClick={() => setExpandido(expandido === item.id ? null : item.id)} style={btnSecundario}>
                 {expandido === item.id ? 'Recolher ▲' : `Ver ${item.produtos?.length || 0} produto(s) ▼`}
               </button>
-              {usuario.nivel === 'supervisor' && !modoSelecao && (
+              {NIVEIS_SUPERVISOR.includes(usuario.nivel) && !modoSelecao && (
                 <button onClick={() => excluir(item.id, item.notaFiscal)} style={btnExcluir}>✕</button>
               )}
             </div>
@@ -325,7 +329,7 @@ export default function NRIs({ usuario }) {
                           ) : (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <span style={{ color: '#E31837', fontWeight: 'bold' }}>{p.validade}</span>
-                              {usuario.nivel === 'supervisor' && !modoSelecao && (
+                              {NIVEIS_SUPERVISOR.includes(usuario.nivel) && !modoSelecao && (
                                 <button onClick={() => { setEditandoValidade(`${item.id}-${i}`); setNovaValidade(p.validade || ''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0 }} title="Editar validade">✏️</button>
                               )}
                             </div>

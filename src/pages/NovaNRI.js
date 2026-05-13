@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, addDoc } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
+import { useUser } from '../context/UserContext';
 import { useNavigate } from 'react-router-dom';
 
 function hojeFormatado() {
@@ -22,7 +23,9 @@ function validarData(data) {
   return new Date(ano, mes-1, dia).getMonth() === mes-1;
 }
 
-export default function NovaNRI({ usuario }) {
+export default function NovaNRI() {
+  const { col, docRef, stamp } = useDb();
+  const { usuario } = useUser();
   const navigate = useNavigate();
   const [notaFiscal, setNotaFiscal] = useState('');
   const [placaCavalo, setPlacaCavalo] = useState('');
@@ -49,12 +52,12 @@ export default function NovaNRI({ usuario }) {
 
   async function carregarDados() {
     const [pSnap, mSnap, cSnap, crSnap, oSnap, curvaSnap] = await Promise.all([
-      getDocs(collection(db, 'produtos')),
-      getDocs(collection(db, 'motoristas')),
-      getDocs(collection(db, 'cavalos')),
-      getDocs(collection(db, 'carretas')),
-      getDocs(collection(db, 'origens')),
-      getDocs(collection(db, 'curva_abc')),
+      getDocs(col('produtos')),
+      getDocs(col('motoristas')),
+      getDocs(col('cavalos')),
+      getDocs(col('carretas')),
+      getDocs(col('origens')),
+      getDocs(col('curva_abc')),
     ]);
     setBaseProdutos(pSnap.docs.map(d => d.data()));
     setListaMotoristas(mSnap.docs.map(d => d.data().valor));
@@ -73,17 +76,17 @@ export default function NovaNRI({ usuario }) {
     if (campo === 'codigo') {
       setCodProduto(texto.replace(/[^0-9]/g, ''));
       setNomeProduto('');
-      setSugestoes(texto.length >= 2 ? baseProdutos.filter(p => p.codigo.startsWith(texto)).slice(0,5) : []);
+      setSugestoes(texto.length >= 2 ? baseProdutos.filter(p => String(p.codigo).startsWith(texto)).slice(0,5) : []);
     } else {
       setNomeProduto(texto.toUpperCase());
       setCodProduto('');
-      setSugestoes(texto.length >= 2 ? baseProdutos.filter(p => p.nome.toLowerCase().includes(texto.toLowerCase())).slice(0,5) : []);
+      setSugestoes(texto.length >= 2 ? baseProdutos.filter(p => (p.descricao || '').toLowerCase().includes(texto.toLowerCase())).slice(0,5) : []);
     }
   }
 
   function selecionarProduto(p) {
     setCodProduto(p.codigo);
-    setNomeProduto(p.nome);
+    setNomeProduto(p.descricao || '');
     setSugestoes([]);
   }
 
@@ -91,8 +94,8 @@ export default function NovaNRI({ usuario }) {
     if (!codProduto || !nomeProduto) { alert('Selecione um produto.'); return; }
     if (!qtdPlt && !qtdCx) { alert('Preencha ao menos Qtd PLT ou Qtd CX.'); return; }
     if (!validarData(validade)) { alert('Data de validade inválida.'); return; }
-    const produtoBase = baseProdutos.find(p => p.codigo === codProduto);
-    const cxPorPlt = produtoBase?.cxPorPlt || '';
+    const produtoBase = baseProdutos.find(p => String(p.codigo) === String(codProduto));
+    const cxPorPlt = produtoBase?.paletizacao || produtoBase?.cxPorPlt || '';
     const curva = curvaMap[String(codProduto)] || null;
     setProdutos([...produtos, { codProduto, nomeProduto, qtdPlt, qtdCx, validade, cxPorPlt, curva }]);
     setCodProduto(''); setNomeProduto(''); setQtdPlt(''); setQtdCx(''); setValidade(''); setSugestoes([]);
@@ -108,9 +111,10 @@ export default function NovaNRI({ usuario }) {
     if (produtos.length === 0) { alert('Adicione pelo menos um produto.'); return; }
     setSalvando(true);
     try {
-      await addDoc(collection(db, 'nris'), {
+      await addDoc(col('nris'), {
         notaFiscal, placaCavalo, placaCarreta, motorista, origem,
         conferente: usuario.nome, produtos, dataRecebimento,
+        ...stamp(),
         criadoEm: new Date().toISOString(),
       });
       alert('NRI salva com sucesso!');
@@ -244,7 +248,7 @@ export default function NovaNRI({ usuario }) {
               <div style={dropdown}>
                 {sugestoes.map((p,i) => (
                   <div key={i} style={dropItem} onClick={() => selecionarProduto(p)}>
-                    <strong style={{ color: '#E31837' }}>{p.codigo}</strong> — {p.nome}
+                    <strong style={{ color: '#E31837' }}>{p.codigo}</strong> — {p.descricao}
                   </div>
                 ))}
               </div>
@@ -264,7 +268,7 @@ export default function NovaNRI({ usuario }) {
               <div style={dropdown}>
                 {sugestoes.map((p,i) => (
                   <div key={i} style={dropItem} onClick={() => selecionarProduto(p)}>
-                    <strong style={{ color: '#E31837' }}>{p.codigo}</strong> — {p.nome}
+                    <strong style={{ color: '#E31837' }}>{p.codigo}</strong> — {p.descricao}
                   </div>
                 ))}
               </div>

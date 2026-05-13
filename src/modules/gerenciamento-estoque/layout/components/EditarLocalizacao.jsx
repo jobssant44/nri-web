@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
-import { db } from '../../../../firebaseConfig';
+import { getDocs, updateDoc, deleteDoc } from 'firebase/firestore';
+import { useDb } from '../../../../utils/db';
 
 export function EditarLocalizacao() {
+  const { col, docRef } = useDb();
   const [localizacoes, setLocalizacoes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
@@ -87,7 +88,7 @@ export function EditarLocalizacao() {
     setLoading(true);
     setMessage('');
     try {
-      const snap = await getDocs(collection(db, 'locations'));
+      const snap = await getDocs(col('locations'));
 
       if (snap.empty) {
         setMessage('⚠️ Nenhuma localização encontrada no banco de dados');
@@ -142,7 +143,7 @@ export function EditarLocalizacao() {
     }
 
     try {
-      await updateDoc(doc(db, 'locations', id), {
+      await updateDoc(docRef('locations', id), {
         area: editData.area.toUpperCase(),
         street: parseInt(editData.street),
         palettePosition: parseInt(editData.palettePosition),
@@ -161,7 +162,7 @@ export function EditarLocalizacao() {
     if (!window.confirm(`Tem certeza que deseja deletar ${id}?`)) return;
 
     try {
-      await deleteDoc(doc(db, 'locations', id));
+      await deleteDoc(docRef('locations', id));
       setMessage('✅ Localização deletada com sucesso!');
       carregarLocalizacoes();
       setTimeout(() => setMessage(''), 3000);

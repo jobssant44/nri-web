@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { collection, doc, setDoc, getDocs, writeBatch } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 import * as XLSX from 'xlsx';
 
 // ─── Parser genérico (SheetJS) ────────────────────────────────────────────────
@@ -308,20 +308,24 @@ function CardImport({ titulo, descricao, icon, inputId, parsear, onSalvar, colsP
 // Salva: um documento por produto, codProduto = ID do documento
 
 function CardEmbalagensPА() {
+  const { colRevenda, docRef, db, stamp, rid } = useDb();
   async function onSalvar(dados) {
-    const snap = await getDocs(collection(db, 'pavg_embalagens'));
+    // Apaga apenas os documentos da revenda atual
+    const snap = await getDocs(colRevenda('pavg_embalagens'));
     for (let i = 0; i < snap.docs.length; i += 450) {
       const batch = writeBatch(db);
       snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
       await batch.commit();
     }
+    const prefixo = rid || 'global';
     for (let i = 0; i < dados.linhas.length; i += 450) {
       const batch = writeBatch(db);
       dados.linhas.slice(i, i + 450).forEach(linha => {
-        batch.set(doc(db, 'pavg_embalagens', linha.codProduto), {
+        batch.set(docRef('pavg_embalagens', `${prefixo}_${linha.codProduto}`), {
           codProduto:   linha.codProduto,
           embalagem:    linha.embalagem,
           atualizadoEm: new Date(),
+          ...stamp(),
         });
       });
       await batch.commit();
@@ -345,8 +349,9 @@ function CardEmbalagensPА() {
 // Salva: documento único "atual" (sobrescreve)
 
 function CardCartaSaldo() {
+  const { docRef } = useDb();
   async function onSalvar(dados) {
-    await setDoc(doc(db, 'pavg_carta_saldo', 'atual'), {
+    await setDoc(docRef('pavg_carta_saldo', 'atual'), {
       importadoEm: new Date(),
       nomeArquivo: dados.nomeArquivo,
       totalLinhas: dados.total,
@@ -371,8 +376,9 @@ function CardCartaSaldo() {
 // Salva: documento único "atual" por revenda (sobrescreve)
 
 function Card020502({ titulo, colecao, inputId }) {
+  const { docRef } = useDb();
   async function onSalvar(dados) {
-    await setDoc(doc(db, colecao, 'atual'), {
+    await setDoc(docRef(colecao, 'atual'), {
       importadoEm: new Date(),
       nomeArquivo: dados.nomeArquivo,
       totalLinhas: dados.total,
@@ -398,8 +404,9 @@ function Card020502({ titulo, colecao, inputId }) {
 // Salva: documento único "atual" por revenda (sobrescreve)
 
 function Card030236({ titulo, colecao, inputId }) {
+  const { docRef } = useDb();
   async function onSalvar(dados) {
-    await setDoc(doc(db, colecao, 'atual'), {
+    await setDoc(docRef(colecao, 'atual'), {
       importadoEm: new Date(),
       nomeArquivo: dados.nomeArquivo,
       totalLinhas: dados.total,
@@ -424,8 +431,9 @@ function Card030236({ titulo, colecao, inputId }) {
 // Salva: documento único "atual" por revenda, saldo somado por produto (sobrescreve)
 
 function CardComodato({ titulo, colecao, inputId }) {
+  const { docRef } = useDb();
   async function onSalvar(dados) {
-    await setDoc(doc(db, colecao, 'atual'), {
+    await setDoc(docRef(colecao, 'atual'), {
       importadoEm: new Date(),
       nomeArquivo: dados.nomeArquivo,
       totalLinhas: dados.total,

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { collection, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../../firebaseConfig';
+import { writeBatch, serverTimestamp } from 'firebase/firestore';
+import { useDb } from '../../../../utils/db';
 import * as XLSX from 'xlsx';
 import { AlertWidget } from '../../shared/AlertWidget';
 
@@ -29,6 +29,7 @@ function validarLinha(row, index) {
 }
 
 export function ImportarEnderecos({ onSuccess }) {
+  const { docRef, db } = useDb();
   const [enderecos, setEnderecos] = useState(null);
   const [preview, setPreview] = useState([]);
   const [progresso, setProgresso] = useState(null);
@@ -186,8 +187,7 @@ export function ImportarEnderecos({ onSuccess }) {
 
         chunk.forEach((endereco) => {
           const docId = `${endereco.areaName}_${endereco.street}_${endereco.palettePosition}`;
-          const docRef = doc(db, 'locations', docId);
-          batch.set(docRef, {
+          batch.set(docRef('locations', docId), {
             areaName: endereco.areaName,
             street: endereco.street,
             palettePosition: endereco.palettePosition,

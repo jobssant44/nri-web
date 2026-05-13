@@ -13,8 +13,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc } from 'firebase/firestore';
-import { db } from '../../../../firebaseConfig';
+import { getDocs, addDoc } from 'firebase/firestore';
+import { useDb } from '../../../../utils/db';
 
 const initialFormState = {
   area: '',
@@ -27,6 +27,7 @@ const initialFormState = {
 };
 
 export function CountingForm({ conferente, onSuccess, onError }) {
+  const { col, colRevenda, stamp } = useDb();
   const [form, setForm] = useState(initialFormState);
   const [areas, setAreas] = useState([]);
   const [produtos, setProdutosDB] = useState([]); // Base de produtos
@@ -107,9 +108,9 @@ export function CountingForm({ conferente, onSuccess, onError }) {
     setLoadingAreas(true);
     try {
       const [locationsSnap, produtosSnap, curvaSnap] = await Promise.all([
-        getDocs(collection(db, 'locations')),
-        getDocs(collection(db, 'produtos')),
-        getDocs(collection(db, 'curva_abc')),
+        getDocs(col('locations')),
+        getDocs(col('produtos')),
+        getDocs(colRevenda('curva_abc')),
       ]);
 
       // Áreas disponíveis + mapa de localização por produto
@@ -156,7 +157,7 @@ export function CountingForm({ conferente, onSuccess, onError }) {
   async function validarLocalizacao(area, street, palettePosition) {
     try {
       const locationId = `${area}-${street}-${palettePosition}`;
-      const snap = await getDocs(collection(db, 'locations'));
+      const snap = await getDocs(col('locations'));
       const existe = snap.docs.some(doc => doc.id === locationId);
       return existe;
     } catch (error) {
@@ -314,7 +315,7 @@ export function CountingForm({ conferente, onSuccess, onError }) {
 
         if (prod.repeatForAllPositions) {
           // Buscar todas as posições desta rua/área
-          const snap = await getDocs(collection(db, 'locations'));
+          const snap = await getDocs(col('locations'));
           snap.docs.forEach((d) => {
             const data = d.data();
             if (data.area === prod.area && data.street === prod.street) {
@@ -338,7 +339,7 @@ export function CountingForm({ conferente, onSuccess, onError }) {
         for (const loc of locations) {
           const locationId = `${loc.area}-${loc.street}-${loc.palettePosition}`;
 
-          await addDoc(collection(db, 'inventory_logs'), {
+          await addDoc(col('inventory_logs'), {
             area: loc.area,
             street: loc.street,
             palettePosition: loc.palettePosition,
@@ -352,6 +353,7 @@ export function CountingForm({ conferente, onSuccess, onError }) {
             // Snapshots para integridade histórica
             assignedLocation: locationAssignments[String(prod.productCode)] || null,
             productCurva: curvaMap[String(prod.productCode)] || null,
+            ...stamp(),
           });
 
           count++;

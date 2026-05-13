@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
 import { useSessionFilter } from '../hooks/useSessionFilter';
 
 function formatarData(texto) {
@@ -17,6 +17,7 @@ function parsearData(str) {
 }
 
 export default function Exportar() {
+  const { col, docRef } = useDb();
   const [dataInicio, setDataInicio] = useSessionFilter('exp:inicio', '');
   const [dataFim, setDataFim] = useSessionFilter('exp:fim', '');
   const [total, setTotal] = useState(null);
@@ -31,7 +32,7 @@ export default function Exportar() {
     setCarregando(true);
     setTotal(null);
     try {
-      const snap = await getDocs(collection(db, 'nris'));
+      const snap = await getDocs(col('nris'));
       const todas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       const filtradas = todas.filter(n => {
         const data = parsearData(n.dataRecebimento);

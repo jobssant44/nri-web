@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 import * as XLSX from 'xlsx';
 
 // ─── Campos do relatório 03.11.20 (índice 0-based) ───────────────────────────
@@ -81,6 +81,7 @@ function extrairLinhas(rows, campos, pularHeader, filtroPlaca) {
 // ─── Card 03.11.20 ────────────────────────────────────────────────────────────
 
 function Card031120() {
+  const { col, db, stamp } = useDb();
   const [fase, setFase] = useState('idle');
   const [mensagem, setMensagem] = useState('');
   const [dados, setDados] = useState(null);
@@ -120,7 +121,7 @@ function Card031120() {
     setFase('salvando');
     setMensagem('');
     try {
-      const snap = await getDocs(collection(db, 'relatorio031120'));
+      const snap = await getDocs(col('relatorio031120'));
       for (let i = 0; i < snap.docs.length; i += 450) {
         const batch = writeBatch(db);
         snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
@@ -129,10 +130,11 @@ function Card031120() {
       for (let i = 0; i < dados.linhas.length; i += 450) {
         const batch = writeBatch(db);
         dados.linhas.slice(i, i + 450).forEach(linha => {
-          batch.set(doc(collection(db, 'relatorio031120')), {
+          batch.set(doc(col('relatorio031120')), {
             ...linha,
             importadoEm: new Date().toISOString(),
             nomeArquivo: dados.nomeArquivo,
+            ...stamp(),
           });
         });
         await batch.commit();
@@ -235,6 +237,7 @@ function Card031120() {
 // ─── Card 01.20.01.47 — Motoristas ───────────────────────────────────────────
 
 function CardMotoristas() {
+  const { col, db, stamp } = useDb();
   const [fase, setFase] = useState('idle');
   const [mensagem, setMensagem] = useState('');
   const [dados, setDados] = useState(null);
@@ -274,7 +277,7 @@ function CardMotoristas() {
     setFase('salvando');
     setMensagem('');
     try {
-      const snap = await getDocs(collection(db, 'relatoriomotoristas'));
+      const snap = await getDocs(col('relatoriomotoristas'));
       for (let i = 0; i < snap.docs.length; i += 450) {
         const batch = writeBatch(db);
         snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
@@ -283,10 +286,11 @@ function CardMotoristas() {
       for (let i = 0; i < dados.linhas.length; i += 450) {
         const batch = writeBatch(db);
         dados.linhas.slice(i, i + 450).forEach(linha => {
-          batch.set(doc(collection(db, 'relatoriomotoristas')), {
+          batch.set(doc(col('relatoriomotoristas')), {
             ...linha,
             importadoEm: new Date().toISOString(),
             nomeArquivo: dados.nomeArquivo,
+            ...stamp(),
           });
         });
         await batch.commit();

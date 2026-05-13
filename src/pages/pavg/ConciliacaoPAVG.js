@@ -1,18 +1,18 @@
 import { useState, useEffect } from 'react';
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 
 // Busca codProdutos da pavg_embalagens onde embalagem = filtro
-async function getCodigosPorEmbalagem(embalagem) {
-  const snap = await getDocs(query(collection(db, 'pavg_embalagens'), where('embalagem', '==', embalagem)));
+async function getCodigosPorEmbalagem(embalagem, colRevenda) {
+  const snap = await getDocs(query(colRevenda('pavg_embalagens'), where('embalagem', '==', embalagem)));
   const codigos = new Set();
-  snap.forEach(d => codigos.add(d.id));
+  snap.forEach(d => codigos.add(String(d.data().codProduto).trim()));
   return codigos;
 }
 
 // Soma disponivel do 02.05.02 para todos os codProdutos do set (sem filtro de depósito)
-async function somarDisponivel020502(colecao, codigos) {
-  const snap = await getDoc(doc(db, colecao, 'atual'));
+async function somarDisponivel020502(colecao, codigos, docRef) {
+  const snap = await getDoc(docRef(colecao, 'atual'));
   if (!snap.exists()) return 0;
   let soma = 0;
   (snap.data().linhas ?? []).forEach(l => {
@@ -24,21 +24,22 @@ async function somarDisponivel020502(colecao, codigos) {
 }
 
 export default function ConciliacaoPAVG() {
+  const { col, docRef, colRevenda } = useDb();
   const [valores, setValores] = useState({});
   const [debug, setDebug] = useState(null);
 
   useEffect(() => {
     async function carregar() {
       // 1) Busca todos os documentos de embalagens para inspecionar
-      const snapTodos = await getDocs(collection(db, 'pavg_embalagens'));
+      const snapTodos = await getDocs(colRevenda('pavg_embalagens'));
       const todosEmbalagens = [];
       snapTodos.forEach(d => todosEmbalagens.push({ id: d.id, embalagem: d.data().embalagem }));
 
       // 2) Busca por embalagem específica
-      const codigos1L = await getCodigosPorEmbalagem('O85 - GARRAFA RET.1000 ML');
+      const codigos1L = await getCodigosPorEmbalagem('O85 - GARRAFA RET.1000 ML', colRevenda);
 
       // 3) Lê o doc atual do 02.05.02
-      const snap020502 = await getDoc(doc(db, 'pavg_020502_carpina', 'atual'));
+      const snap020502 = await getDoc(docRef('pavg_020502_carpina', 'atual'));
       const linhas020502 = snap020502.exists() ? (snap020502.data().linhas ?? []) : [];
 
       // 4) Linhas que batem com os códigos

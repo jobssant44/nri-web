@@ -12,11 +12,25 @@ npm test         # Jest in interactive watch mode
 
 ## Architecture
 
-React SPA (Create React App) with direct Firebase Firestore integration. No Redux, no Context API — state is local `useState` per component plus `localStorage` for the session.
+React SPA (Create React App) + Firebase Auth + Firestore (multi-tenant). State is React Context (`UserContext`) — no Redux, no localStorage auth.
 
-**Auth flow:** `App.js` reads `nri-usuario` from `localStorage`. Login checks hardcoded admin (`Jobson / 3573`) then falls back to the `usuarios` Firestore collection. Role is either `supervisor` or `conferente`. Supervisor-only routes redirect to `/` for conferentes.
+**Auth flow:** Firebase Auth (`signInWithEmailAndPassword`). On login, `UserContext` reads `usuarios_global/{uid}` to get `empresaId`, then loads `empresas/{empresaId}`. Role levels: `admin` | `supervisor` | `supervisor-filial` | `conferente`. `admin` (Jobson) can access all admin routes.
 
-**Routing:** All routes are defined in `App.js` with `react-router-dom`. The sidebar groups are declared in `components/Sidebar.js` (`GRUPOS` array) — add new routes there to make them appear in navigation.
+**Multi-tenant data model:** ALL business collections are nested under `/empresas/{empresaId}/`. Never write to a flat top-level collection except: `empresas`, `usuarios_global` (admin-only global lookups).
+
+**DB helper:** `src/utils/db.js` exports `useDb()` hook. Components call:
+```js
+const { col, docRef, db } = useDb();
+// col('nris')         → collection(db, 'empresas', empresaId, 'nris')
+// docRef('nris', id)  → doc(db, 'empresas', empresaId, 'nris', id)
+// db                  → raw Firestore instance (for writeBatch only)
+```
+
+**UserContext:** `src/context/UserContext.js` — provides `{ usuario, empresa, revendasVisiveis, carregando }`. Import with `import { useUser } from '../context/UserContext'`. No prop-drilling.
+
+**Routing:** All routes in `App.js`. Sidebar groups in `components/Sidebar.js` (`TODOS_GRUPOS` array with `moduloSlug` field). Add new routes to both files. Sidebar filters groups by `empresa.modulos`.
+
+**User management:** Old `/usuarios` route removed. Supervisor manages empresa users at `/usuarios` (linked from Admin group for admins). Admin manages global users at `/admin/usuarios`.
 
 **Styling:** 100% inline style objects. No CSS modules, no Tailwind. Shared style constants are declared at the bottom of each file (e.g., `const card`, `const td`). Brand colors: red `#E31837`, blue `#1D5A9E`.
 
@@ -43,6 +57,7 @@ React SPA (Create React App) with direct Firebase Firestore integration. No Redu
 | `vendas_relatorio` | Imported sales reports: `{ importadoEm, nomeArquivo, produtos[], datas[] }`. `produtos[]` has `{ codigo, descricao, vendas: { 'DD/MM/AAAA': qtd } }` |
 | `locations` | Warehouse locations: `{ area, rua, posicao, assignedSkuId }` |
 | `inventory_logs` | Counting records with `{ assignedLocation, productCurva }` snapshots saved at write time |
+| `relatorio_030237` | Imported 03.02.37 reports: `{ importadoEm, nomeArquivo, totalLinhas, linhas[] }`. `linhas[]` has `{ operacao, vendedor, motorista, dataOperacao, emissao, nota, status, cliente, nome, produto, unidade, descricao, qtde, valor, mapa, origemPedido, pesoBrutoMapa }` |
 
 Bulk deletes always use `writeBatch` in chunks of 450 (Firestore limit is 500).
 

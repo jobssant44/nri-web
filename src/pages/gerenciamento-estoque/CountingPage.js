@@ -1,7 +1,10 @@
 import React from 'react';
 import { CountingForm } from '../../modules/gerenciamento-estoque/inventory/components/CountingForm';
+import { useUser } from '../../context/UserContext';
 
-export default function CountingPage({ usuario }) {
+export default function CountingPage() {
+  const { usuario } = useUser();
+
   const containerStyle = {
     maxWidth: '900px',
     margin: '0 auto',

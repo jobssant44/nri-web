@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { collection, getDocs, setDoc, doc } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, Legend, Cell,
@@ -309,6 +309,7 @@ const tdStyle = { padding: '8px 14px', color: D.textSec, borderTop: `1px solid $
 // ─── Sub-página: Registro de Quebras ──────────────────────────────────────────
 
 function RegistroDeQuebras({ onVoltar, linhasBase, colaboradores, areas, motivos, classificacoes, onSalvar }) {
+  const { docRef, stamp } = useDb();
   const [filtroDataInicio, setFiltroDataInicio] = useState('');
   const [filtroDataFim,    setFiltroDataFim]    = useState('');
   const [salvando,         setSalvando]         = useState({});
@@ -318,7 +319,7 @@ function RegistroDeQuebras({ onVoltar, linhasBase, colaboradores, areas, motivos
     const atual = classificacoes[chave] || {};
     const novo  = { ...atual, [campo]: valor };
     try {
-      await setDoc(doc(db, 'prejuizo_classificacoes', chave), novo);
+      await setDoc(docRef('prejuizo_classificacoes', chave), { ...novo, ...stamp() });
       onSalvar(chave, novo);
     } finally {
       setSalvando(prev => ({ ...prev, [chave]: false }));
@@ -642,6 +643,7 @@ function MiniRanking({ titulo, itens, cor, max }) {
 // ─── Página principal ──────────────────────────────────────────────────────────
 
 export default function WQIPage() {
+  const { col, colRevenda } = useDb();
   const [linhasBase,       setLinhasBase]       = useState([]);
   const [hectoBase,        setHectoBase]        = useState([]);
   const [colaboradores,    setColaboradores]    = useState([]);
@@ -660,12 +662,12 @@ export default function WQIPage() {
     async function carregar() {
       try {
         const [snap030237, snapHecto, snapColabs, snapAreas, snapMotivos, snapClass] = await Promise.all([
-          getDocs(collection(db, 'relatorio_030237')),
-          getDocs(collection(db, 'relatorio_030147hecto')),
-          getDocs(collection(db, 'prejuizo_colaboradores')),
-          getDocs(collection(db, 'prejuizo_areas')),
-          getDocs(collection(db, 'prejuizo_motivos')),
-          getDocs(collection(db, 'prejuizo_classificacoes')),
+          getDocs(colRevenda('relatorio_030237')),
+          getDocs(colRevenda('relatorio_030147hecto')),
+          getDocs(col('prejuizo_colaboradores')),
+          getDocs(col('prejuizo_areas')),
+          getDocs(col('prejuizo_motivos')),
+          getDocs(colRevenda('prejuizo_classificacoes')),
         ]);
         const todas = [];
         snap030237.docs.forEach(d => {

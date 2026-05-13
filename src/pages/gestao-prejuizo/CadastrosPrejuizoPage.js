@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, addDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 
 const ABAS = [
   { key: 'colaboradores', label: 'Colaborador',  colecao: 'prejuizo_colaboradores', campo: 'nome',  tipo: 'texto'  },
@@ -10,6 +10,8 @@ const ABAS = [
 ];
 
 function CardCadastro({ aba }) {
+  const { col, docRef, rid } = useDb();
+  const metaDocId = rid || 'global';
   const [itens, setItens]         = useState([]);
   const [input, setInput]         = useState('');
   const [salvando, setSalvando]   = useState(false);
@@ -24,7 +26,7 @@ function CardCadastro({ aba }) {
   }, [aba.colecao]);
 
   async function carregar() {
-    const snap = await getDocs(collection(db, aba.colecao));
+    const snap = await getDocs(col(aba.colecao));
     setItens(snap.docs.map(d => ({ id: d.id, ...d.data() })));
   }
 
@@ -35,9 +37,9 @@ function CardCadastro({ aba }) {
     setErro('');
     try {
       if (aba.tipo === 'numero') {
-        await setDoc(doc(db, aba.colecao, 'meta'), { [aba.campo]: parseFloat(val.replace(',', '.')) });
+        await setDoc(docRef(aba.colecao, metaDocId), { [aba.campo]: parseFloat(val.replace(',', '.')) });
       } else {
-        await addDoc(collection(db, aba.colecao), { [aba.campo]: val });
+        await addDoc(col(aba.colecao), { [aba.campo]: val });
       }
       setInput('');
       await carregar();
@@ -51,7 +53,7 @@ function CardCadastro({ aba }) {
   async function handleExcluir(id) {
     setExcluindo(id);
     try {
-      await deleteDoc(doc(db, aba.colecao, id));
+      await deleteDoc(docRef(aba.colecao,id));
       await carregar();
     } catch (e) {
       setErro('Erro ao excluir: ' + e.message);
@@ -77,9 +79,9 @@ function CardCadastro({ aba }) {
     setErro('');
     try {
       if (aba.tipo === 'numero') {
-        await setDoc(doc(db, aba.colecao, id), { [aba.campo]: parseFloat(val.replace(',', '.')) });
+        await setDoc(docRef(aba.colecao,id), { [aba.campo]: parseFloat(val.replace(',', '.')) });
       } else {
-        await setDoc(doc(db, aba.colecao, id), { [aba.campo]: val });
+        await setDoc(docRef(aba.colecao,id), { [aba.campo]: val });
       }
       setEditandoId(null);
       setEditValor('');
@@ -92,7 +94,7 @@ function CardCadastro({ aba }) {
   }
 
   const isMeta = aba.tipo === 'numero';
-  const metaAtual = isMeta ? itens.find(i => i.id === 'meta') : null;
+  const metaAtual = isMeta ? itens.find(i => i.id === metaDocId) : null;
 
   return (
     <div style={s.card}>
@@ -133,17 +135,17 @@ function CardCadastro({ aba }) {
               </button>
             )}
           </div>
-          {editandoId === 'meta' && (
+          {editandoId === metaDocId && (
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
               <input
                 type="number"
                 value={editValor}
                 onChange={e => setEditValor(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleSalvarEdicao('meta'); if (e.key === 'Escape') cancelarEdicao(); }}
+                onKeyDown={e => { if (e.key === 'Enter') handleSalvarEdicao(metaDocId); if (e.key === 'Escape') cancelarEdicao(); }}
                 style={{ ...s.input, flex: 1 }}
                 autoFocus
               />
-              <button onClick={() => handleSalvarEdicao('meta')} disabled={salvandoEdit || !editValor.trim()} style={{ ...s.botaoAdicionar, opacity: salvandoEdit || !editValor.trim() ? 0.6 : 1 }}>
+              <button onClick={() => handleSalvarEdicao(metaDocId)} disabled={salvandoEdit || !editValor.trim()} style={{ ...s.botaoAdicionar, opacity: salvandoEdit || !editValor.trim() ? 0.6 : 1 }}>
                 {salvandoEdit ? '...' : 'Salvar'}
               </button>
               <button onClick={cancelarEdicao} style={s.botaoCancelar}>Cancelar</button>

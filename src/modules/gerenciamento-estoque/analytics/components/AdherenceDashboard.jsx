@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useSessionFilter } from '../../../../hooks/useSessionFilter';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../../../firebaseConfig';
+import { getDocs } from 'firebase/firestore';
+import { useDb } from '../../../../utils/db';
 
 export function AdherenceDashboard() {
+  const { col, colRevenda } = useDb();
   const [loading, setLoading] = useState(false);
   const [metricas, setMetricas] = useState(null);
   const [detalhes, setDetalhes] = useState([]);
@@ -67,7 +68,7 @@ export function AdherenceDashboard() {
 
     try {
       // 1. Carregar localizações endereçadas
-      const locationsSnap = await getDocs(collection(db, 'locations'));
+      const locationsSnap = await getDocs(col('locations'));
       const assignedLocations = new Set();
       const correctLocationByProduct = {};
       locationsSnap.docs.forEach(d => {
@@ -83,7 +84,7 @@ export function AdherenceDashboard() {
       });
 
       // 2. Carregar contagens e filtrar por período
-      const inventorySnap = await getDocs(collection(db, 'inventory_logs'));
+      const inventorySnap = await getDocs(colRevenda('inventory_logs'));
       const logsFiltrados = inventorySnap.docs
         .map(d => d.data())
         .filter(log => {

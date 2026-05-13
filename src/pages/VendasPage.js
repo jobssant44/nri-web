@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { getDocs, query, orderBy } from 'firebase/firestore';
+import { useDb } from '../utils/db';
 import { useSessionFilter } from '../hooks/useSessionFilter';
 import { lerCache, salvarCache, invalidarCache } from '../utils/cache';
 
@@ -49,6 +49,7 @@ function calcularDadosMes(vendasAllMap, mesSelecionado) {
 }
 
 export default function VendasPage() {
+  const { col, docRef } = useDb();
   const [vendasAllMap, setVendasAllMap] = useState({});
   const [mesesDisponiveis, setMesesDisponiveis] = useState([]);
   const [anoSelecionado, setAnoSelecionado] = useSessionFilter('vendas:ano', '');
@@ -75,7 +76,7 @@ export default function VendasPage() {
       if (forcarAtualizacao) invalidarCache('vendasAllMap');
       let vMap = lerCache('vendasAllMap');
       if (!vMap) {
-        const snap = await getDocs(query(collection(db, 'vendas_relatorio'), orderBy('importadoEm', 'asc')));
+        const snap = await getDocs(query(col('vendas_relatorio'), orderBy('importadoEm', 'asc')));
         vMap = {};
         snap.docs.forEach(d => {
           (d.data().produtos || []).forEach(p => {

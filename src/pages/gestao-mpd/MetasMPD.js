@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -183,6 +183,8 @@ function MetaPercent({ label, valor, onChange }) {
 
 export default function MetasMPD() {
   const navigate = useNavigate();
+  const { docRef, rid } = useDb();
+  const docId = rid || 'global';
   const [horarios, setHorarios] = useState(PADRAO_HORARIO);
   const [percents, setPercents] = useState(PADRAO_PERCENT);
   const [salvando, setSalvando] = useState(false);
@@ -190,9 +192,12 @@ export default function MetasMPD() {
   const [carregando, setCarregando] = useState(true);
 
   useEffect(() => {
+    setCarregando(true);
+    setHorarios(PADRAO_HORARIO);
+    setPercents(PADRAO_PERCENT);
     async function carregar() {
       try {
-        const snap = await getDoc(doc(db, 'metas_mpd', 'config'));
+        const snap = await getDoc(docRef('metas_mpd', docId));
         if (snap.exists()) {
           const d = snap.data();
           if (d.horarios) setHorarios(d.horarios);
@@ -205,13 +210,13 @@ export default function MetasMPD() {
       }
     }
     carregar();
-  }, []);
+  }, [docId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSalvar() {
     setSalvando(true);
     setFeedback(null);
     try {
-      await setDoc(doc(db, 'metas_mpd', 'config'), {
+      await setDoc(docRef('metas_mpd', docId), {
         horarios,
         percents,
         atualizadoEm: new Date().toISOString(),

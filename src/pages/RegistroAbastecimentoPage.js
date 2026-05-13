@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, updateDoc, doc, addDoc, query, orderBy, writeBatch } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
+import { useUser } from '../context/UserContext';
 import { useSessionFilter } from '../hooks/useSessionFilter';
+import { NIVEIS_SUPERVISOR } from './admin/ConfigurarEmpresaPage';
 
 function formatarInput(valor) {
   const digits = valor.replace(/\D/g, '').slice(0, 8);
@@ -19,7 +21,9 @@ function parsearData(str) {
 
 const dataValida = str => parsearData(str) !== null;
 
-export default function RegistroAbastecimentoPage({ usuario }) {
+export default function RegistroAbastecimentoPage() {
+  const { col, docRef, db } = useDb();
+  const { usuario } = useUser();
   const [registros, setRegistros] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [editandoId, setEditandoId] = useState(null);
@@ -32,14 +36,14 @@ export default function RegistroAbastecimentoPage({ usuario }) {
   const [dataInicio, setDataInicio] = useSessionFilter('regab:inicio', '');
   const [dataFim, setDataFim] = useSessionFilter('regab:fim', '');
 
-  const isSupervisor = usuario?.nivel === 'supervisor';
+  const isSupervisor = NIVEIS_SUPERVISOR.includes(usuario?.nivel);
 
   useEffect(() => { carregar(); }, []);
 
   async function carregar() {
     setCarregando(true);
     try {
-      const snap = await getDocs(query(collection(db, 'abastecimentos'), orderBy('criadoEm', 'desc')));
+      const snap = await getDocs(query(col('abastecimentos'), orderBy('criadoEm', 'desc')));
       setRegistros(snap.docs.map(d => ({ _id: d.id, ...d.data() })));
     } catch (err) {
       console.error(err);
@@ -76,7 +80,7 @@ export default function RegistroAbastecimentoPage({ usuario }) {
       for (let i = 0; i < alvo.length; i += 450) {
         const batch = writeBatch(db);
         alvo.slice(i, i + 450).forEach(r => {
-          batch.update(doc(db, 'abastecimentos', r._id), { hora: horaAleatoria(r.tipo) });
+          batch.update(docRef('abastecimentos', r._id), { hora: horaAleatoria(r.tipo) });
         });
         await batch.commit();
       }
@@ -92,7 +96,7 @@ export default function RegistroAbastecimentoPage({ usuario }) {
     if (!dataValida(editandoData)) { alert('Data inválida. Use DD/MM/AAAA.'); return; }
     setSalvando(true);
     try {
-      await updateDoc(doc(db, 'abastecimentos', id), { dataOperacional: editandoData });
+      await updateDoc(docRef('abastecimentos', id), { dataOperacional: editandoData });
       setRegistros(prev => prev.map(r => r._id === id ? { ...r, dataOperacional: editandoData } : r));
       setEditandoId(null);
     } catch (err) {
@@ -107,7 +111,7 @@ export default function RegistroAbastecimentoPage({ usuario }) {
       setImportando(true);
       try {
         const linhas = e.target.result.split('\n').filter(l => l.trim()).slice(1);
-        const pSnap = await getDocs(collection(db, 'produtos'));
+        const pSnap = await getDocs(col('produtos'));
         const prodMap = {};
         pSnap.docs.forEach(d => { prodMap[d.data().codigo] = d.data().nome; });
 
@@ -135,7 +139,7 @@ export default function RegistroAbastecimentoPage({ usuario }) {
             hora: horaAleatoria(tipo),
             criadoEm: new Date().toISOString(),
           };
-          await addDoc(collection(db, 'abastecimentos'), registro);
+          await addDoc(col('abastecimentos'), registro);
           count++;
         }
 

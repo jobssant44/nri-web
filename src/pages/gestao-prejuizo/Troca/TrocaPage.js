@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../../firebaseConfig';
+import { useDb } from '../../../utils/db';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, LineChart, Line, Cell,
@@ -387,6 +387,7 @@ function DotDia({ cx, cy, payload, filtroDia }) {
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 export default function TrocaPage() {
+  const { col, colRevenda } = useDb();
   const [linhasBase,       setLinhasBase]       = useState([]);
   const [hectoBase,        setHectoBase]        = useState([]);
   const [carregando,       setCarregando]       = useState(true);
@@ -409,12 +410,25 @@ export default function TrocaPage() {
     async function carregar() {
       try {
         const [snapTroca, snapHecto] = await Promise.all([
-          getDocs(collection(db, 'relatorio_troca')),
-          getDocs(collection(db, 'relatorio_030147hecto')),
+          getDocs(colRevenda('relatorio_030237')),
+          getDocs(colRevenda('relatorio_030147hecto')),
         ]);
         const todas = [];
         snapTroca.docs.forEach(d => {
-          (d.data().linhas || []).forEach(l => todas.push(l));
+          (d.data().linhas || []).forEach(l => {
+            // Pré-filtros: Operação = 5 · Status = A · Origem = Digitado
+            const opNum  = parseFloat(String(l.operacao      || '').trim().replace(',', '.'));
+            const status = String(l.status        || '').trim().toUpperCase();
+            const origem = String(l.origemPedido  || '').trim().toLowerCase();
+            if (opNum !== 5 || status !== 'A' || origem !== 'digitado') return;
+            // Normaliza campos para o restante do componente
+            todas.push({
+              ...l,
+              data:        l.dataOperacao || l.data || '',
+              nomeCliente: l.nome         || l.nomeCliente || '',
+              codProduto:  l.produto      || l.codProduto  || '',
+            });
+          });
         });
         setLinhasBase(todas);
         setHectoBase(snapHecto.docs.map(d => d.data()));

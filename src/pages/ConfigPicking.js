@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
 import * as XLSX from 'xlsx';
 import { useSessionFilter } from '../hooks/useSessionFilter';
 
@@ -30,6 +30,7 @@ function parseMesAno(str) {
 }
 
 export default function ConfigPicking() {
+  const { col, docRef } = useDb();
   const [mesesDisponiveis, setMesesDisponiveis] = useState([]);
   const [anoSelecionado, setAnoSelecionado] = useSessionFilter('cfgpick:ano', '');
   const [mesNumSelecionado, setMesNumSelecionado] = useSessionFilter('cfgpick:mes', '');
@@ -53,8 +54,8 @@ export default function ConfigPicking() {
   async function carregarInicial() {
     setCarregando(true);
     const [mSnap, pSnap] = await Promise.all([
-      getDocs(collection(db, 'picking_config_mensal')),
-      getDocs(collection(db, 'produtos')),
+      getDocs(col('picking_config_mensal')),
+      getDocs(col('produtos')),
     ]);
     const prods = pSnap.docs.map(d => d.data());
     setBaseProdutos(prods);
@@ -73,8 +74,12 @@ export default function ConfigPicking() {
 
   function enriquecer(produtos, base = baseProdutos) {
     return produtos.map(c => {
-      const prod = base.find(p => p.codigo === c.codProduto);
-      return { ...c, cxPorPlt: c.cxPorPlt || prod?.cxPorPlt || '' };
+      const prod = base.find(p => String(p.codigo) === String(c.codProduto));
+      return {
+        ...c,
+        espacosPalete: c.espacosPalete ?? prod?.paletizacao ?? '',
+        cxPorPlt:      c.cxPorPlt      || prod?.paletizacao || prod?.cxPorPlt || '',
+      };
     });
   }
 
@@ -84,7 +89,7 @@ export default function ConfigPicking() {
     setMesNumSelecionado(chave.split('-')[1]);
     setEditando(null);
     setBusca('');
-    const docSnap = await getDoc(doc(db, 'picking_config_mensal', chave));
+    const docSnap = await getDoc(docRef('picking_config_mensal', chave));
     setConfigs(docSnap.exists() ? enriquecer(docSnap.data().produtos || []) : []);
   }
 
@@ -92,15 +97,15 @@ export default function ConfigPicking() {
     if (campo === 'codigo') {
       const v = texto.replace(/[^0-9]/g, '');
       setNovoForm(f => ({ ...f, codProduto: v, nomeProduto: '' }));
-      setSugestoes(v.length >= 2 ? baseProdutos.filter(p => p.codigo?.startsWith(v)).slice(0, 5) : []);
+      setSugestoes(v.length >= 2 ? baseProdutos.filter(p => String(p.codigo).startsWith(v)).slice(0, 5) : []);
     } else {
       setNovoForm(f => ({ ...f, nomeProduto: texto.toUpperCase(), codProduto: '' }));
-      setSugestoes(texto.length >= 2 ? baseProdutos.filter(p => p.nome?.toLowerCase().includes(texto.toLowerCase())).slice(0, 5) : []);
+      setSugestoes(texto.length >= 2 ? baseProdutos.filter(p => (p.descricao || '').toLowerCase().includes(texto.toLowerCase())).slice(0, 5) : []);
     }
   }
 
   function selecionarProdutoForm(p) {
-    setNovoForm(f => ({ ...f, codProduto: p.codigo, nomeProduto: p.nome }));
+    setNovoForm(f => ({ ...f, codProduto: p.codigo, nomeProduto: p.descricao || '' }));
     setSugestoes([]);
   }
 
@@ -108,14 +113,14 @@ export default function ConfigPicking() {
     if (!mesSelecionado) { alert('Selecione um mês primeiro.'); return; }
     if (!novoForm.codProduto || !novoForm.nomeProduto) { alert('Selecione um produto.'); return; }
     if (!novoForm.espacosPalete) { alert('Preencha os espaços palete.'); return; }
-    const prod = baseProdutos.find(p => p.codigo === novoForm.codProduto);
+    const prod = baseProdutos.find(p => String(p.codigo) === String(novoForm.codProduto));
     const novo = {
-      codProduto: novoForm.codProduto,
-      nomeProduto: novoForm.nomeProduto,
-      espacosPalete: parseInt(novoForm.espacosPalete),
-      cxPorPlt: prod?.cxPorPlt ? parseInt(prod.cxPorPlt) : '',
+      codProduto:    novoForm.codProduto,
+      nomeProduto:   novoForm.nomeProduto,
+      espacosPalete: prod?.paletizacao ?? parseFloat(novoForm.espacosPalete) ?? '',
+      cxPorPlt:      prod?.paletizacao || prod?.cxPorPlt || '',
     };
-    const docRef = doc(db, 'picking_config_mensal', mesSelecionado);
+    const docRef = docRef('picking_config_mensal', mesSelecionado);
     const docSnap = await getDoc(docRef);
     const existentes = docSnap.exists() ? (docSnap.data().produtos || []) : [];
     const atualizados = [...existentes.filter(p => p.codProduto !== novo.codProduto), novo];
@@ -126,10 +131,12 @@ export default function ConfigPicking() {
   }
 
   async function salvarEdicao(cfg) {
-    const docRef = doc(db, 'picking_config_mensal', mesSelecionado);
+    const docRef = docRef('picking_config_mensal', mesSelecionado);
     const docSnap = await getDoc(docRef);
     const produtos = (docSnap.data()?.produtos || []).map(p =>
-      p.codProduto === cfg.codProduto ? { ...p, espacosPalete: parseInt(cfg.espacosPalete) } : p
+      p.codProduto === cfg.codProduto
+        ? { ...p, espacosPalete: parseInt(cfg.espacosPalete), cxPorPlt: parseInt(cfg.cxPorPlt) || '' }
+        : p
     );
     await updateDoc(docRef, { produtos });
     setEditando(null);
@@ -138,7 +145,7 @@ export default function ConfigPicking() {
 
   async function excluir(codProduto, nome) {
     if (!window.confirm(`Remover "${nome}" de ${chaveParaNome(mesSelecionado)}?`)) return;
-    const docRef = doc(db, 'picking_config_mensal', mesSelecionado);
+    const docRef = docRef('picking_config_mensal', mesSelecionado);
     const docSnap = await getDoc(docRef);
     const produtos = (docSnap.data()?.produtos || []).filter(p => p.codProduto !== codProduto);
     await updateDoc(docRef, { produtos });
@@ -158,19 +165,18 @@ export default function ConfigPicking() {
         const grupos = {};
         for (const row of rows.slice(1)) {
           const mesStr = String(row[0]).trim();
-          const codigo  = String(row[1]).trim();
-          const nome    = String(row[2]).trim();
-          const espacos = parseInt(String(row[3]).trim());
-          if (!mesStr || !codigo || isNaN(espacos)) continue;
+          const codigo = String(row[1]).trim();
+          const nome   = String(row[2]).trim();
+          if (!mesStr || !codigo) continue;
           const chave = parseMesAno(mesStr);
           if (!chave) continue;
           if (!grupos[chave]) grupos[chave] = [];
-          const prod = baseProdutos.find(p => p.codigo === codigo);
+          const prod = baseProdutos.find(p => String(p.codigo) === codigo);
           grupos[chave].push({
-            codProduto: codigo,
-            nomeProduto: nome || prod?.nome || codigo,
-            espacosPalete: espacos,
-            cxPorPlt: prod?.cxPorPlt ? parseInt(prod.cxPorPlt) : '',
+            codProduto:    codigo,
+            nomeProduto:   nome || prod?.descricao || codigo,
+            espacosPalete: prod?.paletizacao ?? '',
+            cxPorPlt:      prod?.paletizacao || prod?.cxPorPlt || '',
           });
         }
 
@@ -178,10 +184,10 @@ export default function ConfigPicking() {
         if (chaves.length === 0) { alert('Nenhum dado válido encontrado no arquivo.'); return; }
 
         for (const [chave, produtos] of Object.entries(grupos)) {
-          await setDoc(doc(db, 'picking_config_mensal', chave), { mes: chave, produtos });
+          await setDoc(docRef('picking_config_mensal', chave), { mes: chave, produtos });
         }
 
-        const snap = await getDocs(collection(db, 'picking_config_mensal'));
+        const snap = await getDocs(col('picking_config_mensal'));
         const meses = snap.docs.map(d => d.id).sort().reverse();
         setMesesDisponiveis(meses);
         const chaveRecente = chaves.sort().reverse()[0];
@@ -285,8 +291,8 @@ export default function ConfigPicking() {
       </div>
 
       <div style={{ backgroundColor: '#f0f4ff', borderRadius: 8, padding: '10px 16px', marginBottom: 20, fontSize: 12, color: '#555' }}>
-        📋 <b>Formato do arquivo:</b> Mês (Janeiro/2026) | Código | Descrição | Espaços Palete — cabeçalho na 1ª linha.
-        Aceita <b>.xlsx</b> e <b>.csv</b>. Um arquivo pode conter múltiplos meses.
+        📋 <b>Formato do arquivo:</b> A = Mês (Janeiro/2026) | B = Código | C = Descrição — cabeçalho na 1ª linha.
+        Espaços Palete e CX/PLT são buscados automaticamente do catálogo de produtos (01.11). Aceita <b>.xlsx</b> e <b>.csv</b>.
       </div>
 
       {showNovo && mesSelecionado && (
@@ -304,7 +310,7 @@ export default function ConfigPicking() {
                 <div style={dropdown}>
                   {sugestoes.map((p, i) => (
                     <div key={i} onClick={() => selecionarProdutoForm(p)} style={dropItem}>
-                      <b style={{ color: '#E31837' }}>{p.codigo}</b> — {p.nome}
+                      <b style={{ color: '#E31837' }}>{p.codigo}</b> — {p.descricao}
                     </div>
                   ))}
                 </div>
@@ -370,8 +376,10 @@ export default function ConfigPicking() {
             </thead>
             <tbody>
               {configsFiltrados.map((c, i) => {
-                const cap = c.espacosPalete && c.cxPorPlt ? c.espacosPalete * parseInt(c.cxPorPlt) : null;
                 const estaEditando = editando?.codProduto === c.codProduto;
+                const esp = estaEditando ? parseInt(editando.espacosPalete) || 0 : c.espacosPalete;
+                const cx  = estaEditando ? parseInt(editando.cxPorPlt)      || 0 : parseInt(c.cxPorPlt) || 0;
+                const cap = esp && cx ? esp * cx : null;
                 return (
                   <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
                     <td style={td}>{c.codProduto}</td>
@@ -381,8 +389,12 @@ export default function ConfigPicking() {
                         ? <input type="number" min="1" value={editando.espacosPalete} onChange={e => setEditando(ed => ({ ...ed, espacosPalete: e.target.value }))} style={{ ...inp, width: 70, textAlign: 'center' }} />
                         : c.espacosPalete}
                     </td>
-                    <td style={{ ...td, textAlign: 'center' }}>{c.cxPorPlt || '-'}</td>
-                    <td style={{ ...td, textAlign: 'center', color: '#555' }}>{cap || '-'}</td>
+                    <td style={{ ...td, textAlign: 'center' }}>
+                      {estaEditando
+                        ? <input type="number" min="1" value={editando.cxPorPlt} onChange={e => setEditando(ed => ({ ...ed, cxPorPlt: e.target.value }))} style={{ ...inp, width: 70, textAlign: 'center' }} />
+                        : c.cxPorPlt || '-'}
+                    </td>
+                    <td style={{ ...td, textAlign: 'center', color: estaEditando ? '#E31837' : '#555', fontWeight: estaEditando ? 700 : 400 }}>{cap || '-'}</td>
                     <td style={td}>
                       {estaEditando ? (
                         <div style={{ display: 'flex', gap: 6 }}>

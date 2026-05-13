@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { collection, doc, setDoc } from 'firebase/firestore';
-import { db } from '../../../../firebaseConfig';
+import { setDoc } from 'firebase/firestore';
+import { useDb } from '../../../../utils/db';
 
 export function CadastrarLocalizacao({ onSuccess }) {
+  const { docRef } = useDb();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     area: '',
@@ -90,7 +91,7 @@ export function CadastrarLocalizacao({ onSuccess }) {
       // ID no formato A-1-1
       const docId = `${area}-${street}-${palettePosition}`;
 
-      await setDoc(doc(db, 'locations', docId), {
+      await setDoc(docRef('locations', docId), {
         area,
         street,
         palettePosition,

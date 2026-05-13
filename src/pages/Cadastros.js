@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
 import { useSessionFilter } from '../hooks/useSessionFilter';
 
 const ABAS = [
@@ -11,6 +11,7 @@ const ABAS = [
 ];
 
 export default function Cadastros() {
+  const { col, docRef } = useDb();
   const [abaAtiva, setAbaAtiva] = useSessionFilter('cad:aba', 'motoristas');
   const [dados, setDados] = useState({ motoristas: [], cavalos: [], carretas: [], origens: [] });
   const [novoItem, setNovoItem] = useState('');
@@ -21,10 +22,10 @@ export default function Cadastros() {
 
   async function carregarTodos() {
     const [mSnap, cSnap, crSnap, oSnap] = await Promise.all([
-      getDocs(collection(db, 'motoristas')),
-      getDocs(collection(db, 'cavalos')),
-      getDocs(collection(db, 'carretas')),
-      getDocs(collection(db, 'origens')),
+      getDocs(col('motoristas')),
+      getDocs(col('cavalos')),
+      getDocs(col('carretas')),
+      getDocs(col('origens')),
     ]);
     setDados({
       motoristas: mSnap.docs.map(d => ({ id: d.id, ...d.data() })),
@@ -39,20 +40,20 @@ export default function Cadastros() {
     if (dados[abaAtiva].some(i => i.valor.toLowerCase() === novoItem.trim().toLowerCase())) {
       alert('Item já cadastrado.'); return;
     }
-    await addDoc(collection(db, abaAtiva), { valor: novoItem.trim() });
+    await addDoc(col(abaAtiva), { valor: novoItem.trim() });
     setNovoItem('');
     carregarTodos();
   }
 
   async function excluir(id) {
     if (!window.confirm('Deseja excluir este item?')) return;
-    await deleteDoc(doc(db, abaAtiva, id));
+    await deleteDoc(docRef(abaAtiva, id));
     carregarTodos();
   }
 
   async function salvarEdicao(id) {
     if (!editandoValor.trim()) return;
-    await updateDoc(doc(db, abaAtiva, id), { valor: editandoValor.trim() });
+    await updateDoc(docRef(abaAtiva, id), { valor: editandoValor.trim() });
     setEditandoId(null);
     carregarTodos();
   }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { getDoc, getDocs } from 'firebase/firestore';
+import { useDb } from '../../utils/db';
 import { calcularABC } from './ImportarRelatorio';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 import {
@@ -65,6 +65,7 @@ function getValorFinal(produto, campo, metrica, fatores) {
 // ─── Componente principal ────────────────────────────────────────────────────
 
 export default function DashboardCurvaABC() {
+  const { col, docRef, colRevenda, rid } = useDb();
   const [indices, setIndices]       = useState([]);
   const [anos, setAnos]             = useState([]);
   const [mesesDoAno, setMesesDoAno] = useState([]);
@@ -127,7 +128,7 @@ export default function DashboardCurvaABC() {
   }
 
   async function carregarIndices() {
-    const snap = await getDoc(doc(db, 'curva_abc_meta', 'indices'));
+    const snap = await getDoc(docRef('curva_abc_meta', rid || 'global'));
     if (!snap.exists()) return;
     const lista = (snap.data().meses || []).sort();
     setIndices(lista);
@@ -138,7 +139,7 @@ export default function DashboardCurvaABC() {
 
   async function carregarFatores() {
     try {
-      const snap = await getDocs(collection(db, 'produtos_fatores'));
+      const snap = await getDocs(colRevenda('produtos_fatores'));
       const mapa = {};
       snap.forEach(d => { mapa[d.data().codigo] = d.data().fatorPalete; });
       setFatores(mapa);
@@ -151,10 +152,11 @@ export default function DashboardCurvaABC() {
     setCarregando(true); setPagina(1);
     const m1 = prevMonth(ano, mes, 1);
     const m2 = prevMonth(ano, mes, 2);
+    const prefixo = rid || 'global';
     const [s0, s1, s2] = await Promise.all([
-      getDoc(doc(db, 'curva_abc_mensal', monthKey(ano, mes))),
-      getDoc(doc(db, 'curva_abc_mensal', monthKey(m1.ano, m1.mes))),
-      getDoc(doc(db, 'curva_abc_mensal', monthKey(m2.ano, m2.mes))),
+      getDoc(docRef('curva_abc_mensal', `${prefixo}_${monthKey(ano, mes)}`)),
+      getDoc(docRef('curva_abc_mensal', `${prefixo}_${monthKey(m1.ano, m1.mes)}`)),
+      getDoc(docRef('curva_abc_mensal', `${prefixo}_${monthKey(m2.ano, m2.mes)}`)),
     ]);
     setDadosM0(s0.exists() ? s0.data() : null);
     setDadosM1(s1.exists() ? s1.data() : null);

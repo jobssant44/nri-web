@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { collection, writeBatch, doc, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 import * as XLSX from 'xlsx';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -109,6 +109,7 @@ function extrairLinhas(rows, info) {
 // ─── Card PAR ─────────────────────────────────────────────────────────────────
 
 function CardPAR() {
+  const { col, colRevenda, docRef, db, stamp, rid } = useDb();
   const [fase, setFase]       = useState('idle');
   const [mensagem, setMensagem] = useState('');
   const [preview, setPreview] = useState(null); // { linhas, total }
@@ -155,18 +156,19 @@ function CardPAR() {
     if (!preview) return;
     setFase('salvando');
     try {
-      // Apaga toda a coleção anterior
-      const snap = await getDocs(collection(db, 'conciliacao_par'));
+      // Apaga apenas os documentos da revenda atual
+      const snap = await getDocs(colRevenda('conciliacao_par'));
       for (let i = 0; i < snap.docs.length; i += 450) {
         const batch = writeBatch(db);
         snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
         await batch.commit();
       }
-      // Salva os novos usando codProduto como ID do documento
+      // Salva os novos usando {rid}_{codProduto} como ID do documento
+      const prefixo = rid || 'global';
       for (let i = 0; i < preview.linhas.length; i += 450) {
         const batch = writeBatch(db);
         preview.linhas.slice(i, i + 450).forEach(item => {
-          batch.set(doc(db, 'conciliacao_par', item.codProduto), item);
+          batch.set(docRef('conciliacao_par', `${prefixo}_${item.codProduto}`), { ...item, ...stamp() });
         });
         await batch.commit();
       }
@@ -273,6 +275,7 @@ function CardPAR() {
 // ─── Página ───────────────────────────────────────────────────────────────────
 
 export default function ImportarConciliacaoPage() {
+  const { col, docRef, db, stamp } = useDb();
   // lotes: [{ nomeArquivo, info, linhas, total, erro }]
   const [lotes, setLotes]       = useState([]);
   const [fase, setFase]         = useState('idle'); // idle | lendo | preview | salvando | salvo
@@ -334,7 +337,7 @@ export default function ImportarConciliacaoPage() {
         // Apaga registros existentes com mesma revenda + data antes de salvar
         const snap = await getDocs(
           query(
-            collection(db, 'conciliacao_estoque'),
+            col('conciliacao_estoque'),
             where('revenda', '==', info.revenda),
             where('data',    '==', info.data)
           )
@@ -349,7 +352,7 @@ export default function ImportarConciliacaoPage() {
         for (let i = 0; i < linhas.length; i += 450) {
           const batch = writeBatch(db);
           linhas.slice(i, i + 450).forEach(item => {
-            batch.set(doc(collection(db, 'conciliacao_estoque')), item);
+            batch.set(doc(col('conciliacao_estoque')), { ...item, ...stamp() });
           });
           await batch.commit();
         }

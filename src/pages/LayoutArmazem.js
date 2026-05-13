@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
 
 // ── Constantes ──────────────────────────────────────────────────────────────
 const ROWS         = 180;   // 90 m ÷ 0,5 m
@@ -47,6 +47,8 @@ function desenharCelula(ctx, x, y, cs, cell) {
 
 // ── Componente principal ─────────────────────────────────────────────────────
 export default function LayoutArmazem() {
+  const { docRef, rid } = useDb();
+  const layoutDocId = rid || 'global';
   // ---------- refs (usados diretamente nos handlers — sem stale closure) ------
   const canvasRef  = useRef(null);
   const contRef    = useRef(null);
@@ -82,7 +84,7 @@ export default function LayoutArmazem() {
   async function carregar() {
     setCarregando(true);
     try {
-      const snap = await getDoc(doc(db, 'layout_armazem', DOC_ID));
+      const snap = await getDoc(docRef('layout_armazem', layoutDocId));
       if (snap.exists()) {
         cellsRef.current = snap.data().cells || {};
         setCellCount(Object.keys(cellsRef.current).length);
@@ -95,7 +97,7 @@ export default function LayoutArmazem() {
   async function salvar() {
     setSalvando(true);
     try {
-      await setDoc(doc(db, 'layout_armazem', DOC_ID), {
+      await setDoc(docRef('layout_armazem', layoutDocId), {
         rows: ROWS, cols: COLS, escala: '50cm',
         cells: cellsRef.current,
         atualizadoEm: new Date(),

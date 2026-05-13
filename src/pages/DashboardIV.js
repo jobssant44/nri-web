@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, doc, getDoc, setDoc, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
+import { useUser } from '../context/UserContext';
 import { useSessionFilter } from '../hooks/useSessionFilter';
+import { NIVEIS_SUPERVISOR } from './admin/ConfigurarEmpresaPage';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts';
 
 const MESES_NOME = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -58,8 +60,9 @@ function extrairTipoEmbalagem(nome, cxPorPlt) {
 }
 
 export default function DashboardIV() {
-  const usuario = JSON.parse(localStorage.getItem('nri-usuario') || '{}');
-  const isSupervisor = usuario?.nivel === 'supervisor';
+  const { col, docRef } = useDb();
+  const { usuario } = useUser();
+  const isSupervisor = NIVEIS_SUPERVISOR.includes(usuario?.nivel);
 
   const [anoSelecionado, setAnoSelecionado]       = useSessionFilter('div:ano', '');
   const [mesNumSelecionado, setMesNumSelecionado] = useSessionFilter('div:mes', '');
@@ -84,11 +87,11 @@ export default function DashboardIV() {
     const chave = `${anoSelecionado}-${mesNumSelecionado}`;
     (async () => {
       try {
-        const pDoc = await getDoc(doc(db, 'picking_config_mensal', chave));
+        const pDoc = await getDoc(docRef('picking_config_mensal', chave));
         if (pDoc.exists() && (pDoc.data().produtos || []).length > 0) {
           setPickingConfig(pDoc.data().produtos || []);
         } else {
-          const pSnap = await getDocs(collection(db, 'picking_config'));
+          const pSnap = await getDocs(col('picking_config'));
           setPickingConfig(pSnap.docs.map(d => d.data()));
         }
       } catch {}
@@ -99,8 +102,8 @@ export default function DashboardIV() {
     setCarregando(true);
     try {
       const [aSnap, vSnap] = await Promise.all([
-        getDocs(collection(db, 'abastecimentos')),
-        getDocs(query(collection(db, 'vendas_relatorio'), orderBy('importadoEm', 'asc'))),
+        getDocs(col('abastecimentos')),
+        getDocs(query(col('vendas_relatorio'), orderBy('importadoEm', 'asc'))),
       ]);
 
       const abasts = aSnap.docs.map(d => d.data());
@@ -406,7 +409,7 @@ export default function DashboardIV() {
         cxPorPlt:      l.cxPorPlt,
         espacosPalete: l.espacosNovo,
       }));
-      await setDoc(doc(db, 'picking_config_mensal', chave), {
+      await setDoc(docRef('picking_config_mensal', chave), {
         produtos: produtosParaSalvar,
         geradoEm: new Date().toISOString(),
         geradoPor: usuario.nome || 'supervisor',

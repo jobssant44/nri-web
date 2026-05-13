@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: "AIzaSyDGrbqUauCX_x3HCM-BVfgil3iWRp6nG5k",
@@ -11,4 +12,9 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+export const db   = getFirestore(app);
+export const auth = getAuth(app);
+
+// Secondary app instance — used only to create new users without signing out the current admin
+const appSecundario = initializeApp(firebaseConfig, 'secundario');
+export const authSecundario = getAuth(appSecundario);

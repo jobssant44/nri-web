@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { collection, getDocs, addDoc, writeBatch } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
 import { invalidarCache } from '../utils/cache';
 import * as XLSX from 'xlsx';
 
@@ -61,6 +61,7 @@ function ordenarDatas(datas) {
 }
 
 export default function ImportarVendasPage() {
+  const { col, docRef, db } = useDb();
   const [pickingCodes, setPickingCodes] = useState(new Set());
   const [dados, setDados] = useState(null);
   const [mensagem, setMensagem] = useState('');
@@ -72,8 +73,8 @@ export default function ImportarVendasPage() {
 
   async function carregarPicking() {
     const [snapAntigo, snapMensal] = await Promise.all([
-      getDocs(collection(db, 'picking_config')),
-      getDocs(collection(db, 'picking_config_mensal')),
+      getDocs(col('picking_config')),
+      getDocs(col('picking_config_mensal')),
     ]);
     const codes = new Set();
     snapAntigo.docs.forEach(d => codes.add(String(d.data().codProduto)));
@@ -188,7 +189,7 @@ export default function ImportarVendasPage() {
     try {
       const promises = [];
       if (dados.produtos.length > 0) {
-        promises.push(addDoc(collection(db, 'vendas_relatorio'), {
+        promises.push(addDoc(col('vendas_relatorio'), {
           importadoEm: new Date(),
           nomeArquivo,
           produtos: dados.produtos,
@@ -196,7 +197,7 @@ export default function ImportarVendasPage() {
         }));
       }
       if (dados.produtosPrepicking.length > 0) {
-        promises.push(addDoc(collection(db, 'vendas_prepicking'), {
+        promises.push(addDoc(col('vendas_prepicking'), {
           importadoEm: new Date(),
           nomeArquivo,
           produtos: dados.produtosPrepicking,
@@ -204,7 +205,7 @@ export default function ImportarVendasPage() {
         }));
       }
       if (dados.produtosAvulsas.length > 0) {
-        promises.push(addDoc(collection(db, 'vendas_avulsas'), {
+        promises.push(addDoc(col('vendas_avulsas'), {
           importadoEm: new Date(),
           nomeArquivo,
           produtos: dados.produtosAvulsas,
@@ -242,7 +243,7 @@ export default function ImportarVendasPage() {
     try {
       const colecoes = ['vendas_relatorio', 'vendas_prepicking', 'vendas_avulsas'];
       for (const nome of colecoes) {
-        const snap = await getDocs(collection(db, nome));
+        const snap = await getDocs(col(nome));
         for (let i = 0; i < snap.docs.length; i += 450) {
           const batch = writeBatch(db);
           snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));

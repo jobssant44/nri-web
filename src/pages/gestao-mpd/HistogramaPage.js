@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, Cell,
@@ -227,6 +227,7 @@ function TooltipCustom({ active, payload, label }) {
 
 // ─── Página Histograma ────────────────────────────────────────────────────────
 export default function HistogramaPage() {
+  const { col, colRevenda } = useDb();
   const loc = useLocation();
   const [linhas, setLinhas]         = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -235,7 +236,7 @@ export default function HistogramaPage() {
   useEffect(() => {
     let mounted = true;
     setCarregando(true);
-    getDocs(collection(db, 'relatorio031120'))
+    getDocs(colRevenda('relatorio031120'))
       .then(snap => { if (mounted) setLinhas(snap.docs.map(d => d.data())); })
       .catch(() => {})
       .finally(() => { if (mounted) setCarregando(false); });

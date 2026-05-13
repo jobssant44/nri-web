@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 import { collection, doc, getDoc, getDocs, setDoc, writeBatch, deleteDoc } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 import * as XLSX from 'xlsx';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -118,8 +118,8 @@ export function calcularABC(produtos, campo) {
 }
 
 /** Apaga todos os documentos de uma coleção em lotes de 450 */
-async function limparColecao(nomeColecao) {
-  const snap = await getDocs(collection(db, nomeColecao));
+async function limparColecao(nomeColecao, col, db) {
+  const snap = await getDocs(col(nomeColecao));
   for (let i = 0; i < snap.docs.length; i += 450) {
     const batch = writeBatch(db);
     snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
@@ -130,6 +130,7 @@ async function limparColecao(nomeColecao) {
 // ─── Subcomponente: aba 01.11 ─────────────────────────────────────────────────
 
 function Importar0111() {
+  const { col, colRevenda, docRef, db, stamp, rid } = useDb();
   const [produtos,   setProdutos]   = useState(null);   // array de { codigo, fatorHL, fatorPalete }
   const [progresso,  setProgresso]  = useState(null);   // { pct, etapa }
   const [resultado,  setResultado]  = useState(null);
@@ -146,7 +147,7 @@ function Importar0111() {
     setLimpando(true);
     try {
       prog(0, 'Apagando dados...');
-      await limparColecao('produtos_fatores');
+      await limparColecao('produtos_fatores', colRevenda, db);
       prog(100, '✅ Dados apagados!');
       setTimeout(() => setProgresso(null), 2000);
     } catch (err) {
@@ -230,17 +231,18 @@ function Importar0111() {
     setImportando(true);
     try {
       prog(80, 'Limpando coleção anterior...');
-      await limparColecao('produtos_fatores');
+      await limparColecao('produtos_fatores', colRevenda, db);
 
       prog(88, 'Gravando produtos...');
       const CHUNK = 450;
       for (let i = 0; i < produtos.length; i += CHUNK) {
         const batch = writeBatch(db);
         produtos.slice(i, i + CHUNK).forEach(p =>
-          batch.set(doc(db, 'produtos_fatores', p.codigo), {
+          batch.set(docRef('produtos_fatores', `${rid || 'global'}_${p.codigo}`), {
             codigo:      p.codigo,
             fatorHL:     p.fatorHL,
             fatorPalete: p.fatorPalete,
+            ...stamp(),
           })
         );
         await batch.commit();
@@ -426,6 +428,7 @@ export default function ImportarRelatorio() {
 // ─── Subcomponente: aba 03.02.36.08 (lógica original) ─────────────────────────
 
 function Importar030236() {
+  const { col, colRevenda, docRef, db, stamp, rid } = useDb();
   const [analise,    setAnalise]    = useState(null);   // dados processados do arquivo
   const [mesesSel,   setMesesSel]   = useState({});     // { 'YYYY-MM': true/false }
   const [buscaVerif, setBuscaVerif] = useSessionFilter('imprlt:busca', '');
@@ -449,11 +452,11 @@ function Importar030236() {
     setLimpando(true);
     try {
       prog(0, 'Apagando dados mensais...');
-      await limparColecao('curva_abc_mensal');
+      await limparColecao('curva_abc_mensal', colRevenda, db);
       prog(50, 'Apagando índice de meses...');
-      await deleteDoc(doc(db, 'curva_abc_meta', 'indices'));
+      await deleteDoc(docRef('curva_abc_meta', rid || 'global'));
       prog(75, 'Apagando curva ABC do módulo NRI...');
-      await limparColecao('curva_abc');
+      await limparColecao('curva_abc', colRevenda, db);
       prog(100, '✅ Todos os dados foram apagados!');
       setTimeout(() => setProgresso(null), 2000);
     } catch (err) {
@@ -661,14 +664,15 @@ function Importar030236() {
         const k = chaves[i];
         prog(80 + Math.round(((i + 1) / chaves.length) * 8),
           `Salvando ${k}... (${i + 1}/${chaves.length})`);
-        await setDoc(doc(db, 'curva_abc_mensal', k), analise[k]);
+        await setDoc(docRef('curva_abc_mensal', `${rid || 'global'}_${k}`), { ...analise[k], ...stamp() });
       }
 
       // 2. Atualiza índice de meses
       prog(90, 'Atualizando índice...');
-      const snapIdx   = await getDoc(doc(db, 'curva_abc_meta', 'indices'));
+      const metaDocId  = rid || 'global';
+      const snapIdx    = await getDoc(docRef('curva_abc_meta', metaDocId));
       const existentes = snapIdx.exists() ? (snapIdx.data().meses || []) : [];
-      await setDoc(doc(db, 'curva_abc_meta', 'indices'),
+      await setDoc(docRef('curva_abc_meta', metaDocId),
         { meses: [...new Set([...existentes, ...chaves])].sort() });
 
       // 3. Atualiza curva_abc (usada pelo módulo de Recebimento de NRI)
@@ -677,13 +681,13 @@ function Importar030236() {
       const curvaPorCx = calcularABC(analise[mesRecente].produtos, 'cxTotal');
 
       prog(93, 'Limpando curva ABC do módulo NRI...');
-      await limparColecao('curva_abc');
+      await limparColecao('curva_abc', colRevenda, db);
 
       prog(95, 'Gravando nova curva ABC...');
       for (let i = 0; i < curvaPorCx.length; i += 450) {
         const batch = writeBatch(db);
         curvaPorCx.slice(i, i + 450).forEach(p =>
-          batch.set(doc(collection(db, 'curva_abc')), { codigo: p.codigo, curva: p._curva })
+          batch.set(doc(col('curva_abc')), { codigo: p.codigo, curva: p._curva, ...stamp() })
         );
         await batch.commit();
         prog(95 + Math.round(((i / curvaPorCx.length) * 4)), 'Gravando curva ABC...');

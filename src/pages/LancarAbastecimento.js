@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { getDocs, addDoc } from 'firebase/firestore';
+import { useDb } from '../utils/db';
+import { useUser } from '../context/UserContext';
 
 function diaOperacional() {
   const agora = new Date();
@@ -14,7 +15,9 @@ function detectarTipo() {
   return (h >= 22 || h < 4) ? 'ressuprimento' : 'reabastecimento';
 }
 
-export default function LancarAbastecimento({ usuario }) {
+export default function LancarAbastecimento() {
+  const { col, docRef } = useDb();
+  const { usuario } = useUser();
   const [baseProdutos, setBaseProdutos] = useState([]);
   const [codProduto, setCodProduto] = useState('');
   const [nomeProduto, setNomeProduto] = useState('');
@@ -28,8 +31,8 @@ export default function LancarAbastecimento({ usuario }) {
 
   async function carregarDados() {
     const [pSnap, aSnap] = await Promise.all([
-      getDocs(collection(db, 'produtos')),
-      getDocs(collection(db, 'abastecimentos')),
+      getDocs(col('produtos')),
+      getDocs(col('abastecimentos')),
     ]);
     setBaseProdutos(pSnap.docs.map(d => d.data()));
     const hoje = diaOperacional();
@@ -72,7 +75,7 @@ export default function LancarAbastecimento({ usuario }) {
         hora,
         criadoEm: agora.toISOString(),
       };
-      await addDoc(collection(db, 'abastecimentos'), registro);
+      await addDoc(col('abastecimentos'), registro);
       setLancamentosHoje(prev => [registro, ...prev]);
       setCodProduto(''); setNomeProduto(''); setQtdPaletes('1');
     } catch (e) { alert('Erro: ' + e.message); }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 
 
 const MESES = [
@@ -37,6 +37,7 @@ function lerFiltrosSalvos() {
 // ─── Página ───────────────────────────────────────────────────────────────────
 
 export default function ConciliacaoDiariaPage() {
+  const { col, colRevenda } = useDb();
   const salvo = lerFiltrosSalvos();
 
   const [registros, setRegistros]           = useState([]);
@@ -60,8 +61,8 @@ export default function ConciliacaoDiariaPage() {
 
   useEffect(() => {
     Promise.all([
-      getDocs(collection(db, 'conciliacao_estoque')),
-      getDocs(collection(db, 'conciliacao_par')),
+      getDocs(colRevenda('conciliacao_estoque')),
+      getDocs(colRevenda('conciliacao_par')),
     ]).then(([snapEst, snapPar]) => {
       setRegistros(snapEst.docs.map(d => ({ id: d.id, ...d.data() })));
       // Usa o campo codProduto salvo no documento (mais robusto que o ID)

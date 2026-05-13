@@ -1,14 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { UserProvider, useUser } from './context/UserContext';
 import Login from './pages/Login';
+import Sidebar from './components/Sidebar';
+import HomePage from './pages/Home';
+
 import Dashboard from './pages/Dashboard';
 import NRIs from './pages/NRIs';
 import NovaNRI from './pages/NovaNRI';
 import Cadastros from './pages/Cadastros';
-import Usuarios from './pages/Usuarios';
 import Importar from './pages/Importar';
 import Exportar from './pages/Exportar';
-import Sidebar from './components/Sidebar';
 import LancarAbastecimento from './pages/LancarAbastecimento';
 import ImportarVendasPage from './pages/ImportarVendasPage';
 import VendasPage from './pages/VendasPage';
@@ -35,33 +37,34 @@ import ConciliacaoPAVG from './pages/pavg/ConciliacaoPAVG';
 import ImportarConciliacaoPage from './pages/conciliacao-estoque/ImportarConciliacaoPage';
 import ConciliacaoDiariaPage from './pages/conciliacao-estoque/ConciliacaoDiariaPage';
 import ImportarRelatoriosMPD from './pages/gestao-mpd/ImportarRelatoriosMPD';
+import ImportarRelatorioTMA from './pages/tma/ImportarRelatorioTMA';
+import DashboardTMA from './pages/tma/DashboardTMA';
 import MetasMPD from './pages/gestao-mpd/MetasMPD';
 import EFCPage from './pages/gestao-mpd/EFCPage';
 import EFDPage from './pages/gestao-mpd/EFDPage';
 import TIPage from './pages/gestao-mpd/TIPage';
 import HistogramaPage from './pages/gestao-mpd/HistogramaPage';
+import EmpresasPage from './pages/admin/EmpresasPage';
+import ConfigurarEmpresaPage, { NIVEIS_SUPERVISOR } from './pages/admin/ConfigurarEmpresaPage';
+import UsuariosGlobalPage from './pages/admin/UsuariosGlobalPage';
+import UsuariosEmpresaPage from './pages/UsuariosEmpresaPage';
+import ConfiguracoesPage from './pages/ConfiguracoesPage';
 
 export default function App() {
-  const [usuario, setUsuario] = useState(null);
+  return (
+    <UserProvider>
+      <AppInner />
+    </UserProvider>
+  );
+}
+
+function AppInner() {
+  const { usuario, carregando, empresaSelecionada, revendaSelecionada } = useUser();
+
   const [fixado, setFixado] = useState(() => {
     const salvo = localStorage.getItem('sidebar-fixado');
     return salvo === null ? true : salvo === 'true';
   });
-
-  useEffect(() => {
-    const salvo = localStorage.getItem('nri-usuario');
-    if (salvo) setUsuario(JSON.parse(salvo));
-  }, []);
-
-  function login(dados) {
-    localStorage.setItem('nri-usuario', JSON.stringify(dados));
-    setUsuario(dados);
-  }
-
-  function logout() {
-    localStorage.removeItem('nri-usuario');
-    setUsuario(null);
-  }
 
   function toggleFixado() {
     setFixado(prev => {
@@ -70,56 +73,127 @@ export default function App() {
     });
   }
 
-  if (!usuario) return <Login onLogin={login} />;
+  if (carregando) return <SplashCarregando />;
+  if (!usuario)   return <BrowserRouter><Login /></BrowserRouter>;
+
+  const isSupervisor = NIVEIS_SUPERVISOR.includes(usuario.nivel);
+  const isAdmin      = usuario.nivel === 'admin';
+  const guardaSup    = isSupervisor ? null : '/home';
+  const guardaAdmin  = isAdmin      ? null : '/home';
+
+  const isArmazem = window.location.pathname.startsWith('/armazem');
+
+  // key combina empresa + revenda: qualquer troca remonta o conteúdo
+  // fazendo todos os useEffect dispararem novamente com os dados corretos.
+  const contextKey = `${empresaSelecionada?.id || 'none'}-${revendaSelecionada || 'all'}`;
 
   return (
     <BrowserRouter>
       <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f0f0eb' }}>
-        <Sidebar usuario={usuario} onLogout={logout} fixado={fixado} onToggleFixado={toggleFixado} />
-        <div style={{ flex: 1, marginLeft: fixado ? '240px' : '56px', padding: window.location.pathname.startsWith('/armazem') ? 0 : '28px 32px', overflowY: window.location.pathname.startsWith('/armazem') ? 'hidden' : 'auto', height: '100vh', transition: 'margin-left 0.22s cubic-bezier(0.4,0,0.2,1)', backgroundColor: '#f0f0eb' }}>
+        <Sidebar fixado={fixado} onToggleFixado={toggleFixado} />
+        <div
+          key={contextKey}
+          style={{
+            flex:            1,
+            marginLeft:      fixado ? '240px' : '56px',
+            padding:         isArmazem ? 0 : '28px 32px',
+            overflowY:       isArmazem ? 'hidden' : 'auto',
+            height:          '100vh',
+            transition:      'margin-left 0.22s cubic-bezier(0.4,0,0.2,1)',
+            backgroundColor: '#f0f0eb',
+          }}
+        >
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/nris" element={<NRIs usuario={usuario} />} />
-            <Route path="/nova-nri" element={<NovaNRI usuario={usuario} />} />
-            <Route path="/cadastros" element={usuario.nivel === 'supervisor' ? <Cadastros /> : <Navigate to="/" />} />
-            <Route path="/usuarios" element={usuario.nivel === 'supervisor' ? <Usuarios /> : <Navigate to="/" />} />
-            <Route path="/importar" element={usuario.nivel === 'supervisor' ? <Importar /> : <Navigate to="/" />} />
-            <Route path="/exportar" element={usuario.nivel === 'supervisor' ? <Exportar /> : <Navigate to="/" />} />
-            <Route path="/reab/dashboard" element={<DashboardIV />} />
-            <Route path="/reab/lancar" element={<LancarAbastecimento usuario={usuario} />} />
-            <Route path="/reab/config" element={usuario.nivel === 'supervisor' ? <ConfigPicking /> : <Navigate to="/" />} />
-            <Route path="/reab/importar-vendas" element={usuario.nivel === 'supervisor' ? <ImportarVendasPage /> : <Navigate to="/" />} />
-            <Route path="/reab/vendas" element={<VendasPage />} />
-            <Route path="/reab/registro" element={<RegistroAbastecimentoPage usuario={usuario} />} />
-            <Route path="/reab/planificador" element={<PlanificadorIV />} />
-            <Route path="/reab/prepicking" element={<PrePickingPage />} />
-            <Route path="/curva-abc/dashboard" element={<DashboardCurvaABC />} />
-            <Route path="/curva-abc/importar" element={usuario.nivel === 'supervisor' ? <ImportarRelatorio /> : <Navigate to="/" />} />
-            <Route path="/estoque/dashboard" element={<DashboardPage />} />
-            <Route path="/estoque/contar" element={<CountingPage usuario={usuario} />} />
-            <Route path="/estoque/gerenciar-localizacoes" element={usuario.nivel === 'supervisor' ? <GerenciarLocalizacoesPage /> : <Navigate to="/" />} />
-            <Route path="/estoque/enderecamento" element={<EndereçamentoPage />} />
-            <Route path="/estoque/coletas-validade" element={<ColetasValidadePage />} />
-            <Route path="/armazem/layout" element={<LayoutArmazem />} />
-            <Route path="/prejuizo/wqi" element={<WQIPage />} />
-            <Route path="/prejuizo/troca"      element={<TrocaPage />} />
-            <Route path="/prejuizo/reposicao" element={<ReposicaoPage />} />
-            <Route path="/prejuizo/importar" element={usuario.nivel === 'supervisor' ? <ImportarRelatoriosPrejuizo /> : <Navigate to="/" />} />
-            <Route path="/prejuizo/cadastros" element={usuario.nivel === 'supervisor' ? <CadastrosPrejuizoPage /> : <Navigate to="/" />} />
-            <Route path="/pavg/conciliacao" element={<ConciliacaoPAVG />} />
-            <Route path="/pavg/importar" element={usuario.nivel === 'supervisor' ? <ImportarRelatoriosPAVG /> : <Navigate to="/" />} />
-            <Route path="/conciliacao-estoque/diaria" element={<ConciliacaoDiariaPage />} />
-            <Route path="/conciliacao-estoque/importar" element={usuario.nivel === 'supervisor' ? <ImportarConciliacaoPage /> : <Navigate to="/" />} />
-            <Route path="/gestao-mpd/efc"        element={<EFCPage />} />
-            <Route path="/gestao-mpd/efd"        element={<EFDPage />} />
-            <Route path="/gestao-mpd/ti"         element={<TIPage />} />
-            <Route path="/gestao-mpd/histograma" element={<HistogramaPage />} />
-            <Route path="/gestao-mpd/importar"   element={usuario.nivel === 'supervisor' ? <ImportarRelatoriosMPD /> : <Navigate to="/" />} />
-            <Route path="/gestao-mpd/metas"      element={usuario.nivel === 'supervisor' ? <MetasMPD /> : <Navigate to="/" />} />
-            <Route path="*" element={<Navigate to="/" />} />
+            {/* Home — destino padrão de entrada */}
+            <Route path="/home"                    element={<HomePage />} />
+
+            {/* Redireciona raiz para /home */}
+            <Route path="/"                        element={<Navigate to="/home" replace />} />
+
+            {/* Recebimento de Mercadoria */}
+            <Route path="/recebimento/dashboard"   element={<Dashboard />} />
+            <Route path="/nris"                    element={<NRIs />} />
+            <Route path="/nova-nri"                element={<NovaNRI />} />
+            <Route path="/cadastros"               element={guardaSup ? <Navigate to={guardaSup} /> : <Cadastros />} />
+            <Route path="/importar"                element={guardaSup ? <Navigate to={guardaSup} /> : <Importar />} />
+            <Route path="/exportar"                element={guardaSup ? <Navigate to={guardaSup} /> : <Exportar />} />
+
+            {/* Reabastecimento */}
+            <Route path="/reab/dashboard"          element={<DashboardIV />} />
+            <Route path="/reab/lancar"             element={<LancarAbastecimento />} />
+            <Route path="/reab/config"             element={guardaSup ? <Navigate to={guardaSup} /> : <ConfigPicking />} />
+            <Route path="/reab/importar-vendas"    element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarVendasPage />} />
+            <Route path="/reab/vendas"             element={<VendasPage />} />
+            <Route path="/reab/registro"           element={<RegistroAbastecimentoPage />} />
+            <Route path="/reab/planificador"       element={<PlanificadorIV />} />
+            <Route path="/reab/prepicking"         element={<PrePickingPage />} />
+
+            {/* Curva ABC */}
+            <Route path="/curva-abc/dashboard"     element={<DashboardCurvaABC />} />
+            <Route path="/curva-abc/importar"      element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarRelatorio />} />
+
+            {/* Gerenciamento de Estoque */}
+            <Route path="/estoque/dashboard"              element={<DashboardPage />} />
+            <Route path="/estoque/contar"                 element={<CountingPage />} />
+            <Route path="/estoque/gerenciar-localizacoes" element={guardaSup ? <Navigate to={guardaSup} /> : <GerenciarLocalizacoesPage />} />
+            <Route path="/estoque/enderecamento"          element={<EndereçamentoPage />} />
+            <Route path="/estoque/coletas-validade"       element={<ColetasValidadePage />} />
+
+            {/* Mapa do Armazém */}
+            <Route path="/armazem/layout"          element={<LayoutArmazem />} />
+
+            {/* Gestão de Prejuízo */}
+            <Route path="/prejuizo/wqi"            element={<WQIPage />} />
+            <Route path="/prejuizo/troca"          element={<TrocaPage />} />
+            <Route path="/prejuizo/reposicao"      element={<ReposicaoPage />} />
+            <Route path="/prejuizo/importar"       element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarRelatoriosPrejuizo />} />
+            <Route path="/prejuizo/cadastros"      element={guardaSup ? <Navigate to={guardaSup} /> : <CadastrosPrejuizoPage />} />
+
+            {/* PAVG */}
+            <Route path="/pavg/conciliacao"        element={<ConciliacaoPAVG />} />
+            <Route path="/pavg/importar"           element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarRelatoriosPAVG />} />
+
+            {/* TMA */}
+            <Route path="/tma/dashboard"           element={<DashboardTMA />} />
+            <Route path="/tma/importar"            element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarRelatorioTMA />} />
+
+            {/* Conciliação de Estoque */}
+            <Route path="/conciliacao-estoque/diaria"   element={<ConciliacaoDiariaPage />} />
+            <Route path="/conciliacao-estoque/importar" element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarConciliacaoPage />} />
+
+            {/* Gestão MDP */}
+            <Route path="/gestao-mpd/efc"          element={<EFCPage />} />
+            <Route path="/gestao-mpd/efd"          element={<EFDPage />} />
+            <Route path="/gestao-mpd/ti"           element={<TIPage />} />
+            <Route path="/gestao-mpd/histograma"   element={<HistogramaPage />} />
+            <Route path="/gestao-mpd/importar"     element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarRelatoriosMPD />} />
+            <Route path="/gestao-mpd/metas"        element={guardaSup ? <Navigate to={guardaSup} /> : <MetasMPD />} />
+
+            {/* Supervisor */}
+            <Route path="/usuarios"                element={guardaSup ? <Navigate to={guardaSup} /> : <UsuariosEmpresaPage />} />
+            <Route path="/configuracoes"           element={guardaSup ? <Navigate to={guardaSup} /> : <ConfiguracoesPage />} />
+
+            {/* Admin */}
+            <Route path="/admin/empresas"          element={guardaAdmin ? <Navigate to={guardaAdmin} /> : <EmpresasPage />} />
+            <Route path="/admin/empresas/:id"      element={guardaAdmin ? <Navigate to={guardaAdmin} /> : <ConfigurarEmpresaPage />} />
+            <Route path="/admin/usuarios"          element={guardaAdmin ? <Navigate to={guardaAdmin} /> : <UsuariosGlobalPage />} />
+
+            {/* Catch-all → home */}
+            <Route path="*"                        element={<Navigate to="/home" replace />} />
           </Routes>
         </div>
       </div>
     </BrowserRouter>
+  );
+}
+
+function SplashCarregando() {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0c0c0c' }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 48, fontWeight: 800, color: '#E31837', fontFamily: "'Bricolage Grotesque', sans-serif", letterSpacing: -2 }}>WJS</div>
+        <div style={{ fontSize: 12, color: '#3a3a3a', marginTop: 12, letterSpacing: 2 }}>CARREGANDO...</div>
+      </div>
+    </div>
   );
 }

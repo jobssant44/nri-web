@@ -1,256 +1,131 @@
 import { useState } from 'react';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../firebaseConfig';
 
-export default function Login({ onLogin }) {
-  const [nome, setNome] = useState('');
-  const [senha, setSenha] = useState('');
-  const [erro, setErro] = useState('');
+export default function Login() {
+  const [email,      setEmail]      = useState('');
+  const [senha,      setSenha]      = useState('');
+  const [erro,       setErro]       = useState('');
   const [carregando, setCarregando] = useState(false);
 
   async function entrar(e) {
     e.preventDefault();
-    if (!nome || !senha) { setErro('Preencha nome e senha.'); return; }
+    if (!email || !senha) { setErro('Preencha e-mail e senha.'); return; }
     setCarregando(true);
     setErro('');
-    if (nome.trim() === 'Jobson' && senha.trim() === '3573') {
-      onLogin({ nome: 'Jobson', nivel: 'supervisor' });
-      return;
-    }
     try {
-      const snapshot = await getDocs(collection(db, 'usuarios'));
-      const usuarios = snapshot.docs.map(d => d.data());
-      const encontrado = usuarios.find(u =>
-        u.nome.toLowerCase() === nome.trim().toLowerCase() && u.senha === senha.trim()
-      );
-      if (encontrado) {
-        onLogin({ nome: encontrado.nome, nivel: encontrado.nivel });
-      } else {
-        setErro('Nome ou senha incorretos.');
-      }
-    } catch (e) {
-      setErro('Erro ao conectar. Verifique sua conexão.');
+      await signInWithEmailAndPassword(auth, email.trim(), senha.trim());
+      // onAuthStateChanged in UserContext handles the rest
+    } catch (err) {
+      const msg = {
+        'auth/user-not-found':  'Usuário não encontrado.',
+        'auth/wrong-password':  'Senha incorreta.',
+        'auth/invalid-email':   'E-mail inválido.',
+        'auth/too-many-requests': 'Muitas tentativas. Tente novamente mais tarde.',
+      }[err.code] ?? 'Erro ao entrar. Verifique suas credenciais.';
+      setErro(msg);
     }
     setCarregando(false);
   }
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#fafafa',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    }}>
-      {/* Left side - Branding */}
-      <div style={{
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        width: '50%',
-        height: '100vh',
-        background: 'linear-gradient(135deg, #E31837 0%, #c41730 100%)',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: '#fff',
-      }}>
-        <div style={{
-          fontSize: 64,
-          fontWeight: 'bold',
-          letterSpacing: -2,
-          marginBottom: 16,
-        }}>
-          WJS
-        </div>
-        <div style={{
-          fontSize: 18,
-          fontWeight: 500,
-          letterSpacing: 2,
-          textAlign: 'center',
-          opacity: 0.95,
-        }}>
-          WAREHOUSE JOBSON<br />STATION
-        </div>
-        <div style={{
-          marginTop: 40,
-          textAlign: 'center',
-          fontSize: 14,
-          opacity: 0.8,
-          maxWidth: 300,
-        }}>
-          Sistema inteligente de gerenciamento de estoque e recebimento de mercadoria
+    <div style={s.root}>
+      {/* ── Painel esquerdo ────────────────────────────────────── */}
+      <div style={s.left}>
+        <div style={s.bgMark} aria-hidden>WJS</div>
+
+        <div style={s.leftContent}>
+          <div style={s.logo}>WJS</div>
+          <div style={s.logoSub}>WAREHOUSE JOB SYSTEM</div>
+
+          <div style={s.divisor} />
+
+          <p style={s.tagline}>
+            Sistema inteligente de gerenciamento<br />
+            de estoque.
+          </p>
         </div>
       </div>
 
-      {/* Right side - Login form */}
-      <div style={{
-        position: 'absolute',
-        right: 0,
-        width: '50%',
-        height: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#fff',
-      }}>
-        <div style={{
-          width: '100%',
-          maxWidth: 380,
-          padding: '0 40px',
-        }}>
-          <h2 style={{
-            fontSize: 28,
-            fontWeight: 600,
-            color: '#1a1a2e',
-            marginBottom: 8,
-          }}>
-            Bem-vindo
-          </h2>
-          <p style={{
-            fontSize: 14,
-            color: '#888',
-            marginBottom: 32,
-          }}>
-            Faça login com suas credenciais para continuar
-          </p>
+      {/* ── Painel direito ─────────────────────────────────────── */}
+      <div style={s.right}>
+        <div style={s.formBox}>
+          <div style={s.formHeader}>
+            <div style={s.formEyebrow}>ACESSO AO SISTEMA</div>
+            <h1 style={s.formTitle}>Bem‑vindo</h1>
+            <p style={s.formSub}>Entre com suas credenciais para continuar.</p>
+          </div>
 
-          <form onSubmit={entrar}>
-            <div style={{ marginBottom: 20 }}>
-              <label style={{
-                fontSize: 13,
-                color: '#555',
-                display: 'block',
-                marginBottom: 8,
-                fontWeight: 500,
-              }}>
-                Nome
-              </label>
+          <form onSubmit={entrar} style={{ width: '100%' }}>
+            <div style={s.field}>
+              <label style={s.label}>E-mail</label>
               <input
-                style={{
-                  width: '100%',
-                  padding: '12px 14px',
-                  border: '1px solid #ddd',
-                  borderRadius: 6,
-                  fontSize: 15,
-                  boxSizing: 'border-box',
-                  transition: 'all 0.2s',
-                  outline: 'none',
-                }}
-                value={nome}
-                onChange={e => setNome(e.target.value)}
-                placeholder="Seu nome"
-                onFocus={(e) => {
-                  e.target.style.borderColor = '#E31837';
-                  e.target.style.boxShadow = '0 0 0 3px rgba(227, 24, 55, 0.1)';
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = '#ddd';
-                  e.target.style.boxShadow = 'none';
-                }}
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="seu@email.com"
+                autoComplete="username"
+                style={s.input}
+                onFocus={e => { e.target.style.borderColor = '#E31837'; e.target.style.boxShadow = '0 0 0 3px rgba(227,24,55,0.10)'; }}
+                onBlur={e => { e.target.style.borderColor = '#ddddd8'; e.target.style.boxShadow = 'none'; }}
               />
             </div>
 
-            <div style={{ marginBottom: 24 }}>
-              <label style={{
-                fontSize: 13,
-                color: '#555',
-                display: 'block',
-                marginBottom: 8,
-                fontWeight: 500,
-              }}>
-                Senha
-              </label>
+            <div style={s.field}>
+              <label style={s.label}>Senha</label>
               <input
-                style={{
-                  width: '100%',
-                  padding: '12px 14px',
-                  border: '1px solid #ddd',
-                  borderRadius: 6,
-                  fontSize: 15,
-                  boxSizing: 'border-box',
-                  transition: 'all 0.2s',
-                  outline: 'none',
-                }}
                 type="password"
                 value={senha}
                 onChange={e => setSenha(e.target.value)}
                 placeholder="Sua senha"
-                onFocus={(e) => {
-                  e.target.style.borderColor = '#E31837';
-                  e.target.style.boxShadow = '0 0 0 3px rgba(227, 24, 55, 0.1)';
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = '#ddd';
-                  e.target.style.boxShadow = 'none';
-                }}
+                autoComplete="current-password"
+                style={s.input}
+                onFocus={e => { e.target.style.borderColor = '#E31837'; e.target.style.boxShadow = '0 0 0 3px rgba(227,24,55,0.10)'; }}
+                onBlur={e => { e.target.style.borderColor = '#ddddd8'; e.target.style.boxShadow = 'none'; }}
               />
             </div>
 
-            {erro && (
-              <div style={{
-                backgroundColor: '#fee2e2',
-                border: '1px solid #fca5a5',
-                color: '#991b1b',
-                padding: '12px',
-                borderRadius: 6,
-                fontSize: 13,
-                marginBottom: 16,
-              }}>
-                {erro}
-              </div>
-            )}
+            {erro && <div style={s.erroBox}>{erro}</div>}
 
             <button
               type="submit"
               disabled={carregando}
-              style={{
-                width: '100%',
-                padding: '14px',
-                backgroundColor: carregando ? '#ccc' : '#E31837',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 6,
-                fontSize: 15,
-                fontWeight: 600,
-                cursor: carregando ? 'not-allowed' : 'pointer',
-                transition: 'all 0.3s',
-                opacity: carregando ? 0.7 : 1,
-              }}
-              onMouseEnter={(e) => {
-                if (!carregando) {
-                  e.target.style.backgroundColor = '#c41730';
-                  e.target.style.transform = 'translateY(-2px)';
-                  e.target.style.boxShadow = '0 8px 16px rgba(227, 24, 55, 0.3)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!carregando) {
-                  e.target.style.backgroundColor = '#E31837';
-                  e.target.style.transform = 'translateY(0)';
-                  e.target.style.boxShadow = 'none';
-                }
-              }}
+              style={{ ...s.btnEntrar, opacity: carregando ? 0.65 : 1, cursor: carregando ? 'not-allowed' : 'pointer' }}
+              onMouseEnter={e => { if (!carregando) { e.currentTarget.style.backgroundColor = '#c41730'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(227,24,55,0.28)'; } }}
+              onMouseLeave={e => { if (!carregando) { e.currentTarget.style.backgroundColor = '#E31837'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; } }}
             >
-              {carregando ? 'Entrando...' : 'Entrar'}
+              {carregando ? 'Entrando...' : 'Entrar →'}
             </button>
           </form>
-
-          <div style={{
-            marginTop: 24,
-            padding: '16px',
-            backgroundColor: '#f9f9f9',
-            borderRadius: 6,
-            fontSize: 12,
-            color: '#666',
-            textAlign: 'center',
-          }}>
-            <strong>Demo:</strong> Use Jobson / 3573
-          </div>
         </div>
       </div>
     </div>
   );
 }
+
+const s = {
+  root:        { minHeight: '100vh', display: 'flex', fontFamily: "'Bricolage Grotesque', sans-serif" },
+  left:        { width: '52%', backgroundColor: '#0c0c0c', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden', padding: '48px 52px' },
+  bgMark:      { position: 'absolute', right: -40, bottom: -60, fontSize: 320, fontWeight: 800, color: 'rgba(227,24,55,0.04)', lineHeight: 1, userSelect: 'none', pointerEvents: 'none', fontFamily: "'Bricolage Grotesque', sans-serif", letterSpacing: -10 },
+  leftContent: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  logo:        { fontSize: 52, fontWeight: 800, color: '#E31837', letterSpacing: -2, lineHeight: 1, fontFamily: "'Bricolage Grotesque', sans-serif" },
+  logoSub:     { fontSize: 9, fontWeight: 600, color: '#3a3a3a', letterSpacing: 3, marginTop: 8, textTransform: 'uppercase' },
+  divisor:     { width: 48, height: 2, backgroundColor: '#E31837', marginTop: 28, marginBottom: 24 },
+  tagline:     { fontSize: 15, color: '#5a5a5a', lineHeight: 1.7, margin: 0, fontWeight: 400 },
+  statsRow:    { display: 'flex', gap: 32, marginTop: 40 },
+  stat:        { display: 'flex', flexDirection: 'column', gap: 3 },
+  statNum:     { fontSize: 24, fontWeight: 700, color: '#e8e8e8', lineHeight: 1, fontFamily: "'JetBrains Mono', monospace" },
+  statTxt:     { fontSize: 9, color: '#3a3a3a', textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600 },
+  leftFooter:  { fontSize: 10, color: '#2a2a2a', letterSpacing: 1, textTransform: 'uppercase', fontWeight: 500 },
+  right:       { flex: 1, backgroundColor: '#f0f0eb', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 40px' },
+  formBox:     { width: '100%', maxWidth: 360, display: 'flex', flexDirection: 'column', alignItems: 'flex-start' },
+  formHeader:  { marginBottom: 36, width: '100%' },
+  formEyebrow: { fontSize: 9, fontWeight: 700, letterSpacing: 2.5, color: '#E31837', textTransform: 'uppercase', marginBottom: 10 },
+  formTitle:   { fontSize: 36, fontWeight: 800, color: '#0c0c0c', margin: 0, marginBottom: 8, letterSpacing: -1, lineHeight: 1.1, fontFamily: "'Bricolage Grotesque', sans-serif" },
+  formSub:     { fontSize: 13, color: '#888', margin: 0, fontWeight: 400, lineHeight: 1.5 },
+  field:       { marginBottom: 18, width: '100%' },
+  label:       { display: 'block', fontSize: 10, fontWeight: 700, color: '#666', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 7 },
+  input:       { width: '100%', padding: '11px 14px', border: '1px solid #ddddd8', borderRadius: 5, fontSize: 14, backgroundColor: '#fff', color: '#111', outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s, box-shadow 0.15s', fontFamily: "'Bricolage Grotesque', sans-serif" },
+  erroBox:     { padding: '10px 14px', backgroundColor: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 5, fontSize: 12, color: '#991b1b', marginBottom: 16, fontWeight: 500 },
+  btnEntrar:   { width: '100%', padding: '13px', backgroundColor: '#E31837', color: '#fff', border: 'none', borderRadius: 5, fontSize: 14, fontWeight: 700, letterSpacing: 0.5, transition: 'all 0.18s', fontFamily: "'Bricolage Grotesque', sans-serif", marginTop: 6 },
+};

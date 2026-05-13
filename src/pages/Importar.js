@@ -1,28 +1,21 @@
 import { useState } from 'react';
-import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
-import { useSessionFilter } from '../hooks/useSessionFilter';
+import { getDocs, addDoc, deleteDoc } from 'firebase/firestore';
+import { useDb } from '../utils/db';
 
 export default function Importar() {
-  const [abaAtiva, setAbaAtiva] = useSessionFilter('imp:aba', 'produtos');
-  const [arquivo, setArquivo] = useState(null);
-  const [preview, setPreview] = useState([]);
+  const { col, docRef } = useDb();
+  const [arquivo,    setArquivo]    = useState(null);
+  const [preview,    setPreview]    = useState([]);
   const [importando, setImportando] = useState(false);
-  const [resultado, setResultado] = useState(null);
+  const [resultado,  setResultado]  = useState(null);
 
   function lerCSV(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
-      const texto = e.target.result;
-      const linhas = texto.split('\n').filter(l => l.trim());
-      const dados = linhas.slice(1).map(l => {
-        const cols = l.split(';');
-        if (abaAtiva === 'produtos') {
-          return { codigo: cols[0]?.trim(), nome: cols[1]?.trim(), cxPorPlt: cols[21]?.trim() || '' };
-        } else {
-          return { codigo: cols[0]?.trim(), curva: cols[1]?.trim() };
-        }
-      }).filter(d => d.codigo && (d.nome || d.curva));
+      const linhas = e.target.result.split('\n').filter(l => l.trim());
+      const dados = linhas.slice(1)
+        .map(l => { const cols = l.split(';'); return { codigo: cols[0]?.trim(), curva: cols[1]?.trim() }; })
+        .filter(d => d.codigo && d.curva);
       setPreview(dados.slice(0, 5));
       setArquivo(dados);
     };
@@ -34,13 +27,9 @@ export default function Importar() {
     setImportando(true);
     setResultado(null);
     try {
-      const colecao = abaAtiva === 'produtos' ? 'produtos' : 'curva_abc';
-      const snapExistente = await getDocs(collection(db, colecao));
-      const deletes = snapExistente.docs.map(d => deleteDoc(doc(db, colecao, d.id)));
-      await Promise.all(deletes);
-      for (const item of arquivo) {
-        await addDoc(collection(db, colecao), item);
-      }
+      const snap = await getDocs(col('curva_abc'));
+      await Promise.all(snap.docs.map(d => deleteDoc(docRef('curva_abc', d.id))));
+      for (const item of arquivo) await addDoc(col('curva_abc'), item);
       setResultado(arquivo.length);
       setArquivo(null);
       setPreview([]);
@@ -52,23 +41,12 @@ export default function Importar() {
     <div style={{ maxWidth: 700 }}>
       <h2 style={{ color: '#333', marginBottom: 24 }}>Importar Base</h2>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
-        {[{ key: 'produtos', label: '📦 Base de Produtos' }, { key: 'curva', label: '📊 Curva ABC' }].map(a => (
-          <button key={a.key} onClick={() => { setAbaAtiva(a.key); setArquivo(null); setPreview([]); setResultado(null); }}
-            style={{ padding: '8px 20px', borderRadius: 20, border: '1px solid #ddd', cursor: 'pointer', fontWeight: '500', fontSize: 14, backgroundColor: abaAtiva === a.key ? '#E31837' : '#fff', color: abaAtiva === a.key ? '#fff' : '#555' }}>
-            {a.label}
-          </button>
-        ))}
-      </div>
-
       <div style={secao}>
+        <h3 style={{ color: '#E31837', fontSize: 15, fontWeight: 'bold', marginTop: 0, marginBottom: 12 }}>Curva ABC</h3>
         <div style={{ backgroundColor: '#f9f9f9', border: '1px dashed #ddd', borderRadius: 8, padding: 20, marginBottom: 16, textAlign: 'center' }}>
-          <p style={{ color: '#666', fontSize: 14, marginBottom: 4 }}>
-            {abaAtiva === 'produtos' ? 'Arquivo CSV com colunas: Código ; Nome' : 'Arquivo CSV com colunas: Código ; Curva (A, B ou C)'}
-          </p>
+          <p style={{ color: '#666', fontSize: 14, marginBottom: 4 }}>Arquivo CSV com colunas: Código ; Curva (A, B ou C)</p>
           <p style={{ color: '#999', fontSize: 12, marginBottom: 16 }}>Separador: ponto e vírgula ( ; ) — primeira linha é o cabeçalho</p>
-          <input type="file" accept=".csv" onChange={e => { if (e.target.files[0]) lerCSV(e.target.files[0]); }}
-            style={{ fontSize: 14 }} />
+          <input type="file" accept=".csv" onChange={e => { if (e.target.files[0]) lerCSV(e.target.files[0]); }} style={{ fontSize: 14 }} />
         </div>
 
         {preview.length > 0 && (
@@ -77,15 +55,13 @@ export default function Importar() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ backgroundColor: '#f9f9f9' }}>
-                  <th style={th}>Código</th>
-                  <th style={th}>{abaAtiva === 'produtos' ? 'Nome' : 'Curva'}</th>
+                  <th style={th}>Código</th><th style={th}>Curva</th>
                 </tr>
               </thead>
               <tbody>
                 {preview.map((p, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={td}>{p.codigo}</td>
-                    <td style={td}>{p.nome || p.curva}</td>
+                    <td style={td}>{p.codigo}</td><td style={td}>{p.curva}</td>
                   </tr>
                 ))}
               </tbody>
@@ -101,7 +77,7 @@ export default function Importar() {
 
         {resultado && (
           <div style={{ backgroundColor: '#E1F5EE', borderRadius: 8, padding: 14, marginTop: 16, textAlign: 'center', color: '#085041', fontWeight: '500' }}>
-            ✅ {resultado} registros importados com sucesso! Base atualizada.
+            ✅ {resultado} registros importados com sucesso!
           </div>
         )}
       </div>

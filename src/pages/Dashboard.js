@@ -1,18 +1,19 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 
 const CORES = ['#E31837', '#1a5fa8', '#0F6E56', '#BA7517', '#534AB7', '#999'];
 
 export default function Dashboard() {
+  const { col, docRef, colRevenda } = useDb();
   const [nris, setNris] = useState([]);
   const [carregando, setCarregando] = useState(true);
 
   useEffect(() => { carregarDados(); }, []);
 
   async function carregarDados() {
-    const snap = await getDocs(collection(db, 'nris'));
+    const snap = await getDocs(colRevenda('nris'));
     setNris(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     setCarregando(false);
   }

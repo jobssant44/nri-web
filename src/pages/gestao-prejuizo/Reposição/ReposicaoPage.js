@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../../firebaseConfig';
+import { useDb } from '../../../utils/db';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, LineChart, Line, Cell,
@@ -374,6 +374,7 @@ function DotDia({ cx, cy, payload, filtroDia }) {
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 export default function ReposicaoPage() {
+  const { col, colRevenda } = useDb();
   // ── Estado base ─────────────────────────────────────────────────────────────
   const [linhasBase,       setLinhasBase]       = useState([]);
   const [carregando,       setCarregando]       = useState(true);
@@ -398,7 +399,7 @@ export default function ReposicaoPage() {
   useEffect(() => {
     async function carregar() {
       try {
-        const snap = await getDocs(collection(db, 'relatorio_reposicao'));
+        const snap = await getDocs(colRevenda('relatorio_reposicao'));
         const todas = [];
         snap.docs.forEach(d => {
           (d.data().linhas || []).forEach(l => todas.push(l));

@@ -1,22 +1,22 @@
 import { useState, useEffect, useRef } from 'react';
 import { collection, getDocs, query, orderBy, getDoc, doc, addDoc, writeBatch } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useDb } from '../utils/db';
 import { useSessionFilter } from '../hooks/useSessionFilter';
 import { lerCache, salvarCache, invalidarCache } from '../utils/cache';
 
-async function buscarAbastecimentos() {
+async function buscarAbastecimentos(col) {
   const cached = lerCache('abastecimentos');
   if (cached) return cached;
-  const snap = await getDocs(collection(db, 'abastecimentos'));
+  const snap = await getDocs(col('abastecimentos'));
   const dados = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
   salvarCache('abastecimentos', dados);
   return dados;
 }
 
-async function buscarVendasMap() {
+async function buscarVendasMap(col) {
   const cached = lerCache('vendasMap');
   if (cached) return cached;
-  const snap = await getDocs(query(collection(db, 'vendas_relatorio'), orderBy('importadoEm', 'asc')));
+  const snap = await getDocs(query(col('vendas_relatorio'), orderBy('importadoEm', 'asc')));
   const vMap = {};
   snap.docs.forEach(d => {
     (d.data().produtos || []).forEach(p => {
@@ -107,6 +107,7 @@ const HOJE = new Date(); HOJE.setHours(0,0,0,0);
 const DIAS_SEMANA = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 
 export default function PlanificadorIV() {
+  const { col, docRef, db } = useDb();
   const [anoSelecionado, setAnoSelecionado]       = useSessionFilter('planiv:ano', '');
   const [mesNumSelecionado, setMesNumSelecionado]   = useSessionFilter('planiv:mes', '');
   const [mesesDisponiveis, setMesesDisponiveis]     = useState([]);
@@ -169,11 +170,11 @@ export default function PlanificadorIV() {
     const cached = lerCache(cacheKey);
     if (cached) { setPickingConfig(cached); return; }
     let config;
-    const pDoc = await getDoc(doc(db, 'picking_config_mensal', chave));
+    const pDoc = await getDoc(docRef('picking_config_mensal', chave));
     if (pDoc.exists() && (pDoc.data().produtos || []).length > 0) {
       config = pDoc.data().produtos || [];
     } else {
-      const pSnap = await getDocs(collection(db, 'picking_config'));
+      const pSnap = await getDocs(col('picking_config'));
       config = pSnap.docs.map(d => d.data());
     }
     salvarCache(cacheKey, config);
@@ -186,8 +187,8 @@ export default function PlanificadorIV() {
       if (forcarAtualizacao) invalidarCache('abastecimentos', 'vendasMap');
 
       const [abasts, vMap] = await Promise.all([
-        buscarAbastecimentos(),
-        buscarVendasMap(),
+        buscarAbastecimentos(col),
+        buscarVendasMap(col),
       ]);
 
       const mesesSet = new Set();
@@ -388,7 +389,7 @@ export default function PlanificadorIV() {
       for (let i = 0; i < registros.length; i += 450) {
         const batch = writeBatch(db);
         registros.slice(i, i + 450).forEach(reg => {
-          batch.set(doc(collection(db, 'abastecimentos')), reg);
+          batch.set(doc(col('abastecimentos')), reg);
         });
         await batch.commit();
       }
@@ -456,7 +457,7 @@ export default function PlanificadorIV() {
 
       for (let i = 0; i < registros.length; i += 450) {
         const batch = writeBatch(db);
-        registros.slice(i, i + 450).forEach(reg => batch.set(doc(collection(db, 'abastecimentos')), reg));
+        registros.slice(i, i + 450).forEach(reg => batch.set(doc(col('abastecimentos')), reg));
         await batch.commit();
       }
 
@@ -488,7 +489,7 @@ export default function PlanificadorIV() {
       );
       for (let i = 0; i < reabParaApagar.length; i += 450) {
         const batch = writeBatch(db);
-        reabParaApagar.slice(i, i + 450).forEach(a => batch.delete(doc(db, 'abastecimentos', a._id)));
+        reabParaApagar.slice(i, i + 450).forEach(a => batch.delete(docRef('abastecimentos', a._id)));
         await batch.commit();
       }
 
@@ -518,12 +519,12 @@ export default function PlanificadorIV() {
       }
       for (let i = 0; i < resspRegistros.length; i += 450) {
         const batch = writeBatch(db);
-        resspRegistros.slice(i, i + 450).forEach(reg => batch.set(doc(collection(db, 'abastecimentos')), reg));
+        resspRegistros.slice(i, i + 450).forEach(reg => batch.set(doc(col('abastecimentos')), reg));
         await batch.commit();
       }
 
       // ── PASSO 3: recarregar abastecimentos frescos do Firebase ───────────────
-      const aSnapFresh = await getDocs(collection(db, 'abastecimentos'));
+      const aSnapFresh = await getDocs(col('abastecimentos'));
       const abastsFresh = aSnapFresh.docs.map(d => ({ _id: d.id, ...d.data() }));
 
       const reabMapF = {}, resspMapF = {};
@@ -580,7 +581,7 @@ export default function PlanificadorIV() {
       }
       for (let i = 0; i < reabRegistros.length; i += 450) {
         const batch = writeBatch(db);
-        reabRegistros.slice(i, i + 450).forEach(reg => batch.set(doc(collection(db, 'abastecimentos')), reg));
+        reabRegistros.slice(i, i + 450).forEach(reg => batch.set(doc(col('abastecimentos')), reg));
         await batch.commit();
       }
 

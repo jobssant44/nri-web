@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { collection, doc, setDoc, getDocs } from 'firebase/firestore';
-import { db } from '../../../../firebaseConfig';
+import { setDoc, getDocs } from 'firebase/firestore';
+import { useDb } from '../../../../utils/db';
 
 export function LocationForm({ onSuccess }) {
+  const { col, docRef } = useDb();
   const [loading, setLoading] = useState(false);
   const [loadingAreas, setLoadingAreas] = useState(true);
   const [areas, setAreas] = useState([]);
@@ -53,7 +54,7 @@ export function LocationForm({ onSuccess }) {
   async function carregarAreas() {
     setLoadingAreas(true);
     try {
-      const snap = await getDocs(collection(db, 'locations'));
+      const snap = await getDocs(col('locations'));
       const areasSet = new Set();
       snap.docs.forEach((d) => {
         const area = d.data().area;
@@ -96,7 +97,7 @@ export function LocationForm({ onSuccess }) {
       // Gerar ID no formato A-1-1
       const docId = `${area}-${street}-${palettePosition}`;
 
-      await setDoc(doc(db, 'locations', docId), {
+      await setDoc(docRef('locations', docId), {
         area,
         street,
         palettePosition,

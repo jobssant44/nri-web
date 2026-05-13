@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 import * as XLSX from 'xlsx';
 
 export default function ColetasValidadePage() {
+  const { col, colRevenda } = useDb();
   const [loading, setLoading] = useState(false);
   const [resultados, setResultados] = useState([]);
   const [filtro, setFiltro] = useSessionFilter('colval:filtro', '');
@@ -174,7 +175,7 @@ export default function ColetasValidadePage() {
     setTipoDetectado('');
 
     try {
-      const snap = await getDocs(collection(db, 'inventory_logs'));
+      const snap = await getDocs(colRevenda('inventory_logs'));
       let resultadosFiltrados = snap.docs.map(doc => doc.data());
 
       // ========== FILTRO 1: BUSCA TEXTUAL ==========

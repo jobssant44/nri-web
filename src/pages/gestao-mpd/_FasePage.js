@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { useDb } from '../../utils/db';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
@@ -302,6 +302,7 @@ const tdS     = { padding: '8px 14px', color: D.textSec, borderTop: `1px solid $
 
 // ─── Página da Fase (EFC / EFD / TI) ─────────────────────────────────────────
 export default function FasePage({ fase, faseCodigo: faseCod }) {
+  const { col, docRef, colRevenda, rid } = useDb();
   const faseCodigo = faseCod ?? fase;
   const loc = useLocation();
   const [linhas, setLinhas]         = useState([]);
@@ -314,8 +315,8 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
     let mounted = true;
     setCarregando(true);
     Promise.all([
-      getDocs(collection(db, 'relatorio031120')),
-      getDoc(doc(db, 'metas_mpd', 'config')),
+      getDocs(colRevenda('relatorio031120')),
+      getDoc(docRef('metas_mpd', rid || 'global')),
     ]).then(([snap, metaSnap]) => {
       if (!mounted) return;
       setLinhas(snap.docs.map(d => d.data()));
