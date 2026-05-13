@@ -320,12 +320,6 @@ export default function DashboardCurvaABC() {
           </div>
         </div>
 
-        {/* Legenda da visão */}
-        <div style={{ fontSize: 12, color: '#aaa', fontStyle: 'italic' }}>
-          {tipo === 'armazem' && 'Total geral vendido (col. AA — todos os registros)'}
-          {tipo === 'picking'  && 'Somente picking — col. AA onde AC = "Não" (palete não fechado)'}
-          {tipo === 'estoque'  && 'Somente estoque — col. AA onde AC = "Sim" (palete fechado)'}
-        </div>
       </div>
 
       {!metricaDisponivel && (
@@ -437,10 +431,6 @@ export default function DashboardCurvaABC() {
                 </button>
               </div>
             </div>
-
-            <p style={{ fontSize:12, color:'#aaa', marginBottom:12 }}>
-              {produtosFiltrados.length} produto(s) · {POR_PAGINA} por página
-            </p>
 
             <div style={{ overflowX:'auto' }}>
               <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
