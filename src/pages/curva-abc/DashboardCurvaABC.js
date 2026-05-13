@@ -65,7 +65,7 @@ function getValorFinal(produto, campo, metrica, fatores) {
 // ─── Componente principal ────────────────────────────────────────────────────
 
 export default function DashboardCurvaABC() {
-  const { col, docRef, colRevenda, rid } = useDb();
+  const { col, docRef, rid } = useDb();
   const [indices, setIndices]       = useState([]);
   const [anos, setAnos]             = useState([]);
   const [mesesDoAno, setMesesDoAno] = useState([]);
@@ -75,7 +75,7 @@ export default function DashboardCurvaABC() {
   const [dadosM1, setDadosM1]       = useState(null);
   const [dadosM2, setDadosM2]       = useState(null);
   const [carregando, setCarregando] = useState(false);
-  // Mapa codigo → fatorPalete carregado do relatório 01.11
+  // Mapa codigo → fatorPalete (campo paletizacao) carregado do Catálogo de Produtos
   const [fatores, setFatores]       = useState({});
 
   // Filtros de visão
@@ -139,9 +139,14 @@ export default function DashboardCurvaABC() {
 
   async function carregarFatores() {
     try {
-      const snap = await getDocs(colRevenda('produtos_fatores'));
+      const snap = await getDocs(col('produtos'));
       const mapa = {};
-      snap.forEach(d => { mapa[d.data().codigo] = d.data().fatorPalete; });
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.codigo && data.paletizacao) {
+          mapa[String(data.codigo)] = data.paletizacao;
+        }
+      });
       setFatores(mapa);
     } catch (_) {
       // coleção ainda não existe — plt ficará desabilitado
@@ -283,7 +288,7 @@ export default function DashboardCurvaABC() {
               return (
                 <button key={val} onClick={() => { if (!desab) { setMetrica(val); setPagina(1); } }}
                   disabled={desab}
-                  title={desab ? 'Importe o relatório 01.11 para ativar' : ''}
+                  title={desab ? 'Cadastre produtos com paletização em Configurações para ativar' : ''}
                   style={{
                     padding: '6px 14px', borderRadius: 6, border: 'none', cursor: desab ? 'not-allowed' : 'pointer',
                     fontSize: 13, fontWeight: '600', transition: 'all .15s',
@@ -325,8 +330,8 @@ export default function DashboardCurvaABC() {
 
       {!metricaDisponivel && (
         <div style={{ backgroundColor: '#FFF3CD', border: '1px solid #FFECB5', borderRadius: 8, padding: 12, marginBottom: 20, fontSize: 13, color: '#856404' }}>
-          ⚠️ O parâmetro <strong>Paletes</strong> requer o relatório <strong>01.11</strong> importado (fatores de palete por produto).
-          Acesse <em>Importar relatórios → 01.11</em> para habilitar esta métrica.
+          ⚠️ O parâmetro <strong>Paletes</strong> requer produtos cadastrados com <strong>paletização</strong> no Catálogo de Produtos.
+          Acesse <em>Configurações → Catálogo de Produtos</em> para habilitar esta métrica.
         </div>
       )}
 
