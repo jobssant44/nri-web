@@ -32,13 +32,175 @@ const { col, docRef, db } = useDb();
 
 **User management:** Old `/usuarios` route removed. Supervisor manages empresa users at `/usuarios` (linked from Admin group for admins). Admin manages global users at `/admin/usuarios`.
 
-**Styling:** 100% inline style objects. No CSS modules, no Tailwind. Shared style constants are declared at the bottom of each file (e.g., `const card`, `const td`). Brand colors: red `#E31837`, blue `#1D5A9E`.
+**Styling:** 100% inline style objects. No CSS modules, no Tailwind. **All new pages MUST use the shared design system at `src/design/`** — see "Design System" section below. Brand colors: red `#E31837`, blue `#1D5A9E`.
 
-**Charts:** Recharts (`ComposedChart`, `PieChart`). Always use `<ResponsiveContainer>`.
+**Charts:** Recharts (`ComposedChart`, `PieChart`). Always use `<ResponsiveContainer>` + the shared `TooltipBRL` component from `src/design/`.
 
 **Excel import:** SheetJS (`xlsx`). Always use `XLSX.read(data, { type: 'array' })` — **never** `cellDates: true` (causes MM/DD date ambiguity). Parse Excel date serials manually: `new Date(Math.round((serial - 25569) * 86400 * 1000))` using UTC methods.
 
 **Number parsing:** Brazilian format (dot = thousands, comma = decimal). Use the `num()` helper exported from `ImportarRelatorio.js` for all numeric cell parsing.
+
+## Design System (WJS UI) — `src/design/`
+
+**Reference implementation:** `src/pages/gestao-prejuizo/WQIPage.js` — every new page MUST match this visual language and use components from `src/design/`. Don't recreate cards, KPIs, filters, or tables from scratch.
+
+### Module layout
+
+```
+src/design/
+├── tokens.js       → const D (colors, shadows, radius, fonts) + injects global keyframes/Recharts overrides
+├── utils.js        → brl(), numFmt(), intFmt() — pt-BR formatters
+├── styles.js       → sLabel, sInput, sBtnClear, sBtnNav, sBtnPrimary, sSelectInline, tdStyle, cardStyle
+├── components.js   → PageContainer, PageHeader, KPICardPrimary/Secondary, ChartCard, FilterBar/FilterField, Chip, Tabela, TooltipBRL, Skeleton, EmptyState, Vazio, BotaoVoltar/Nav/Clear, MiniRanking
+└── index.js        → re-exports everything; import from `'../../design'`
+```
+
+### How to consume
+
+```js
+import {
+  D, brl, numFmt,
+  sLabel, sInput, sSelectInline, tdStyle,
+  PageContainer, PageHeader, KPICardPrimary, KPICardSecondary, ChartCard,
+  FilterBar, FilterField, Chip, Tabela, TooltipBRL, Skeleton, EmptyState, Vazio,
+  BotaoVoltar, BotaoNav, BotaoClear, MiniRanking,
+} from '../../design';
+```
+
+Importing `'../../design'` once auto-injects the global stylesheet (keyframes `wjs-shimmer`, `wjs-fadeUp`; hover states for `.wjs-chip`, `.wjs-btn-*`; Recharts outline removal).
+
+### Design tokens — never hardcode
+
+| Token | Value | Use for |
+|---|---|---|
+| `D.bg` | `#f8fafc` | Page background (zebra row alternate) |
+| `D.surface` | `#ffffff` | Card / container background |
+| `D.border` | `#e2e8f0` | Card borders |
+| `D.borderLight` | `#f1f5f9` | Table row borders, chart gridlines |
+| `D.text` | `#0f172a` | Primary text (H1, KPI values, table headers bg) |
+| `D.textSec` | `#475569` | Secondary text (table cells, labels) |
+| `D.textMuted` | `#94a3b8` | Tertiary (placeholders, footnotes, uppercase labels) |
+| `D.red` / `D.redSoft` / `D.redBorder` | `#E31837` family | Brand accents, error, primary loss/danger |
+| `D.blue` / `D.blueSoft` / `D.blueBorder` | `#1D5A9E` family | Secondary brand, info |
+| `D.amber` / `D.amberSoft` / `D.amberBorder` | warning amber | Curva B, meta, warning |
+| `D.green` / `D.greenSoft` / `D.greenBorder` | success green | Curva A, success, dentro-de-meta |
+| `D.shadow` / `D.shadowMd` | layered shadows | Cards (shadow), tooltips/modals (shadowMd) |
+| `D.radius` | `14` | Card border-radius (use `8` for buttons/inputs, `6` for inline elements) |
+| `D.font` | system / Inter | All text |
+| `D.mono` | JetBrains Mono | **All numbers** (KPI values, table $ values, ranks, percentages) |
+| `D.transition` | `0.22s cubic-bezier` | Hover transitions on interactive elements |
+
+### Page skeleton (copy-paste this for new pages)
+
+```jsx
+import {
+  D, brl, PageContainer, PageHeader, KPICardPrimary, KPICardSecondary,
+  ChartCard, FilterBar, FilterField, Tabela, TooltipBRL, EmptyState, Vazio,
+  sInput, tdStyle,
+} from '../../design';
+
+export default function MinhaPaginaNova() {
+  // ... state, effects ...
+
+  return (
+    <PageContainer maxWidth={1200}>
+      <PageHeader
+        kicker="Nome do Módulo"
+        titulo="Título da Página"
+        sub="optional descrição abaixo"
+        acoes={<BotaoNav onClick={...}>Outra view</BotaoNav>}
+      />
+
+      <FilterBar>
+        <FilterField label="Data de">
+          <input type="date" style={sInput} ... />
+        </FilterField>
+        <FilterField label="Tipo">
+          <select style={sInput} ...>...</select>
+        </FilterField>
+        {temFiltro && <BotaoClear onClick={limparTudo} />}
+      </FilterBar>
+
+      {/* Bento KPIs: 2 grandes + 3 secundários */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <KPICardPrimary label="..." valor={brl(x)} cor={D.red} />
+        <KPICardPrimary label="..." valor={brl(y)} cor={D.green} destaque />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
+        <KPICardSecondary label="..." valor={...} cor={D.blue} />
+        ...
+      </div>
+
+      {!temDados ? (
+        <EmptyState titulo="..." descricao="..." />
+      ) : (
+        <>
+          <ChartCard titulo="...">
+            <ResponsiveContainer ...>
+              <BarChart ...>
+                <CartesianGrid stroke={D.borderLight} />
+                <Tooltip content={<TooltipBRL />} />
+                <Bar fill={D.red} ... />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          <Tabela colunas={[...]} linhas={[...]} renderLinha={(l, i) => <tr ... />} />
+        </>
+      )}
+    </PageContainer>
+  );
+}
+```
+
+### Do / Don't
+
+**DO:**
+- Use `D.mono` for **every number** displayed (KPI values, table $ cells, ranks)
+- Use `kicker` (small uppercase label) above the H1 to indicate the module
+- Use the red vertical bar (3px wide) as section delimiter inside cards
+- Use `letterSpacing: -0.8` to `-1.5` for big values; `letterSpacing: 2–2.5` for uppercase labels
+- Use `animation: 'wjs-fadeUp 0.3s ease both'` on the main content wrapper
+- Show `Skeleton` blocks (not "Carregando…" text) during load
+- Show `EmptyState` (red icon, instructions) when collection is empty in Firebase
+- Show `Vazio` (small chart icon, italic message) when filtered result is empty
+- Format BRL values with `brl()`, plain numbers with `numFmt()`
+
+**DON'T:**
+- Don't hardcode colors — always reference `D.red`, `D.blue`, etc.
+- Don't import recharts `Tooltip` without overriding with `<TooltipBRL />` for currency
+- Don't use emoji as icons in page chrome — use the inline SVG patterns (Heroicons-style strokes with `D.red` or `D.textMuted` stroke color). Emojis are fine inside business buttons (`🔄 Atualizar`, `📥 Importar`) but not in headers/empty-states/cards.
+- Don't create local design tokens (`const card = { ... }`) at the bottom of pages — use `cardStyle` from `src/design/styles`
+- Don't redefine `KPICard`, `Tabela`, etc. locally — import from the design system. Need a variant? Add a prop to the existing component.
+- Don't put text "Carregando..." or "Sem dados" raw — use `Skeleton` or `EmptyState`/`Vazio`
+
+### Typography rules
+
+- **H1 (page title)**: `fontSize: 26, fontWeight: 800, letterSpacing: -0.8, color: D.text` — use `<PageHeader titulo="..." />`
+- **Kicker (uppercase label)**: `fontSize: 10, fontWeight: 700, letterSpacing: 2.5, textTransform: 'uppercase', color: D.textMuted`
+- **Card title**: `fontSize: 13, fontWeight: 700, letterSpacing: -0.2` — use `<ChartCard titulo="..." />`
+- **KPI label**: `fontSize: 10, fontWeight: 700, letterSpacing: 2, uppercase, color: D.textMuted`
+- **KPI primary value**: `fontSize: 32, fontWeight: 800, fontFamily: D.mono, letterSpacing: -1.5`
+- **KPI secondary value**: `fontSize: 22, fontWeight: 800, fontFamily: D.mono, letterSpacing: -0.8`
+- **Table body**: `fontSize: 12, color: D.textSec`, header `fontSize: 11, background: D.text, color: '#fff'`
+- **Filter label**: same as kicker; **filter input**: `sInput` (height ~32px, radius 8)
+
+### Recharts conventions
+
+- Always wrap in `<ResponsiveContainer width="100%" height={...}>`
+- `<CartesianGrid strokeDasharray="3 3" stroke={D.borderLight} />`
+- Hide axes: `axisLine={false} tickLine={false}` (let gridlines speak)
+- Tick style: `{ fontSize: 11, fill: D.textMuted, fontFamily: D.font }`
+- For BRL charts, format Y-axis with `tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`}`
+- Bar radius: `[0, 5, 5, 0]` (horizontal) or `[5, 5, 0, 0]` (vertical, top-rounded)
+- Line color: `D.red` for "real / loss", `D.blue` for "meta / reference", `strokeDasharray="6 3"` for projection/target
+
+### Multi-page modules
+
+When a module has multiple pages (like `gestao-prejuizo/` with WQI, Troca, Reposição, Cadastros), keep them consistent:
+- Same `kicker` value (e.g., all four pages use `kicker="Gestão de Prejuízo"`)
+- Same `maxWidth` on `PageContainer` (1100 or 1200, pick one per module)
+- Sub-pages use `<BotaoVoltar onClick={...} />` at the top + a context-specific kicker (e.g., `kicker="WQI"` instead of `kicker="Gestão de Prejuízo"` on the sub-page)
 
 ## Firebase Collections
 

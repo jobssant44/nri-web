@@ -46,18 +46,59 @@ export function num(val) {
 /** Arredonda para 1 decimal (caixas) */
 function r2(v) { return Math.round(v * 10) / 10; }
 
-/** Interpreta a data da célula — formato Promax: DD/MM/AAAA (texto, aceita sufixo de hora) */
-function parseData(cell) {
-  const s = String(cell || '').trim();
-  if (!s) return null;
-  // DD/MM/AAAA — sem $ para aceitar "14/04/2026 0:00:00"
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (!m) return null;
-  const mes = parseInt(m[2]);
-  const ano = parseInt(m[3]);
-  // Valida mes e ano para descartar linhas que não são datas reais
-  if (mes < 1 || mes > 12 || ano < 2020 || ano > 2040) return null;
-  return { mes, ano };
+/**
+ * Converte serial inteiro do Excel para { dia, mes, ano } em UTC.
+ * Recebe o serial JÁ sem a parte fracionária (hora) — use Math.floor antes de chamar.
+ * date1904=true → sistema de datas 1904 (Mac Excel): offset 24107 em vez de 25569.
+ */
+function serialParaYMD(serial, date1904 = false) {
+  const offset = date1904 ? 24107 : 25569;
+  const d = new Date((serial - offset) * 86400 * 1000);
+  return { dia: d.getUTCDate(), mes: d.getUTCMonth() + 1, ano: d.getUTCFullYear() };
+}
+
+/**
+ * Interpreta a data da célula.
+ * Aceita três formas:
+ *   - Serial numérico do Excel  (ex: 46053.999 → 31/01/2026)
+ *   - Texto DD/MM/AAAA          (ex: "31/01/2026" ou "31/01/2026 0:00:00")
+ *   - Texto AAAA/MM/DD ou AAAA-MM-DD  (ex: "2026/01/31" — formato personalizado Excel)
+ * Retorna { dia, mes, ano } ou null se inválido / mês futuro.
+ *
+ * date1904=true → sistema de datas 1904 (Mac Excel/Promax): offset 24107.
+ * Math.floor no serial descarta a parte de hora (46053.999 → 46053 = 31/01/2026 00:00 UTC).
+ */
+function parseData(cell, date1904 = false) {
+  let dia, mes, ano;
+
+  if (typeof cell === 'number' && cell > 40000) {
+    // Serial do Excel — Math.floor descarta a hora, evitando qualquer ambiguidade
+    const { dia: d, mes: m, ano: a } = serialParaYMD(Math.floor(cell), date1904);
+    dia = d; mes = m; ano = a;
+  } else {
+    const s = String(cell || '').trim();
+    if (!s) return null;
+    // Tenta DD/MM/AAAA primeiro
+    const m1 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m1) {
+      dia = parseInt(m1[1]); mes = parseInt(m1[2]); ano = parseInt(m1[3]);
+    } else {
+      // Tenta AAAA/MM/DD ou AAAA-MM-DD (formato personalizado Excel "AAAA/MM/DD")
+      const m2 = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+      if (m2) { ano = parseInt(m2[1]); mes = parseInt(m2[2]); dia = parseInt(m2[3]); }
+      else return null;
+    }
+  }
+
+  if (mes < 1 || mes > 12 || ano < 2020) return null;
+
+  // Rejeita meses futuros: dados de vendas são sempre históricos
+  const agora = new Date();
+  const anoAtual = agora.getFullYear();
+  const mesAtual = agora.getMonth() + 1; // 1–12
+  if (ano > anoAtual || (ano === anoAtual && mes > mesAtual)) return null;
+
+  return { dia, mes, ano };
 }
 
 function mesKey(ano, mes) { return `${ano}-${String(mes).padStart(2,'0')}`; }
@@ -118,6 +159,7 @@ function Importar030236() {
   const [importando, setImportando] = useState(false);
   const [limpando,   setLimpando]   = useState(false);
   const [diagLinhas, setDiagLinhas] = useState(null);   // primeiras linhas do arquivo
+  const [date1904,   setDate1904]   = useState(false);  // sistema de datas do workbook
   const rowsRef = useRef(null);                          // todas as linhas brutas para diagnóstico
 
   function prog(pct, etapa) { setProgresso({ pct, etapa }); }
@@ -151,7 +193,7 @@ function Importar030236() {
     const file = e.target.files[0];
     if (!file) return;
     e.target.value = '';                         // permite reimportar o mesmo arquivo
-    setAnalise(null); setMesesSel({}); setAvisos([]); setResultado(null); setDiagLinhas(null);
+    setAnalise(null); setMesesSel({}); setAvisos([]); setResultado(null); setDiagLinhas(null); setDate1904(false);
     rowsRef.current = null;
     prog(0, 'Lendo arquivo...');
 
@@ -169,7 +211,9 @@ function Importar030236() {
         // SEM cellDates: evita que o SheetJS converta strings "03/02" como MM/DD (formato americano)
         // → datas texto ficam como string e nosso regex DD/MM/AAAA as lê corretamente
         // → datas reais do Excel (serial numérico) são convertidas manualmente em parseData()
-        const wb    = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
+        const wb         = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
+        const isDate1904 = !!(wb.Workbook?.WBProps?.date1904);  // Mac Excel / Promax usa sistema 1904
+        setDate1904(isDate1904);
         const sheet = wb.Sheets[wb.SheetNames[0]];
 
         // Limita até a coluna AC (índice 28)
@@ -192,12 +236,24 @@ function Importar030236() {
           diag.push({
             rowIdx: i,
             isCab:  i === 0,
-            cols: [r[1], r[19], r[20], r[26], r[28]].map((v, ci) => ({
-              raw:  v,
-              tipo: v instanceof Date ? 'Date' : typeof v,
-              txt:  v instanceof Date ? v.toLocaleDateString('pt-BR') : String(v ?? ''),
-              numInterpretado: ci === 3 ? num(v) : null, // só AA (índice 3 aqui) é numérico
-            })),
+            cols: [r[1], r[19], r[20], r[26], r[28]].map((v, ci) => {
+              let txt;
+              if (v instanceof Date) {
+                txt = v.toLocaleDateString('pt-BR');
+              } else if (ci === 0 && typeof v === 'number' && v > 40000) {
+                // Coluna B: serial do Excel → converte para DD/MM/AAAA legível
+                const { dia, mes, ano } = serialParaYMD(Math.floor(v), isDate1904);
+                txt = `${String(dia).padStart(2,'0')}/${String(mes).padStart(2,'0')}/${ano}`;
+              } else {
+                txt = String(v ?? '');
+              }
+              return {
+                raw:  v,
+                tipo: v instanceof Date ? 'Date' : typeof v,
+                txt,
+                numInterpretado: ci === 3 ? num(v) : null, // só AA (índice 3 aqui) é numérico
+              };
+            }),
           });
         }
         setDiagLinhas(diag);
@@ -224,7 +280,7 @@ function Importar030236() {
 
           if (!codigo || !nome) continue;
 
-          const dp = parseData(dataCell);
+          const dp = parseData(dataCell, isDate1904);
           if (!dp) {
             erros.push(`Linha ${i + 1}: data inválida "${dataCell}" (cód. ${codigo})`);
             continue;
@@ -254,7 +310,7 @@ function Importar030236() {
             prod.cxAberto  += qtdCx; // AC = "Não" → Picking
           }
 
-          prod.diasSet.add(String(dataCell).slice(0, 10)); // "DD/MM/AAAA" → chave única por dia
+          prod.diasSet.add(`${dp.ano}-${String(dp.mes).padStart(2,'0')}-${String(dp.dia).padStart(2,'0')}`); // "AAAA-MM-DD" → chave única por dia
           validas++;
 
           if (i % CHUNK === 0) {
@@ -448,6 +504,13 @@ function Importar030236() {
             <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
               ■ verde = número · ■ azul = data · ■ preto = texto · A seta "→" mostra o valor que será somado na coluna D
             </div>
+            <div style={{ fontSize: 11, marginTop: 4, padding: '3px 8px', display: 'inline-block', borderRadius: 4,
+              backgroundColor: date1904 ? '#fef3c7' : '#f0fdf4', border: `1px solid ${date1904 ? '#f59e0b' : '#86efac'}`,
+              color: date1904 ? '#92400e' : '#166534' }}>
+              {date1904
+                ? '⚠️ Sistema de datas 1904 (Mac/Promax) detectado — offset 24107 aplicado'
+                : '✅ Sistema de datas 1900 (padrão Windows) — offset 25569 aplicado'}
+            </div>
           </div>
         )}
 
@@ -570,6 +633,10 @@ function Importar030236() {
                   // ── Diagnóstico linha a linha (mostra TODAS as linhas do código no arquivo inteiro) ──
                   // Formato Promax: AAAA-MM-DD — exibe apenas os 10 primeiros chars
                   function serialParaData(v) {
+                    if (typeof v === 'number' && v > 40000) {
+                      const { dia, mes, ano } = serialParaYMD(Math.floor(v), date1904);
+                      return `${String(dia).padStart(2,'0')}/${String(mes).padStart(2,'0')}/${ano}`;
+                    }
                     return String(v ?? '').slice(0, 10);
                   }
 
@@ -577,7 +644,7 @@ function Importar030236() {
                     ? rowsRef.current.slice(1).reduce((acc, row, idx) => {
                         const cod = String(row[19] ?? '').trim(); // T = código
                         if (cod !== prod.codigo) return acc;
-                        const dp         = parseData(row[1]);     // B = data
+                        const dp         = parseData(row[1], date1904);     // B = data
                         const chaveLinha = dp ? mesKey(dp.ano, dp.mes) : null;
                         const qtdRaw     = row[26];              // coluna AA
                         const qtdParsed  = num(qtdRaw);
@@ -587,6 +654,7 @@ function Importar030236() {
                           linha:     idx + 2,
                           dataFmt:   serialParaData(row[1]),
                           dataRaw:   String(row[1] ?? ''),
+                          dataTipo:  typeof row[1],            // 'number' | 'string' | 'object'
                           chaveLinha,
                           estesMes,
                           qtdRaw:    String(qtdRaw ?? ''),
@@ -600,6 +668,8 @@ function Importar030236() {
 
                   const somaLinhas  = linhasBrutas.filter(r => r.incluido).reduce((s, r) => s + r.qtdParsed, 0);
                   const excluidas   = linhasBrutas.filter(r => !r.incluido);
+                  const outrosMeses = linhasBrutas.filter(r => !r.estesMes).length;
+                  const qtdZero     = linhasBrutas.filter(r => r.estesMes && r.qtdParsed <= 0).length;
 
                   return (
                     <div key={chave} style={{ backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 14, marginBottom: 8 }}>
@@ -628,8 +698,9 @@ function Importar030236() {
                       {linhasBrutas.length > 0 && (
                         <details style={{ marginTop: 8 }}>
                           <summary style={{ fontSize: 12, cursor: 'pointer', color: '#1D5A9E', fontWeight: '600', marginBottom: 6 }}>
-                            🔬 {linhasBrutas.length} linhas lidas no arquivo · Soma: {Math.round(somaLinhas * 10) / 10} cx
-                            {excluidas.length > 0 && <span style={{ color: '#E31837', marginLeft: 8 }}>⚠️ {excluidas.length} linha(s) com qtd = 0 (ignoradas)</span>}
+                            🔬 {linhasBrutas.length} linhas no arquivo · {linhasBrutas.filter(r => r.incluido).length} incluídas · Soma: {Math.round(somaLinhas * 10) / 10} cx
+                            {outrosMeses > 0 && <span style={{ color: '#888', marginLeft: 8 }}>· {outrosMeses} de outros meses (normal)</span>}
+                            {qtdZero > 0 && <span style={{ color: '#E31837', marginLeft: 8 }}>⚠️ {qtdZero} com qtd = 0 (ignoradas)</span>}
                           </summary>
                           <div style={{ overflowX: 'auto', maxHeight: 280, overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: 6 }}>
                             <table style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%' }}>
@@ -646,14 +717,21 @@ function Importar030236() {
                               <tbody>
                                 {linhasBrutas.map((r, ri) => {
                                   const isSim = r.pltFechado?.toLowerCase() === 'sim';
-                                  const tipoLabel = !r.incluido ? '✗ ignorado'
+                                  const tipoLabel = !r.incluido
+                                    ? (!r.estesMes ? '↩ outro mês' : '✗ qtd = 0')
                                     : isSim ? '📦 Estoque' : '🛒 Picking';
-                                  const tipoColor = !r.incluido ? '#dc2626'
+                                  const tipoColor = !r.incluido
+                                    ? (!r.estesMes ? '#aaa' : '#dc2626')
                                     : isSim ? '#7c3aed' : '#166534';
                                   return (
-                                    <tr key={ri} style={{ backgroundColor: r.incluido ? (ri%2===0?'#fff':'#fafafa') : '#fff5f5' }}>
+                                    <tr key={ri} style={{ backgroundColor: r.incluido ? (ri%2===0?'#fff':'#fafafa') : r.estesMes ? '#fff5f5' : '#f5f5f5' }}>
                                       <td style={{ ...estilos.tdD, color: '#aaa' }}>{r.linha}</td>
-                                      <td style={estilos.tdD}>{r.dataFmt}</td>
+                                      <td style={estilos.tdD}>
+                                        <div>{r.dataFmt}</div>
+                                        <div style={{ fontSize: 9, color: '#aaa', fontFamily: 'monospace' }}>
+                                          {r.dataTipo}: {r.dataRaw.length > 24 ? r.dataRaw.slice(0,24) + '…' : r.dataRaw}
+                                        </div>
+                                      </td>
                                       <td style={{ ...estilos.tdD, fontFamily: 'monospace', color: '#555' }}>{r.qtdRaw || <em style={{color:'#ccc'}}>vazio</em>}</td>
                                       <td style={{ ...estilos.tdD, fontWeight: 'bold', color: r.incluido ? '#166534' : '#dc2626' }}>
                                         {r.qtdParsed}

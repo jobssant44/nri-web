@@ -77,7 +77,9 @@ export default function ConfigPicking() {
       const prod = base.find(p => String(p.codigo) === String(c.codProduto));
       return {
         ...c,
-        espacosPalete: c.espacosPalete ?? prod?.paletizacao ?? '',
+        // espacosPalete é uma decisão operacional (quantos slots no picking) — não vem do catálogo.
+        espacosPalete: c.espacosPalete ?? '',
+        // cxPorPlt = caixas por palete; vem do catálogo (campo paletizacao no produto).
         cxPorPlt:      c.cxPorPlt      || prod?.paletizacao || prod?.cxPorPlt || '',
       };
     });
@@ -117,38 +119,39 @@ export default function ConfigPicking() {
     const novo = {
       codProduto:    novoForm.codProduto,
       nomeProduto:   novoForm.nomeProduto,
-      espacosPalete: prod?.paletizacao ?? parseFloat(novoForm.espacosPalete) ?? '',
+      // respeita o valor digitado pelo operador; só usa fallback vazio se não preencheu
+      espacosPalete: parseFloat(novoForm.espacosPalete) || '',
       cxPorPlt:      prod?.paletizacao || prod?.cxPorPlt || '',
     };
-    const docRef = docRef('picking_config_mensal', mesSelecionado);
-    const docSnap = await getDoc(docRef);
+    const ref = docRef('picking_config_mensal', mesSelecionado);
+    const docSnap = await getDoc(ref);
     const existentes = docSnap.exists() ? (docSnap.data().produtos || []) : [];
     const atualizados = [...existentes.filter(p => p.codProduto !== novo.codProduto), novo];
-    await setDoc(docRef, { mes: mesSelecionado, produtos: atualizados });
+    await setDoc(ref, { mes: mesSelecionado, produtos: atualizados });
     setShowNovo(false);
     setNovoForm({ codProduto: '', nomeProduto: '', espacosPalete: '' });
     await trocarMes(mesSelecionado);
   }
 
   async function salvarEdicao(cfg) {
-    const docRef = docRef('picking_config_mensal', mesSelecionado);
-    const docSnap = await getDoc(docRef);
+    const ref = docRef('picking_config_mensal', mesSelecionado);
+    const docSnap = await getDoc(ref);
     const produtos = (docSnap.data()?.produtos || []).map(p =>
       p.codProduto === cfg.codProduto
         ? { ...p, espacosPalete: parseInt(cfg.espacosPalete), cxPorPlt: parseInt(cfg.cxPorPlt) || '' }
         : p
     );
-    await updateDoc(docRef, { produtos });
+    await updateDoc(ref, { produtos });
     setEditando(null);
     await trocarMes(mesSelecionado);
   }
 
   async function excluir(codProduto, nome) {
     if (!window.confirm(`Remover "${nome}" de ${chaveParaNome(mesSelecionado)}?`)) return;
-    const docRef = docRef('picking_config_mensal', mesSelecionado);
-    const docSnap = await getDoc(docRef);
+    const ref = docRef('picking_config_mensal', mesSelecionado);
+    const docSnap = await getDoc(ref);
     const produtos = (docSnap.data()?.produtos || []).filter(p => p.codProduto !== codProduto);
-    await updateDoc(docRef, { produtos });
+    await updateDoc(ref, { produtos });
     await trocarMes(mesSelecionado);
   }
 
@@ -167,6 +170,10 @@ export default function ConfigPicking() {
           const mesStr = String(row[0]).trim();
           const codigo = String(row[1]).trim();
           const nome   = String(row[2]).trim();
+          // D = Espaços Palete (qtd de paletes físicos no picking).
+          // Vazio ou zero → fica indefinido (operador edita manualmente depois).
+          const espRaw = parseInt(String(row[3] ?? '').trim(), 10);
+          const espacos = Number.isFinite(espRaw) && espRaw > 0 ? espRaw : '';
           if (!mesStr || !codigo) continue;
           const chave = parseMesAno(mesStr);
           if (!chave) continue;
@@ -175,7 +182,7 @@ export default function ConfigPicking() {
           grupos[chave].push({
             codProduto:    codigo,
             nomeProduto:   nome || prod?.descricao || codigo,
-            espacosPalete: prod?.paletizacao ?? '',
+            espacosPalete: espacos,
             cxPorPlt:      prod?.paletizacao || prod?.cxPorPlt || '',
           });
         }
@@ -291,8 +298,8 @@ export default function ConfigPicking() {
       </div>
 
       <div style={{ backgroundColor: '#f0f4ff', borderRadius: 8, padding: '10px 16px', marginBottom: 20, fontSize: 12, color: '#555' }}>
-        📋 <b>Formato do arquivo:</b> A = Mês (Janeiro/2026) | B = Código | C = Descrição — cabeçalho na 1ª linha.
-        Espaços Palete e CX/PLT são buscados automaticamente do catálogo de produtos (01.11). Aceita <b>.xlsx</b> e <b>.csv</b>.
+        📋 <b>Formato do arquivo:</b> A = Mês (Janeiro/2026) | B = Código | C = Nome SKU | D = Espaços Palete — cabeçalho na 1ª linha.
+        CX/PLT é buscado automaticamente do catálogo de produtos. Aceita <b>.xlsx</b> e <b>.csv</b>.
       </div>
 
       {showNovo && mesSelecionado && (

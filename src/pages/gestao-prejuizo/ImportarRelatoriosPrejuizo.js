@@ -1,10 +1,12 @@
 import { useState, useRef } from 'react';
-import { collection, addDoc, getDocs, writeBatch, doc } from 'firebase/firestore';
+import { addDoc, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
+import {
+  D, intFmt, numFmt,
+  PageContainer, PageHeader,
+} from '../../design';
 
 // ─── Mapeamento de colunas do 03.02.37 (letra Excel → índice 0-based) ────────
-// Fórmula: letra única X → charCode(X) - 65
-//          duas letras XY → (charCode(X)-64)*26 + (charCode(Y)-65)
 const CAMPOS_030237 = [
   { idx: 2,  campo: 'operacao',      label: 'Operação' },
   { idx: 3,  campo: 'vendedor',      label: 'Vendedor' },
@@ -59,50 +61,175 @@ function parsearCSV030237(texto) {
     CAMPOS_030237.forEach(({ idx, campo }) => {
       obj[campo] = (cols[idx] ?? '').replace(/^"|"$/g, '').trim();
     });
-    // Ignorar linhas completamente vazias
     const vazia = CAMPOS_030237.every(({ campo }) => !obj[campo]);
     if (!vazia) dados.push(obj);
   }
   return { linhas: dados, total: dados.length };
 }
 
+// ─── UI parts compartilhadas ──────────────────────────────────────────────────
+
+function CardBase({ icone, titulo, descricao, children }) {
+  return (
+    <div style={{
+      background: D.surface, border: `1px solid ${D.border}`,
+      borderRadius: D.radius, padding: 24, boxShadow: D.shadow,
+      animation: 'wjs-fadeUp 0.3s ease both',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 18 }}>
+        <div style={{
+          width: 38, height: 38, borderRadius: 10,
+          background: D.redSoft, border: `1px solid ${D.redBorder}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          fontSize: 18,
+        }}>
+          {icone}
+        </div>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: D.text, marginBottom: 2, fontFamily: D.font }}>
+            {titulo}
+          </div>
+          <div style={{ fontSize: 12, color: D.textSec, fontFamily: D.font }}>
+            {descricao}
+          </div>
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function BotoesUpload({ inputId, inputRef, onSelect, temPreview, onSalvar, salvando, onLimpar, mostrarLimpar }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+      <input ref={inputRef} type="file" accept=".csv" id={inputId} style={{ display: 'none' }} onChange={onSelect} />
+      <label htmlFor={inputId} style={s.btnUpload}>📂 Selecionar CSV</label>
+
+      {temPreview && (
+        <button
+          onClick={onSalvar}
+          disabled={salvando}
+          style={{ ...s.btnSalvar, opacity: salvando ? 0.6 : 1, cursor: salvando ? 'not-allowed' : 'pointer' }}
+        >
+          {salvando ? '⏳ Salvando...' : '💾 Salvar no Firebase'}
+        </button>
+      )}
+
+      {mostrarLimpar && (
+        <button onClick={onLimpar} style={s.btnLimpar}>✕ Limpar</button>
+      )}
+    </div>
+  );
+}
+
+function Alerta({ tipo, children }) {
+  const cores = {
+    sucesso: { bg: D.greenSoft, color: D.green, border: D.greenBorder },
+    erro:    { bg: D.redSoft,   color: D.red,   border: D.redBorder },
+    info:    { bg: D.blueSoft,  color: D.blue,  border: D.blueBorder },
+    neutro:  { bg: D.bg,        color: D.textSec, border: D.border },
+  }[tipo];
+  return (
+    <div style={{
+      padding: '9px 14px', borderRadius: 8, fontSize: 13, fontWeight: 500,
+      marginBottom: 12, fontFamily: D.font,
+      background: cores.bg, color: cores.color,
+      border: `1px solid ${cores.border}`,
+      borderLeft: `4px solid ${cores.color}`,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function TabelaPreview({ cabecalho, linhas, total }) {
+  return (
+    <div style={{
+      overflowX: 'auto', borderRadius: 10,
+      border: `1px solid ${D.border}`, marginTop: 4,
+    }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: D.font }}>
+        <thead>
+          <tr>
+            {cabecalho.map(h => (
+              <th key={h} style={{
+                background: D.text, color: '#fff', padding: '9px 14px',
+                textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap',
+                fontSize: 11, letterSpacing: 0.3,
+              }}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {linhas.slice(0, 10).map((linha, i) => (
+            <tr key={i} style={{ background: i % 2 === 0 ? D.surface : D.bg }}>
+              {cabecalho.map(h => (
+                <td key={h} style={{
+                  padding: '7px 14px', color: D.textSec,
+                  borderTop: `1px solid ${D.borderLight}`, whiteSpace: 'nowrap',
+                }}>
+                  {linha[h]}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {total > 10 && (
+        <div style={{
+          padding: '8px 14px', fontSize: 11, color: D.textMuted,
+          fontStyle: 'italic', borderTop: `1px solid ${D.border}`,
+          background: D.bg, fontFamily: D.font,
+        }}>
+          … e mais {total - 10} linha(s) não exibidas
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Placeholder() {
+  return (
+    <div style={{
+      padding: 24, textAlign: 'center',
+      color: D.textMuted, fontSize: 13, fontStyle: 'italic',
+      fontFamily: D.font,
+    }}>
+      Selecione um arquivo .csv para visualizar e salvar
+    </div>
+  );
+}
+
 // ─── Card 03.02.37 ────────────────────────────────────────────────────────────
 
 function Card030237() {
   const { col, stamp } = useDb();
-  const [fase, setFase] = useState('idle'); // idle | preview | salvando | salvo | erro
+  const [fase, setFase] = useState('idle');
   const [mensagem, setMensagem] = useState('');
-  const [dados, setDados] = useState(null); // { linhas, total, nomeArquivo }
+  const [dados, setDados] = useState(null);
   const inputRef = useRef(null);
 
   function handleArquivo(e) {
     const arquivo = e.target.files?.[0];
     if (!arquivo) return;
     if (!arquivo.name.toLowerCase().endsWith('.csv')) {
-      setFase('erro');
-      setMensagem('Selecione um arquivo .csv válido.');
-      return;
+      setFase('erro'); setMensagem('Selecione um arquivo .csv válido.'); return;
     }
-    setFase('idle');
-    setMensagem('');
-    setDados(null);
+    setFase('idle'); setMensagem(''); setDados(null);
 
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const texto = ev.target.result;
-        const { linhas, total } = parsearCSV030237(texto);
+        const { linhas, total } = parsearCSV030237(ev.target.result);
         if (total === 0) {
-          setFase('erro');
-          setMensagem('Nenhuma linha de dados encontrada no arquivo.');
-          return;
+          setFase('erro'); setMensagem('Nenhuma linha de dados encontrada no arquivo.'); return;
         }
         setDados({ linhas, total, nomeArquivo: arquivo.name });
-        setFase('preview');
-        setMensagem('');
+        setFase('preview'); setMensagem('');
       } catch {
-        setFase('erro');
-        setMensagem('Erro ao processar o arquivo.');
+        setFase('erro'); setMensagem('Erro ao processar o arquivo.');
       }
     };
     reader.onerror = () => { setFase('erro'); setMensagem('Falha ao ler o arquivo.'); };
@@ -112,8 +239,7 @@ function Card030237() {
 
   async function handleSalvar() {
     if (!dados) return;
-    setFase('salvando');
-    setMensagem('');
+    setFase('salvando'); setMensagem('');
     try {
       await addDoc(col('relatorio_030237'), {
         importadoEm: new Date(),
@@ -123,7 +249,7 @@ function Card030237() {
         ...stamp(),
       });
       setFase('salvo');
-      setMensagem(`${dados.total} linha(s) salvas com sucesso.`);
+      setMensagem(`${intFmt(dados.total)} linha(s) salvas com sucesso.`);
       setDados(null);
       if (inputRef.current) inputRef.current.value = '';
     } catch (err) {
@@ -133,92 +259,39 @@ function Card030237() {
   }
 
   function handleLimpar() {
-    setFase('idle');
-    setMensagem('');
-    setDados(null);
+    setFase('idle'); setMensagem(''); setDados(null);
     if (inputRef.current) inputRef.current.value = '';
   }
 
   const temPreview = fase === 'preview' || fase === 'salvando';
 
   return (
-    <div style={s.card}>
-      <div style={s.cardHeader}>
-        <span style={{ fontSize: 22 }}>📄</span>
-        <div>
-          <div style={s.cardTitulo}>03.02.37</div>
-          <div style={s.cardDescricao}>Relatório de prejuízo — {CAMPOS_030237.length} campos mapeados por posição de coluna</div>
-        </div>
-      </div>
+    <CardBase icone="📄" titulo="03.02.37" descricao={`Relatório de prejuízo — ${CAMPOS_030237.length} campos mapeados por posição de coluna`}>
+      <BotoesUpload
+        inputId="file-030237" inputRef={inputRef} onSelect={handleArquivo}
+        temPreview={temPreview} onSalvar={handleSalvar} salvando={fase === 'salvando'}
+        onLimpar={handleLimpar} mostrarLimpar={temPreview || fase === 'salvo' || fase === 'erro'}
+      />
 
-      {/* Ações */}
-      <div style={s.uploadArea}>
-        <input ref={inputRef} type="file" accept=".csv" id="file-030237" style={{ display: 'none' }} onChange={handleArquivo} />
-        <label htmlFor="file-030237" style={s.botaoUpload}>
-          📂 Selecionar CSV
-        </label>
+      {fase === 'salvo' && <Alerta tipo="sucesso">✅ {mensagem}</Alerta>}
+      {fase === 'erro'  && <Alerta tipo="erro">❌ {mensagem}</Alerta>}
 
-        {temPreview && (
-          <button
-            onClick={handleSalvar}
-            disabled={fase === 'salvando'}
-            style={{ ...s.botaoSalvar, opacity: fase === 'salvando' ? 0.6 : 1, cursor: fase === 'salvando' ? 'not-allowed' : 'pointer' }}
-          >
-            {fase === 'salvando' ? '⏳ Salvando...' : '💾 Salvar no Firebase'}
-          </button>
-        )}
-
-        {(temPreview || fase === 'salvo' || fase === 'erro') && (
-          <button onClick={handleLimpar} style={s.botaoLimpar}>✕ Limpar</button>
-        )}
-      </div>
-
-      {/* Feedback */}
-      {fase === 'salvo' && (
-        <div style={{ ...s.alerta, ...s.alertaSucesso }}>✅ {mensagem}</div>
-      )}
-      {fase === 'erro' && (
-        <div style={{ ...s.alerta, ...s.alertaErro }}>❌ {mensagem}</div>
-      )}
-
-      {/* Resumo do arquivo */}
       {temPreview && dados && (
-        <div style={{ ...s.alerta, ...s.alertaInfo }}>
-          📋 Arquivo: <strong>{dados.nomeArquivo}</strong> · <strong>{dados.total}</strong> linha(s) prontas para salvar
-        </div>
+        <Alerta tipo="info">
+          📋 Arquivo: <strong>{dados.nomeArquivo}</strong> · <strong>{intFmt(dados.total)}</strong> linha(s) prontas para salvar
+        </Alerta>
       )}
 
-      {/* Preview tabela */}
       {temPreview && dados && (
-        <div style={s.tabelaWrapper}>
-          <table style={s.tabela}>
-            <thead>
-              <tr>
-                {CAMPOS_030237.map(c => (
-                  <th key={c.campo} style={s.th}>{c.label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {dados.linhas.slice(0, 10).map((linha, i) => (
-                <tr key={i} style={i % 2 === 0 ? s.trPar : s.trImpar}>
-                  {CAMPOS_030237.map(c => (
-                    <td key={c.campo} style={s.td}>{linha[c.campo]}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {dados.total > 10 && (
-            <div style={s.maisLinhas}>... e mais {dados.total - 10} linha(s) não exibidas</div>
-          )}
-        </div>
+        <TabelaPreview
+          cabecalho={CAMPOS_030237.map(c => c.label)}
+          linhas={dados.linhas.map(l => Object.fromEntries(CAMPOS_030237.map(c => [c.label, l[c.campo]])))}
+          total={dados.total}
+        />
       )}
 
-      {fase === 'idle' && (
-        <div style={s.placeholder}>Selecione um arquivo .csv para visualizar e salvar</div>
-      )}
-    </div>
+      {fase === 'idle' && <Placeholder />}
+    </CardBase>
   );
 }
 
@@ -234,55 +307,43 @@ function Card030147Hecto() {
   const { col, db, stamp } = useDb();
   const [fase, setFase] = useState('idle');
   const [mensagem, setMensagem] = useState('');
-  const [dados, setDados] = useState(null); // [{ data, totalHecto }]
+  const [dados, setDados] = useState(null);
   const inputRef = useRef(null);
 
   function handleArquivo(e) {
     const arquivo = e.target.files?.[0];
     if (!arquivo) return;
     if (!arquivo.name.toLowerCase().endsWith('.csv')) {
-      setFase('erro');
-      setMensagem('Selecione um arquivo .csv válido.');
-      return;
+      setFase('erro'); setMensagem('Selecione um arquivo .csv válido.'); return;
     }
-    setFase('idle');
-    setMensagem('');
-    setDados(null);
+    setFase('idle'); setMensagem(''); setDados(null);
 
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
         const texto = ev.target.result;
         const linhas = texto.split(/\r?\n/).filter(l => l.trim());
-        if (linhas.length < 2) {
-          setFase('erro');
-          setMensagem('Arquivo vazio ou sem dados.');
-          return;
-        }
+        if (linhas.length < 2) { setFase('erro'); setMensagem('Arquivo vazio ou sem dados.'); return; }
         const sep = linhas[0].includes(';') ? ';' : ',';
 
-        // Agrupa por data somando Hecto, filtrando AK = "Pedido Normal"
         const mapa = new Map();
         for (let i = 1; i < linhas.length; i++) {
           const cols = splitLinha(linhas[i], sep);
           const tipoPedido = (cols[36] ?? '').replace(/^"|"$/g, '').trim();
           if (tipoPedido !== 'Pedido Normal') continue;
-          const data   = (cols[24] ?? '').replace(/^"|"$/g, '').trim();
-          const hecto  = parsearHecto((cols[35] ?? '').replace(/^"|"$/g, ''));
+          const data  = (cols[24] ?? '').replace(/^"|"$/g, '').trim();
+          const hecto = parsearHecto((cols[35] ?? '').replace(/^"|"$/g, ''));
           if (!data) continue;
           mapa.set(data, (mapa.get(data) ?? 0) + hecto);
         }
 
         if (mapa.size === 0) {
-          setFase('erro');
-          setMensagem('Nenhuma linha com "Pedido Normal" encontrada.');
-          return;
+          setFase('erro'); setMensagem('Nenhuma linha com "Pedido Normal" encontrada.'); return;
         }
 
         const resultado = [...mapa.entries()]
           .map(([data, totalHecto]) => ({ data, totalHecto: Math.round(totalHecto * 100) / 100 }))
           .sort((a, b) => {
-            // Tenta ordenar por data — suporta DD/MM/AAAA e AAAA-MM-DD
             const parseData = (d) => {
               const partes = d.includes('/') ? d.split('/') : d.split('-');
               if (partes.length === 3) {
@@ -298,8 +359,7 @@ function Card030147Hecto() {
         setDados({ linhas: resultado, nomeArquivo: arquivo.name });
         setFase('preview');
       } catch {
-        setFase('erro');
-        setMensagem('Erro ao processar o arquivo.');
+        setFase('erro'); setMensagem('Erro ao processar o arquivo.');
       }
     };
     reader.onerror = () => { setFase('erro'); setMensagem('Falha ao ler o arquivo.'); };
@@ -309,17 +369,14 @@ function Card030147Hecto() {
 
   async function handleSalvar() {
     if (!dados) return;
-    setFase('salvando');
-    setMensagem('');
+    setFase('salvando'); setMensagem('');
     try {
-      // Limpa coleção antes de reimportar
       const snap = await getDocs(col('relatorio_030147hecto'));
       for (let i = 0; i < snap.docs.length; i += 450) {
         const batch = writeBatch(db);
         snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
         await batch.commit();
       }
-      // Salva um documento por data
       for (let i = 0; i < dados.linhas.length; i += 450) {
         const batch = writeBatch(db);
         dados.linhas.slice(i, i + 450).forEach(linha => {
@@ -334,7 +391,7 @@ function Card030147Hecto() {
         await batch.commit();
       }
       setFase('salvo');
-      setMensagem(`${dados.linhas.length} data(s) salvas com sucesso.`);
+      setMensagem(`${intFmt(dados.linhas.length)} data(s) salvas com sucesso.`);
       setDados(null);
       if (inputRef.current) inputRef.current.value = '';
     } catch (err) {
@@ -344,82 +401,43 @@ function Card030147Hecto() {
   }
 
   function handleLimpar() {
-    setFase('idle');
-    setMensagem('');
-    setDados(null);
+    setFase('idle'); setMensagem(''); setDados(null);
     if (inputRef.current) inputRef.current.value = '';
   }
 
   const temPreview = fase === 'preview' || fase === 'salvando';
 
   return (
-    <div style={s.card}>
-      <div style={s.cardHeader}>
-        <span style={{ fontSize: 22 }}>📊</span>
-        <div>
-          <div style={s.cardTitulo}>03.01.47.01 — Hecto por Dia</div>
-          <div style={s.cardDescricao}>
-            Lê colunas Y (Data) e AJ (Hecto), filtra AK = "Pedido Normal", soma por dia
-          </div>
-        </div>
-      </div>
+    <CardBase
+      icone="📊"
+      titulo="03.01.47.01 — Hecto por Dia"
+      descricao='Lê colunas Y (Data) e AJ (Hecto), filtra AK = "Pedido Normal", soma por dia'
+    >
+      <BotoesUpload
+        inputId="file-030147hecto" inputRef={inputRef} onSelect={handleArquivo}
+        temPreview={temPreview} onSalvar={handleSalvar} salvando={fase === 'salvando'}
+        onLimpar={handleLimpar} mostrarLimpar={temPreview || fase === 'salvo' || fase === 'erro'}
+      />
 
-      <div style={s.uploadArea}>
-        <input ref={inputRef} type="file" accept=".csv" id="file-030147hecto" style={{ display: 'none' }} onChange={handleArquivo} />
-        <label htmlFor="file-030147hecto" style={s.botaoUpload}>📂 Selecionar CSV</label>
-
-        {temPreview && (
-          <button
-            onClick={handleSalvar}
-            disabled={fase === 'salvando'}
-            style={{ ...s.botaoSalvar, opacity: fase === 'salvando' ? 0.6 : 1, cursor: fase === 'salvando' ? 'not-allowed' : 'pointer' }}
-          >
-            {fase === 'salvando' ? '⏳ Salvando...' : '💾 Salvar no Firebase'}
-          </button>
-        )}
-
-        {(temPreview || fase === 'salvo' || fase === 'erro') && (
-          <button onClick={handleLimpar} style={s.botaoLimpar}>✕ Limpar</button>
-        )}
-      </div>
-
-      {fase === 'salvo' && <div style={{ ...s.alerta, ...s.alertaSucesso }}>✅ {mensagem}</div>}
-      {fase === 'erro'  && <div style={{ ...s.alerta, ...s.alertaErro }}>❌ {mensagem}</div>}
+      {fase === 'salvo' && <Alerta tipo="sucesso">✅ {mensagem}</Alerta>}
+      {fase === 'erro'  && <Alerta tipo="erro">❌ {mensagem}</Alerta>}
 
       {temPreview && dados && (
-        <div style={{ ...s.alerta, ...s.alertaInfo }}>
-          📋 Arquivo: <strong>{dados.nomeArquivo}</strong> · <strong>{dados.linhas.length}</strong> data(s) com somatório de Hecto
-        </div>
+        <Alerta tipo="info">
+          📋 Arquivo: <strong>{dados.nomeArquivo}</strong> · <strong>{intFmt(dados.linhas.length)}</strong> data(s) com somatório de Hecto
+        </Alerta>
       )}
 
       {temPreview && dados && (
-        <div style={s.tabelaWrapper}>
-          <table style={s.tabela}>
-            <thead>
-              <tr>
-                <th style={s.th}>Data</th>
-                <th style={s.th}>Total Hecto</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dados.linhas.slice(0, 10).map((linha, i) => (
-                <tr key={i} style={i % 2 === 0 ? s.trPar : s.trImpar}>
-                  <td style={s.td}>{linha.data}</td>
-                  <td style={s.td}>{linha.totalHecto.toLocaleString('pt-BR')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {dados.linhas.length > 10 && (
-            <div style={s.maisLinhas}>... e mais {dados.linhas.length - 10} data(s) não exibidas</div>
-          )}
-        </div>
+        <TabelaPreview
+          cabecalho={['Data', 'Total Hecto']}
+          linhas={dados.linhas.map(l => ({ 'Data': l.data, 'Total Hecto': numFmt(l.totalHecto) }))}
+          total={dados.linhas.length}
+        />
       )}
 
-      {fase === 'idle' && (
-        <div style={s.placeholder}>Selecione um arquivo .csv para visualizar e salvar</div>
-      )}
-    </div>
+      {fase === 'idle' && <Placeholder />}
+    </CardBase>
   );
 }
 
@@ -435,14 +453,9 @@ function CardRefugo({ label, descricao, icon, id }) {
     const arquivo = e.target.files?.[0];
     if (!arquivo) return;
     if (!arquivo.name.toLowerCase().endsWith('.csv')) {
-      setFase('erro');
-      setMensagem('Selecione um arquivo .csv válido.');
-      setPreview(null);
-      return;
+      setFase('erro'); setMensagem('Selecione um arquivo .csv válido.'); setPreview(null); return;
     }
-    setFase('carregando');
-    setMensagem('');
-    setPreview(null);
+    setFase('carregando'); setMensagem(''); setPreview(null);
 
     const reader = new FileReader();
     reader.onload = (ev) => {
@@ -460,10 +473,9 @@ function CardRefugo({ label, descricao, icon, id }) {
         });
         setPreview({ cabecalho, linhas: dados, nomeArquivo: arquivo.name, total: dados.length });
         setFase('ok');
-        setMensagem(`${dados.length} linha(s) carregadas.`);
+        setMensagem(`${intFmt(dados.length)} linha(s) carregadas.`);
       } catch {
-        setFase('erro');
-        setMensagem('Erro ao processar o arquivo.');
+        setFase('erro'); setMensagem('Erro ao processar o arquivo.');
       }
     };
     reader.onerror = () => { setFase('erro'); setMensagem('Falha ao ler o arquivo.'); };
@@ -472,56 +484,35 @@ function CardRefugo({ label, descricao, icon, id }) {
   }
 
   function handleLimpar() {
-    setFase('idle');
-    setMensagem('');
-    setPreview(null);
+    setFase('idle'); setMensagem(''); setPreview(null);
     if (inputRef.current) inputRef.current.value = '';
   }
 
   return (
-    <div style={s.card}>
-      <div style={s.cardHeader}>
-        <span style={{ fontSize: 22 }}>{icon}</span>
-        <div>
-          <div style={s.cardTitulo}>{label}</div>
-          <div style={s.cardDescricao}>{descricao}</div>
-        </div>
-      </div>
-
-      <div style={s.uploadArea}>
+    <CardBase icone={icon} titulo={label} descricao={descricao}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
         <input ref={inputRef} type="file" accept=".csv" id={`file-${id}`} style={{ display: 'none' }} onChange={handleArquivo} />
-        <label htmlFor={`file-${id}`} style={s.botaoUpload}>📂 Selecionar CSV</label>
-        {preview && <button onClick={handleLimpar} style={s.botaoLimpar}>✕ Limpar</button>}
+        <label htmlFor={`file-${id}`} style={s.btnUpload}>📂 Selecionar CSV</label>
+        {preview && <button onClick={handleLimpar} style={s.btnLimpar}>✕ Limpar</button>}
       </div>
 
-      {fase === 'ok' && <div style={{ ...s.alerta, ...s.alertaSucesso }}>✅ {mensagem}</div>}
-      {fase === 'erro' && <div style={{ ...s.alerta, ...s.alertaErro }}>❌ {mensagem}</div>}
-      {fase === 'carregando' && <div style={{ ...s.alerta, color: '#6b7280' }}>⏳ Processando...</div>}
+      {fase === 'ok'         && <Alerta tipo="sucesso">✅ {mensagem}</Alerta>}
+      {fase === 'erro'       && <Alerta tipo="erro">❌ {mensagem}</Alerta>}
+      {fase === 'carregando' && <Alerta tipo="neutro">⏳ Processando...</Alerta>}
 
       {preview && (
-        <div style={s.tabelaWrapper}>
-          <table style={s.tabela}>
-            <thead>
-              <tr>{preview.cabecalho.map((h, i) => <th key={i} style={s.th}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {preview.linhas.slice(0, 10).map((linha, i) => (
-                <tr key={i} style={i % 2 === 0 ? s.trPar : s.trImpar}>
-                  {preview.cabecalho.map((h, j) => <td key={j} style={s.td}>{linha[h]}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {preview.total > 10 && (
-            <div style={s.maisLinhas}>... e mais {preview.total - 10} linha(s) não exibidas</div>
-          )}
-        </div>
+        <TabelaPreview cabecalho={preview.cabecalho} linhas={preview.linhas} total={preview.total} />
       )}
 
       {fase === 'idle' && (
-        <div style={s.placeholder}>Selecione um arquivo .csv para visualizar</div>
+        <div style={{
+          padding: 24, textAlign: 'center',
+          color: D.textMuted, fontSize: 13, fontStyle: 'italic', fontFamily: D.font,
+        }}>
+          Selecione um arquivo .csv para visualizar
+        </div>
       )}
-    </div>
+    </CardBase>
   );
 }
 
@@ -529,162 +520,42 @@ function CardRefugo({ label, descricao, icon, id }) {
 
 export default function ImportarRelatoriosPrejuizo() {
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: '#1a1a2e', margin: 0, marginBottom: 6 }}>
-          Importar Relatórios
-        </h1>
-        <p style={{ fontSize: 14, color: '#6b7280', margin: 0 }}>
-          Selecione os arquivos CSV para cada relatório de prejuízo.
-        </p>
-      </div>
+    <PageContainer maxWidth={1100}>
+      <PageHeader
+        kicker="Gestão de Prejuízo"
+        titulo="Importar Relatórios"
+        sub="Selecione os arquivos CSV para cada relatório de prejuízo."
+      />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <Card030237 />
         <Card030147Hecto />
-        <CardRefugo
-          id="refugo_afericao"
-          label="Refugo fábrica - aferição"
-          descricao="Relatório de refugo de fábrica (aferição)"
-          icon="🏭"
-        />
-        <CardRefugo
-          id="refugo_cobranca"
-          label="Refugo fábrica - cobrança"
-          descricao="Relatório de refugo de fábrica (cobrança)"
-          icon="💰"
-        />
+        <CardRefugo id="refugo_afericao" label="Refugo fábrica - aferição" descricao="Relatório de refugo de fábrica (aferição)" icon="🏭" />
+        <CardRefugo id="refugo_cobranca" label="Refugo fábrica - cobrança" descricao="Relatório de refugo de fábrica (cobrança)" icon="💰" />
       </div>
-    </div>
+    </PageContainer>
   );
 }
 
-// ─── Estilos ──────────────────────────────────────────────────────────────────
+// ─── Estilos locais de botão ──────────────────────────────────────────────────
 
 const s = {
-  card: {
-    backgroundColor: '#fff',
-    border: '1px solid #e5e7eb',
-    borderRadius: 10,
-    padding: 24,
-    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+  btnUpload: {
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    padding: '9px 18px', background: D.red, color: '#fff',
+    borderRadius: 8, fontSize: 13, fontWeight: 600,
+    cursor: 'pointer', userSelect: 'none', fontFamily: D.font,
+    transition: D.transition,
   },
-  cardHeader: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: 14,
-    marginBottom: 18,
+  btnSalvar: {
+    padding: '9px 18px', background: D.green, color: '#fff',
+    border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600,
+    fontFamily: D.font, transition: D.transition,
   },
-  cardTitulo: {
-    fontSize: 16,
-    fontWeight: 700,
-    color: '#1a1a2e',
-    marginBottom: 2,
-  },
-  cardDescricao: {
-    fontSize: 13,
-    color: '#6b7280',
-  },
-  uploadArea: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-    flexWrap: 'wrap',
-  },
-  botaoUpload: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '8px 16px',
-    backgroundColor: '#E31837',
-    color: '#fff',
-    borderRadius: 6,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    userSelect: 'none',
-  },
-  botaoSalvar: {
-    padding: '8px 16px',
-    backgroundColor: '#16a34a',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 6,
-    fontSize: 13,
-    fontWeight: 600,
-  },
-  botaoLimpar: {
-    padding: '8px 14px',
-    backgroundColor: 'transparent',
-    border: '1px solid #d1d5db',
-    color: '#6b7280',
-    borderRadius: 6,
-    fontSize: 12,
-    cursor: 'pointer',
-    fontWeight: 500,
-  },
-  alerta: {
-    padding: '9px 14px',
-    borderRadius: 6,
-    fontSize: 13,
-    fontWeight: 500,
-    marginBottom: 12,
-  },
-  alertaSucesso: {
-    backgroundColor: '#dcfce7',
-    color: '#166534',
-    borderLeft: '4px solid #22c55e',
-  },
-  alertaErro: {
-    backgroundColor: '#fee2e2',
-    color: '#991b1b',
-    borderLeft: '4px solid #ef4444',
-  },
-  alertaInfo: {
-    backgroundColor: '#dbeafe',
-    color: '#1e40af',
-    borderLeft: '4px solid #3b82f6',
-  },
-  tabelaWrapper: {
-    overflowX: 'auto',
-    borderRadius: 6,
-    border: '1px solid #e5e7eb',
-    marginTop: 4,
-  },
-  tabela: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    fontSize: 12,
-  },
-  th: {
-    backgroundColor: '#1a1a2e',
-    color: '#fff',
-    padding: '8px 12px',
-    textAlign: 'left',
-    fontWeight: 600,
-    whiteSpace: 'nowrap',
-  },
-  trPar: { backgroundColor: '#fff' },
-  trImpar: { backgroundColor: '#f9fafb' },
-  td: {
-    padding: '7px 12px',
-    color: '#374151',
-    borderTop: '1px solid #f0f0f0',
-    whiteSpace: 'nowrap',
-  },
-  maisLinhas: {
-    padding: '8px 12px',
-    fontSize: 12,
-    color: '#9ca3af',
-    fontStyle: 'italic',
-    borderTop: '1px solid #e5e7eb',
-  },
-  placeholder: {
-    padding: '24px',
-    textAlign: 'center',
-    color: '#9ca3af',
-    fontSize: 13,
-    fontStyle: 'italic',
+  btnLimpar: {
+    padding: '8px 14px', background: 'transparent',
+    border: `1px solid ${D.border}`, color: D.textSec,
+    borderRadius: 8, fontSize: 12, cursor: 'pointer',
+    fontWeight: 500, fontFamily: D.font, transition: D.transition,
   },
 };

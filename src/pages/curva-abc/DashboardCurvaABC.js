@@ -108,17 +108,20 @@ export default function DashboardCurvaABC() {
     const unitLabel = metrica === 'plt' ? 'Plt/Dia' : 'Cx/Dia';
     const header  = ['Posição','Código','Nome',`${LABEL_METRICA[metrica]} ${LABEL_TIPO[tipo]}`,
                      'Curva Atual',`% Acumulado`,unitLabel,`Curva ${lblM2}`,`Curva ${lblM1}`];
-    const linhas  = produtosFiltrados.map(p => [
-      p._rank,
-      p.codigo,
-      `"${p.nome}"`,
-      p._val?.toFixed ? p._val.toFixed(3) : p._val,
-      p._curva,
-      p._percAcumulado?.toFixed(2),
-      p.diasComVendas > 0 ? (p._val / p.diasComVendas).toFixed(2) : '0',
-      mapaM2[p.codigo] ?? '',
-      mapaM1[p.codigo] ?? '',
-    ]);
+    const linhas  = produtosFiltrados.map(p => {
+      const diasEfetivos = p.diasComVendas > 0 ? p.diasComVendas : 1;
+      return [
+        p._rank,
+        p.codigo,
+        `"${p.nome}"`,
+        p._val?.toFixed ? p._val.toFixed(3) : p._val,
+        p._curva,
+        p._percAcumulado?.toFixed(2),
+        (p._val / diasEfetivos).toFixed(2),
+        mapaM2[p.codigo] ?? '',
+        mapaM1[p.codigo] ?? '',
+      ];
+    });
     const csv  = [header, ...linhas].map(r => r.join(';')).join('\r\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
     const url  = URL.createObjectURL(blob);
@@ -139,18 +142,25 @@ export default function DashboardCurvaABC() {
 
   async function carregarFatores() {
     try {
-      const snap = await getDocs(col('produtos'));
       const mapa = {};
-      snap.forEach(d => {
-        const data = d.data();
-        if (data.codigo && data.paletizacao) {
-          mapa[String(data.codigo)] = data.paletizacao;
-        }
-      });
+      // 1ª fonte: produtos_fatores (importado via relatório 01.11) — fatorPalete por código
+      try {
+        const snapFatores = await getDocs(col('produtos_fatores'));
+        snapFatores.forEach(d => {
+          const fator = d.data().fatorPalete;
+          if (d.id && fator) mapa[String(d.id)] = fator;
+        });
+      } catch (_) { /* coleção ainda não existe */ }
+      // 2ª fonte: paletizacao do Catálogo de Produtos — tem prioridade sobre 01.11
+      try {
+        const snapProd = await getDocs(col('produtos'));
+        snapProd.forEach(d => {
+          const data = d.data();
+          if (data.codigo && data.paletizacao) mapa[String(data.codigo)] = data.paletizacao;
+        });
+      } catch (_) { /* coleção ainda não existe */ }
       setFatores(mapa);
-    } catch (_) {
-      // coleção ainda não existe — plt ficará desabilitado
-    }
+    } catch (_) {}
   }
 
   async function carregarDados(ano, mes) {
@@ -438,8 +448,8 @@ export default function DashboardCurvaABC() {
                   <tr style={{ backgroundColor:'#1a1a2e' }}>
                     {[
                       ['Pos.','left',44], ['Cód_Descrição','left',null],
-                      [`${LABEL_METRICA[metrica]} (Mês)`,'right',null],
-                      [`${unit}/Dia`,'right',80],
+                      [metrica === 'cx' ? 'Cx Mês' : 'Plt Mês','right',null],
+                      [metrica === 'cx' ? 'Cx/Dia' : 'Plt/Dia','right',80],
                       ['Pareto','right',80],
                       [lblM2,'center',80], [lblM1,'center',80], ['Atual','center',80],
                     ].map(([label, align, width]) => (
@@ -455,7 +465,10 @@ export default function DashboardCurvaABC() {
                   {produtosPagina.map((p, i) => {
                     const curvaM1 = mapaM1[p.codigo] ?? null;
                     const curvaM2 = mapaM2[p.codigo] ?? null;
-                    const qtdDia  = p.diasComVendas > 0 ? p._val / p.diasComVendas : p._val;
+                    // Cx/Dia ou Plt/Dia = total / dias EFETIVOS de venda do produto
+                    // (não divide pelos dias do mês inteiro, porque produto pode não vender todo dia).
+                    const diasEfetivos = p.diasComVendas > 0 ? p.diasComVendas : 1;
+                    const qtdDia  = p._val / diasEfetivos;
                     return (
                       <tr key={p.codigo} style={{ borderBottom:'1px solid #f0f0f0', backgroundColor: i%2===0?'#fff':'#fafafa' }}>
                         <td style={{ ...td, color:'#aaa', fontSize:12 }}>{p._rank}</td>

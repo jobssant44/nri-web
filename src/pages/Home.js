@@ -5,6 +5,7 @@ import {
   Package, RefreshCw, TrendingUp, Warehouse, Map,
   Clock, TrendingDown, ClipboardList, Scale, Truck, Timer,
 } from 'lucide-react';
+import { D } from '../design';
 
 // ─── Mapa de módulos ──────────────────────────────────────────────────────────
 const MODULOS_INFO = {
@@ -38,8 +39,8 @@ function labelNivel(nivel) {
   return MAP[nivel] || nivel || 'Usuário';
 }
 
-// ─── Componente de relógio vivo ───────────────────────────────────────────────
-function Relogio() {
+// ─── Hook: relógio vivo ───────────────────────────────────────────────────────
+function useRelogio() {
   const [hora, setHora] = useState(new Date());
   useEffect(() => {
     const t = setInterval(() => setHora(new Date()), 1000);
@@ -59,8 +60,7 @@ function Relogio() {
 // ─── Página ───────────────────────────────────────────────────────────────────
 export default function HomePage() {
   const { usuario, empresaSelecionada, empresa, revendaSelecionada } = useUser();
-
-  const { hora, horaStr, dataStr } = Relogio();
+  const { hora, horaStr, dataStr } = useRelogio();
 
   const empAtual      = empresaSelecionada || empresa;
   const modulos       = empAtual?.modulos || [];
@@ -68,9 +68,9 @@ export default function HomePage() {
   const primeiroNome  = usuario?.nome?.split(' ')[0] || 'Usuário';
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+    <div style={{ maxWidth: 1100, margin: '0 auto', fontFamily: D.font }}>
 
-      {/* ── Hero ──────────────────────────────────────────────────── */}
+      {/* ── Hero (mantido como assinatura visual da Home) ──────────── */}
       <div style={{
         background: 'linear-gradient(135deg, #0c0c0c 0%, #161616 55%, #1a0a0e 100%)',
         borderRadius: 16,
@@ -79,6 +79,7 @@ export default function HomePage() {
         position: 'relative',
         overflow: 'hidden',
         boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
+        animation: 'wjs-fadeUp 0.3s ease both',
       }}>
         {/* Círculos decorativos */}
         <div style={{ position: 'absolute', right: -40, top: -40, width: 240, height: 240, borderRadius: '50%', background: 'rgba(227,24,55,0.06)', pointerEvents: 'none' }} />
@@ -89,7 +90,7 @@ export default function HomePage() {
           {/* Saudação */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: '#E31837', letterSpacing: 2, textTransform: 'uppercase' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: D.red, letterSpacing: 2, textTransform: 'uppercase' }}>
                 {empAtual?.nome || 'WJS'}
               </div>
               {revendaSelecionada && (
@@ -101,11 +102,11 @@ export default function HomePage() {
                 </>
               )}
             </div>
-            <h1 style={{ fontSize: 32, fontWeight: 800, color: '#fff', margin: 0, letterSpacing: -1, lineHeight: 1.15 }}>
+            <h1 style={{ fontSize: 32, fontWeight: 800, color: '#fff', margin: 0, letterSpacing: -1, lineHeight: 1.15, fontFamily: D.font }}>
               {saudacao(hora)}, {primeiroNome}
             </h1>
             <div style={{ fontSize: 13, color: '#555', marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ padding: '3px 9px', borderRadius: 5, backgroundColor: 'rgba(227,24,55,0.18)', color: '#E31837', fontSize: 10.5, fontWeight: 700, letterSpacing: 0.5 }}>
+              <span style={{ padding: '3px 9px', borderRadius: 5, backgroundColor: 'rgba(227,24,55,0.18)', color: D.red, fontSize: 10.5, fontWeight: 700, letterSpacing: 0.5 }}>
                 {labelNivel(usuario?.nivel)}
               </span>
               <span style={{ color: '#3a3a3a' }}>Warehouse Job System</span>
@@ -115,16 +116,12 @@ export default function HomePage() {
           {/* Relógio */}
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
             <div style={{
-              fontSize: 38,
-              fontWeight: 800,
-              color: '#d8d8d8',
-              letterSpacing: 4,
-              fontFamily: "'JetBrains Mono', 'Courier New', 'Lucida Console', monospace",
-              lineHeight: 1,
+              fontSize: 38, fontWeight: 800, color: '#d8d8d8',
+              letterSpacing: 4, fontFamily: D.mono, lineHeight: 1,
             }}>
               {horaStr}
             </div>
-            <div style={{ fontSize: 11.5, color: '#444', marginTop: 8, textTransform: 'capitalize', letterSpacing: 0.3 }}>
+            <div style={{ fontSize: 11.5, color: '#444', marginTop: 8, textTransform: 'capitalize', letterSpacing: 0.3, fontFamily: D.font }}>
               {dataStr}
             </div>
           </div>
@@ -136,9 +133,9 @@ export default function HomePage() {
           return (
             <div style={{ position: 'relative', marginTop: 24 }}>
               <div style={{ height: 2, backgroundColor: '#1e1e1e', borderRadius: 2, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, #E31837, #ff6b6b)', borderRadius: 2, transition: 'width 1s linear' }} />
+                <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg, ${D.red}, #ff6b6b)`, borderRadius: 2, transition: 'width 1s linear' }} />
               </div>
-              <div style={{ position: 'absolute', right: 0, top: 6, fontSize: 9, color: '#2a2a2a', letterSpacing: 1 }}>
+              <div style={{ position: 'absolute', right: 0, top: 6, fontSize: 9, color: '#2a2a2a', letterSpacing: 1, fontFamily: D.mono }}>
                 {pct}% do dia
               </div>
             </div>
@@ -146,10 +143,13 @@ export default function HomePage() {
         })()}
       </div>
 
-      {/* ── Módulos ───────────────────────────────────────────────── */}
-      <div>
-        <div style={{ fontSize: 9.5, fontWeight: 700, color: '#aaa', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 14 }}>
-          {modulosAtivos.length} módulo{modulosAtivos.length !== 1 ? 's' : ''} ativo{modulosAtivos.length !== 1 ? 's' : ''}
+      {/* ── Cards de módulos ──────────────────────────────────────── */}
+      <div style={{ animation: 'wjs-fadeUp 0.4s ease both' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <div style={{ width: 3, height: 14, background: D.red, borderRadius: 2 }} />
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2.5, textTransform: 'uppercase', color: D.textMuted, fontFamily: D.font }}>
+            {modulosAtivos.length} módulo{modulosAtivos.length !== 1 ? 's' : ''} ativo{modulosAtivos.length !== 1 ? 's' : ''}
+          </span>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(195px, 1fr))', gap: 12 }}>
@@ -159,34 +159,38 @@ export default function HomePage() {
               <Link key={mod.path + mod.label} to={mod.path} style={{ textDecoration: 'none' }}>
                 <div
                   style={{
-                    background: '#fff',
-                    border: '1px solid #ebebeb',
-                    borderRadius: 12,
+                    background: D.surface,
+                    border: `1px solid ${D.border}`,
+                    borderRadius: D.radius,
                     padding: '18px 20px',
                     cursor: 'pointer',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                    transition: 'all 0.18s cubic-bezier(0.16,1,0.3,1)',
+                    boxShadow: D.shadow,
+                    transition: D.transition,
                     height: '100%',
                     boxSizing: 'border-box',
                   }}
                   onMouseEnter={e => {
-                    e.currentTarget.style.borderColor = '#E31837';
+                    e.currentTarget.style.borderColor = D.red;
                     e.currentTarget.style.boxShadow = '0 6px 20px rgba(227,24,55,0.10)';
                     e.currentTarget.style.transform = 'translateY(-3px)';
                   }}
                   onMouseLeave={e => {
-                    e.currentTarget.style.borderColor = '#ebebeb';
-                    e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)';
+                    e.currentTarget.style.borderColor = D.border;
+                    e.currentTarget.style.boxShadow = D.shadow;
                     e.currentTarget.style.transform = 'translateY(0)';
                   }}
                 >
-                  <div style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: '#fff0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 13 }}>
-                    <Icon size={18} color="#E31837" strokeWidth={1.75} />
+                  <div style={{
+                    width: 38, height: 38, borderRadius: 10,
+                    backgroundColor: D.redSoft, border: `1px solid ${D.redBorder}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 13,
+                  }}>
+                    <Icon size={18} color={D.red} strokeWidth={1.75} />
                   </div>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: '#111', marginBottom: 5, lineHeight: 1.3 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: D.text, marginBottom: 5, lineHeight: 1.3, fontFamily: D.font }}>
                     {mod.label}
                   </div>
-                  <div style={{ fontSize: 11, color: '#aaa', lineHeight: 1.45 }}>
+                  <div style={{ fontSize: 11, color: D.textMuted, lineHeight: 1.45, fontFamily: D.font }}>
                     {mod.desc}
                   </div>
                 </div>
@@ -195,9 +199,12 @@ export default function HomePage() {
           })}
 
           {modulosAtivos.length === 0 && (
-            <div style={{ gridColumn: '1/-1', padding: '48px 24px', textAlign: 'center', background: '#fff', borderRadius: 12, border: '1px dashed #e0e0e0' }}>
-              <div style={{ fontSize: 28, marginBottom: 10 }}>📦</div>
-              <div style={{ fontSize: 13, color: '#aaa', lineHeight: 1.6 }}>
+            <div style={{
+              gridColumn: '1/-1', padding: '48px 24px', textAlign: 'center',
+              background: D.surface, borderRadius: D.radius,
+              border: `1px dashed ${D.border}`,
+            }}>
+              <div style={{ fontSize: 13, color: D.textMuted, lineHeight: 1.6, fontFamily: D.font }}>
                 Nenhum módulo ativo para esta empresa.<br />
                 Configure os módulos em <strong>Administração → Empresas</strong>.
               </div>

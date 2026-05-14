@@ -109,14 +109,14 @@ export default function ImportarVendasPage() {
 
         for (let i = 1; i < rows.length; i++) {
           const row = rows[i];
-          // Coluna F (row[5]) = Palete Fechado — só considera "Não"
-          if (String(row[5] || '').trim() !== 'Não') { ignoradas++; continue; }
+          // Coluna AC (row[28]) = Palete Fechado — só considera "Não"
+          if (String(row[28] || '').trim() !== 'Não') { ignoradas++; continue; }
 
-          const data     = parsearData(row[0]);
-          const codigo   = String(row[1] || '').trim();
-          const descricao = String(row[2] || '').trim();
-          const qtd      = parseFloat(String(row[3] || '0').replace(',', '.')) || 0;
-          const avulsas  = parseInt(String(row[4] || '0').replace(',', '.')) || 0;
+          const data      = parsearData(row[1]);                                   // B
+          const codigo    = String(row[19] || '').trim();                          // T
+          const descricao = String(row[20] || '').trim();                          // U
+          const qtd       = parseFloat(String(row[26] || '0').replace(',', '.')) || 0;  // AA
+          const avulsas   = parseInt(String(row[27] || '0').replace(',', '.')) || 0;    // AB
 
           if (!data || !codigo) continue;
 
@@ -138,7 +138,7 @@ export default function ImportarVendasPage() {
         }
 
         if (processadas === 0 && processadasPrepicking === 0) {
-          setMensagem('⚠️ Nenhuma linha válida encontrada (verifique se a coluna F contém "Não")');
+          setMensagem('⚠️ Nenhuma linha válida encontrada (verifique se a coluna AC contém "Não")');
           return;
         }
 

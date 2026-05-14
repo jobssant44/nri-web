@@ -150,11 +150,14 @@ const C = {
   redDim:      'rgba(227,24,55,0.10)',
   redBorder:   'rgba(227,24,55,0.35)',
   textPrimary: '#e8e8e8',
-  textSec:     '#4a4a4a',
-  textMuted:   '#252525',
-  hover:       'rgba(255,255,255,0.04)',
+  textSec:     '#a0a0a0',   // ↑ mais claro — itens não-ativos agora bem legíveis
+  textMuted:   '#3a3a3a',   // ↑ levemente mais claro
+  hover:       'rgba(255,255,255,0.06)',  // ↑ hover um pouco mais nítido
   inputBg:     '#141414',
   inputText:   '#c0c0c0',
+  // Continuidade com o fundo das páginas (D.bg / D.text do design system)
+  pageBg:      '#f8fafc',
+  pageText:    '#0f172a',
 };
 
 export default function Sidebar({ fixado, onToggleFixado }) {
@@ -381,12 +384,28 @@ export default function Sidebar({ fixado, onToggleFixado }) {
                     const ativo = loc.pathname === m.path;
                     return (
                       <Link key={m.path} to={m.path} style={{ textDecoration: 'none', display: 'block' }}>
-                        <div style={{ padding: '7px 14px 7px 36px', display: 'flex', alignItems: 'center', gap: 8, borderLeft: ativo ? `2px solid ${C.red}` : '2px solid transparent', backgroundColor: ativo ? C.redDim : 'transparent', transition: 'all 0.12s', cursor: 'pointer' }}
+                        <div style={{
+                          padding: '7px 14px 7px 36px',
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          borderLeft: ativo ? `2px solid ${C.red}` : '2px solid transparent',
+                          backgroundColor: ativo ? C.pageBg : 'transparent',
+                          transition: 'all 0.12s',
+                          cursor: 'pointer',
+                          // Estende o background até a borda direita da sidebar, criando a
+                          // sensação de continuidade com o conteúdo da página.
+                          marginRight: ativo ? -1 : 0,
+                        }}
                           onMouseEnter={e => { if (!ativo) e.currentTarget.style.backgroundColor = C.hover; }}
                           onMouseLeave={e => { if (!ativo) e.currentTarget.style.backgroundColor = 'transparent'; }}
                         >
                           <span style={{ fontSize: 5, color: ativo ? C.red : C.textMuted }}>●</span>
-                          <span style={{ fontSize: 11.5, color: ativo ? '#fff' : C.textSec, fontWeight: ativo ? 600 : 400, whiteSpace: 'nowrap', transition: 'color 0.12s' }}>
+                          <span style={{
+                            fontSize: 11.5,
+                            color: ativo ? C.pageText : C.textSec,
+                            fontWeight: ativo ? 600 : 400,
+                            whiteSpace: 'nowrap',
+                            transition: 'color 0.12s',
+                          }}>
                             {m.label}
                           </span>
                         </div>

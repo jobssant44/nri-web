@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebaseConfig';
+import { D } from '../design';
 
 export default function Login() {
   const [email,      setEmail]      = useState('');
@@ -66,8 +67,8 @@ export default function Login() {
                 placeholder="seu@email.com"
                 autoComplete="username"
                 style={s.input}
-                onFocus={e => { e.target.style.borderColor = '#E31837'; e.target.style.boxShadow = '0 0 0 3px rgba(227,24,55,0.10)'; }}
-                onBlur={e => { e.target.style.borderColor = '#ddddd8'; e.target.style.boxShadow = 'none'; }}
+                onFocus={e => { e.target.style.borderColor = D.red; e.target.style.boxShadow = '0 0 0 3px rgba(227,24,55,0.10)'; }}
+                onBlur={e => { e.target.style.borderColor = D.border; e.target.style.boxShadow = 'none'; }}
               />
             </div>
 
@@ -80,8 +81,8 @@ export default function Login() {
                 placeholder="Sua senha"
                 autoComplete="current-password"
                 style={s.input}
-                onFocus={e => { e.target.style.borderColor = '#E31837'; e.target.style.boxShadow = '0 0 0 3px rgba(227,24,55,0.10)'; }}
-                onBlur={e => { e.target.style.borderColor = '#ddddd8'; e.target.style.boxShadow = 'none'; }}
+                onFocus={e => { e.target.style.borderColor = D.red; e.target.style.boxShadow = '0 0 0 3px rgba(227,24,55,0.10)'; }}
+                onBlur={e => { e.target.style.borderColor = D.border; e.target.style.boxShadow = 'none'; }}
               />
             </div>
 
@@ -92,7 +93,7 @@ export default function Login() {
               disabled={carregando}
               style={{ ...s.btnEntrar, opacity: carregando ? 0.65 : 1, cursor: carregando ? 'not-allowed' : 'pointer' }}
               onMouseEnter={e => { if (!carregando) { e.currentTarget.style.backgroundColor = '#c41730'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(227,24,55,0.28)'; } }}
-              onMouseLeave={e => { if (!carregando) { e.currentTarget.style.backgroundColor = '#E31837'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; } }}
+              onMouseLeave={e => { if (!carregando) { e.currentTarget.style.backgroundColor = D.red; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; } }}
             >
               {carregando ? 'Entrando...' : 'Entrar →'}
             </button>
@@ -104,28 +105,23 @@ export default function Login() {
 }
 
 const s = {
-  root:        { minHeight: '100vh', display: 'flex', fontFamily: "'Bricolage Grotesque', sans-serif" },
+  root:        { minHeight: '100vh', display: 'flex', fontFamily: D.font },
   left:        { width: '52%', backgroundColor: '#0c0c0c', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden', padding: '48px 52px' },
-  bgMark:      { position: 'absolute', right: -40, bottom: -60, fontSize: 320, fontWeight: 800, color: 'rgba(227,24,55,0.04)', lineHeight: 1, userSelect: 'none', pointerEvents: 'none', fontFamily: "'Bricolage Grotesque', sans-serif", letterSpacing: -10 },
+  bgMark:      { position: 'absolute', right: -40, bottom: -60, fontSize: 320, fontWeight: 800, color: 'rgba(227,24,55,0.04)', lineHeight: 1, userSelect: 'none', pointerEvents: 'none', fontFamily: D.font, letterSpacing: -10 },
   leftContent: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' },
-  logo:        { fontSize: 52, fontWeight: 800, color: '#E31837', letterSpacing: -2, lineHeight: 1, fontFamily: "'Bricolage Grotesque', sans-serif" },
+  logo:        { fontSize: 52, fontWeight: 800, color: D.red, letterSpacing: -2, lineHeight: 1, fontFamily: D.font },
   logoSub:     { fontSize: 9, fontWeight: 600, color: '#3a3a3a', letterSpacing: 3, marginTop: 8, textTransform: 'uppercase' },
-  divisor:     { width: 48, height: 2, backgroundColor: '#E31837', marginTop: 28, marginBottom: 24 },
+  divisor:     { width: 48, height: 2, backgroundColor: D.red, marginTop: 28, marginBottom: 24 },
   tagline:     { fontSize: 15, color: '#5a5a5a', lineHeight: 1.7, margin: 0, fontWeight: 400 },
-  statsRow:    { display: 'flex', gap: 32, marginTop: 40 },
-  stat:        { display: 'flex', flexDirection: 'column', gap: 3 },
-  statNum:     { fontSize: 24, fontWeight: 700, color: '#e8e8e8', lineHeight: 1, fontFamily: "'JetBrains Mono', monospace" },
-  statTxt:     { fontSize: 9, color: '#3a3a3a', textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600 },
-  leftFooter:  { fontSize: 10, color: '#2a2a2a', letterSpacing: 1, textTransform: 'uppercase', fontWeight: 500 },
-  right:       { flex: 1, backgroundColor: '#f0f0eb', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 40px' },
+  right:       { flex: 1, backgroundColor: D.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 40px' },
   formBox:     { width: '100%', maxWidth: 360, display: 'flex', flexDirection: 'column', alignItems: 'flex-start' },
   formHeader:  { marginBottom: 36, width: '100%' },
-  formEyebrow: { fontSize: 9, fontWeight: 700, letterSpacing: 2.5, color: '#E31837', textTransform: 'uppercase', marginBottom: 10 },
-  formTitle:   { fontSize: 36, fontWeight: 800, color: '#0c0c0c', margin: 0, marginBottom: 8, letterSpacing: -1, lineHeight: 1.1, fontFamily: "'Bricolage Grotesque', sans-serif" },
-  formSub:     { fontSize: 13, color: '#888', margin: 0, fontWeight: 400, lineHeight: 1.5 },
+  formEyebrow: { fontSize: 10, fontWeight: 700, letterSpacing: 2.5, color: D.red, textTransform: 'uppercase', marginBottom: 10 },
+  formTitle:   { fontSize: 36, fontWeight: 800, color: D.text, margin: 0, marginBottom: 8, letterSpacing: -1, lineHeight: 1.1, fontFamily: D.font },
+  formSub:     { fontSize: 13, color: D.textMuted, margin: 0, fontWeight: 400, lineHeight: 1.5 },
   field:       { marginBottom: 18, width: '100%' },
-  label:       { display: 'block', fontSize: 10, fontWeight: 700, color: '#666', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 7 },
-  input:       { width: '100%', padding: '11px 14px', border: '1px solid #ddddd8', borderRadius: 5, fontSize: 14, backgroundColor: '#fff', color: '#111', outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s, box-shadow 0.15s', fontFamily: "'Bricolage Grotesque', sans-serif" },
-  erroBox:     { padding: '10px 14px', backgroundColor: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 5, fontSize: 12, color: '#991b1b', marginBottom: 16, fontWeight: 500 },
-  btnEntrar:   { width: '100%', padding: '13px', backgroundColor: '#E31837', color: '#fff', border: 'none', borderRadius: 5, fontSize: 14, fontWeight: 700, letterSpacing: 0.5, transition: 'all 0.18s', fontFamily: "'Bricolage Grotesque', sans-serif", marginTop: 6 },
+  label:       { display: 'block', fontSize: 10, fontWeight: 700, color: D.textSec, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 7 },
+  input:       { width: '100%', padding: '11px 14px', border: `1px solid ${D.border}`, borderRadius: 8, fontSize: 14, backgroundColor: D.surface, color: D.text, outline: 'none', boxSizing: 'border-box', transition: D.transition, fontFamily: D.font },
+  erroBox:     { padding: '10px 14px', backgroundColor: D.redSoft, border: `1px solid ${D.redBorder}`, borderRadius: 8, fontSize: 12, color: D.red, marginBottom: 16, fontWeight: 500 },
+  btnEntrar:   { width: '100%', padding: '13px', backgroundColor: D.red, color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, letterSpacing: 0.5, transition: D.transition, fontFamily: D.font, marginTop: 6 },
 };

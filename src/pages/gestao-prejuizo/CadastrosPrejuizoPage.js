@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { getDocs, addDoc, deleteDoc, setDoc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
+import {
+  D, sInput, sBtnPrimary,
+  PageContainer, PageHeader,
+} from '../../design';
 
 const ABAS = [
   { key: 'colaboradores', label: 'Colaborador',  colecao: 'prejuizo_colaboradores', campo: 'nome',  tipo: 'texto'  },
@@ -12,18 +16,16 @@ const ABAS = [
 function CardCadastro({ aba }) {
   const { col, docRef, rid } = useDb();
   const metaDocId = rid || 'global';
-  const [itens, setItens]         = useState([]);
-  const [input, setInput]         = useState('');
-  const [salvando, setSalvando]   = useState(false);
-  const [excluindo, setExcluindo] = useState(null);
-  const [editandoId, setEditandoId] = useState(null);
-  const [editValor, setEditValor]   = useState('');
+  const [itens, setItens]               = useState([]);
+  const [input, setInput]               = useState('');
+  const [salvando, setSalvando]         = useState(false);
+  const [excluindo, setExcluindo]       = useState(null);
+  const [editandoId, setEditandoId]     = useState(null);
+  const [editValor, setEditValor]       = useState('');
   const [salvandoEdit, setSalvandoEdit] = useState(false);
-  const [erro, setErro]           = useState('');
+  const [erro, setErro]                 = useState('');
 
-  useEffect(() => {
-    carregar();
-  }, [aba.colecao]);
+  useEffect(() => { carregar(); }, [aba.colecao]);
 
   async function carregar() {
     const snap = await getDocs(col(aba.colecao));
@@ -33,8 +35,7 @@ function CardCadastro({ aba }) {
   async function handleAdicionar() {
     const val = input.trim();
     if (!val) return;
-    setSalvando(true);
-    setErro('');
+    setSalvando(true); setErro('');
     try {
       if (aba.tipo === 'numero') {
         await setDoc(docRef(aba.colecao, metaDocId), { [aba.campo]: parseFloat(val.replace(',', '.')) });
@@ -53,7 +54,7 @@ function CardCadastro({ aba }) {
   async function handleExcluir(id) {
     setExcluindo(id);
     try {
-      await deleteDoc(docRef(aba.colecao,id));
+      await deleteDoc(docRef(aba.colecao, id));
       await carregar();
     } catch (e) {
       setErro('Erro ao excluir: ' + e.message);
@@ -66,7 +67,6 @@ function CardCadastro({ aba }) {
     setEditandoId(item.id);
     setEditValor(String(item[aba.campo] ?? ''));
   }
-
   function cancelarEdicao() {
     setEditandoId(null);
     setEditValor('');
@@ -75,14 +75,10 @@ function CardCadastro({ aba }) {
   async function handleSalvarEdicao(id) {
     const val = editValor.trim();
     if (!val) return;
-    setSalvandoEdit(true);
-    setErro('');
+    setSalvandoEdit(true); setErro('');
     try {
-      if (aba.tipo === 'numero') {
-        await setDoc(docRef(aba.colecao,id), { [aba.campo]: parseFloat(val.replace(',', '.')) });
-      } else {
-        await setDoc(docRef(aba.colecao,id), { [aba.campo]: val });
-      }
+      const valor = aba.tipo === 'numero' ? parseFloat(val.replace(',', '.')) : val;
+      await setDoc(docRef(aba.colecao, id), { [aba.campo]: valor });
       setEditandoId(null);
       setEditValor('');
       await carregar();
@@ -93,12 +89,21 @@ function CardCadastro({ aba }) {
     }
   }
 
-  const isMeta = aba.tipo === 'numero';
+  const isMeta    = aba.tipo === 'numero';
   const metaAtual = isMeta ? itens.find(i => i.id === metaDocId) : null;
 
   return (
-    <div style={s.card}>
-      <div style={s.cardTitulo}>{aba.label}</div>
+    <div style={{
+      background: D.surface, border: `1px solid ${D.border}`,
+      borderRadius: D.radius, padding: 24, boxShadow: D.shadow,
+      animation: 'wjs-fadeUp 0.3s ease both',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+        <div style={{ width: 3, height: 14, background: D.red, borderRadius: 2 }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: D.text, letterSpacing: -0.2, fontFamily: D.font }}>
+          {aba.label}
+        </span>
+      </div>
 
       {/* Formulário de adição */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -108,29 +113,42 @@ function CardCadastro({ aba }) {
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleAdicionar()}
-          style={s.input}
+          style={{ ...sInput, flex: 1 }}
         />
         <button
           onClick={handleAdicionar}
           disabled={salvando || !input.trim()}
-          style={{ ...s.botaoAdicionar, opacity: salvando || !input.trim() ? 0.6 : 1 }}
+          style={{ ...sBtnPrimary, opacity: (salvando || !input.trim()) ? 0.6 : 1, cursor: (salvando || !input.trim()) ? 'not-allowed' : 'pointer' }}
         >
           {salvando ? '...' : isMeta ? 'Salvar' : '+ Adicionar'}
         </button>
       </div>
 
-      {erro && <div style={s.erro}>{erro}</div>}
+      {erro && (
+        <div style={{
+          padding: '8px 12px', backgroundColor: D.redSoft,
+          color: D.red, borderRadius: 8, fontSize: 13,
+          marginBottom: 12, border: `1px solid ${D.redBorder}`,
+          fontFamily: D.font,
+        }}>
+          {erro}
+        </div>
+      )}
 
       {/* Lista */}
       {isMeta ? (
         <div>
-          <div style={s.metaBox}>
-            <span style={{ fontSize: 13, color: '#6b7280' }}>Meta atual:</span>
-            <span style={{ fontSize: 22, fontWeight: 800, color: '#1a1a2e', marginLeft: 10 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center',
+            padding: '16px 20px', backgroundColor: D.bg,
+            borderRadius: 8, border: `1px solid ${D.border}`,
+          }}>
+            <span style={{ fontSize: 13, color: D.textSec, fontFamily: D.font }}>Meta atual:</span>
+            <span style={{ fontSize: 22, fontWeight: 800, color: D.text, marginLeft: 10, fontFamily: D.mono }}>
               {metaAtual ? `R$ ${String(metaAtual.valor).replace('.', ',')} / HL` : '—'}
             </span>
-            {metaAtual && editandoId !== 'meta' && (
-              <button onClick={() => iniciarEdicao(metaAtual)} style={{ ...s.botaoEditar, marginLeft: 'auto' }}>
+            {metaAtual && editandoId !== metaDocId && (
+              <button onClick={() => iniciarEdicao(metaAtual)} style={btnAcao(D.textSec, 'auto')}>
                 ✏ Editar
               </button>
             )}
@@ -142,23 +160,30 @@ function CardCadastro({ aba }) {
                 value={editValor}
                 onChange={e => setEditValor(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleSalvarEdicao(metaDocId); if (e.key === 'Escape') cancelarEdicao(); }}
-                style={{ ...s.input, flex: 1 }}
+                style={{ ...sInput, flex: 1 }}
                 autoFocus
               />
-              <button onClick={() => handleSalvarEdicao(metaDocId)} disabled={salvandoEdit || !editValor.trim()} style={{ ...s.botaoAdicionar, opacity: salvandoEdit || !editValor.trim() ? 0.6 : 1 }}>
+              <button onClick={() => handleSalvarEdicao(metaDocId)} disabled={salvandoEdit || !editValor.trim()} style={{ ...sBtnPrimary, opacity: (salvandoEdit || !editValor.trim()) ? 0.6 : 1 }}>
                 {salvandoEdit ? '...' : 'Salvar'}
               </button>
-              <button onClick={cancelarEdicao} style={s.botaoCancelar}>Cancelar</button>
+              <button onClick={cancelarEdicao} style={btnSecundario}>Cancelar</button>
             </div>
           )}
         </div>
       ) : (
-        <div style={s.lista}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {itens.length === 0 ? (
-            <div style={s.vazio}>Nenhum {aba.label.toLowerCase()} cadastrado.</div>
+            <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 13, color: D.textMuted, fontStyle: 'italic', fontFamily: D.font }}>
+              Nenhum {aba.label.toLowerCase()} cadastrado.
+            </div>
           ) : (
             itens.map(item => (
-              <div key={item.id} style={s.item}>
+              <div key={item.id} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '9px 14px', backgroundColor: D.bg,
+                borderRadius: 8, border: `1px solid ${D.borderLight}`,
+                fontFamily: D.font,
+              }}>
                 {editandoId === item.id ? (
                   <>
                     <input
@@ -166,23 +191,25 @@ function CardCadastro({ aba }) {
                       value={editValor}
                       onChange={e => setEditValor(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') handleSalvarEdicao(item.id); if (e.key === 'Escape') cancelarEdicao(); }}
-                      style={{ ...s.input, flex: 1, padding: '5px 10px', fontSize: 13 }}
+                      style={{ ...sInput, flex: 1, padding: '5px 10px', fontSize: 13 }}
                       autoFocus
                     />
-                    <button onClick={() => handleSalvarEdicao(item.id)} disabled={salvandoEdit || !editValor.trim()} style={{ ...s.botaoAdicionar, padding: '5px 14px', fontSize: 12, opacity: salvandoEdit || !editValor.trim() ? 0.6 : 1 }}>
-                      {salvandoEdit ? '...' : 'Salvar'}
-                    </button>
-                    <button onClick={cancelarEdicao} style={s.botaoCancelar}>Cancelar</button>
+                    <div style={{ display: 'flex', gap: 6, marginLeft: 8 }}>
+                      <button onClick={() => handleSalvarEdicao(item.id)} disabled={salvandoEdit || !editValor.trim()} style={{ ...sBtnPrimary, padding: '5px 14px', fontSize: 12, opacity: (salvandoEdit || !editValor.trim()) ? 0.6 : 1 }}>
+                        {salvandoEdit ? '...' : 'Salvar'}
+                      </button>
+                      <button onClick={cancelarEdicao} style={btnSecundario}>Cancelar</button>
+                    </div>
                   </>
                 ) : (
                   <>
-                    <span style={{ fontSize: 13, color: '#1a1a2e' }}>{item[aba.campo]}</span>
+                    <span style={{ fontSize: 13, color: D.text }}>{item[aba.campo]}</span>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <button onClick={() => iniciarEdicao(item)} style={s.botaoEditar}>✏</button>
+                      <button onClick={() => iniciarEdicao(item)} style={btnAcao(D.textSec)}>✏</button>
                       <button
                         onClick={() => handleExcluir(item.id)}
                         disabled={excluindo === item.id}
-                        style={s.botaoExcluir}
+                        style={btnAcao(D.red)}
                       >
                         {excluindo === item.id ? '...' : '✕'}
                       </button>
@@ -203,33 +230,27 @@ export default function CadastrosPrejuizoPage() {
   const aba = ABAS.find(a => a.key === abaAtiva);
 
   return (
-    <div style={{ maxWidth: 700, margin: '0 auto' }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: '#1a1a2e', margin: 0, marginBottom: 4 }}>
-          Cadastros — Gestão de Prejuízo
-        </h1>
-        <p style={{ fontSize: 13, color: '#6b7280', margin: 0 }}>
-          Gerencie colaboradores, áreas, motivos e metas do WQI.
-        </p>
-      </div>
+    <PageContainer maxWidth={720}>
+      <PageHeader
+        kicker="Gestão de Prejuízo"
+        titulo="Cadastros"
+        sub="Gerencie colaboradores, áreas, motivos e metas do WQI."
+      />
 
       {/* Abas */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '2px solid #e5e7eb' }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `2px solid ${D.border}` }}>
         {ABAS.map(a => (
           <button
             key={a.key}
             onClick={() => setAbaAtiva(a.key)}
             style={{
-              padding: '9px 18px',
-              border: 'none',
-              background: 'none',
-              cursor: 'pointer',
-              fontSize: 13,
+              padding: '9px 18px', border: 'none', background: 'none', cursor: 'pointer',
+              fontSize: 13, fontFamily: D.font,
               fontWeight: abaAtiva === a.key ? 700 : 500,
-              color: abaAtiva === a.key ? '#E31837' : '#6b7280',
-              borderBottom: abaAtiva === a.key ? '2px solid #E31837' : '2px solid transparent',
+              color: abaAtiva === a.key ? D.red : D.textSec,
+              borderBottom: abaAtiva === a.key ? `2px solid ${D.red}` : '2px solid transparent',
               marginBottom: -2,
-              transition: 'all 0.15s',
+              transition: D.transition,
             }}
           >
             {a.label}
@@ -238,89 +259,32 @@ export default function CadastrosPrejuizoPage() {
       </div>
 
       <CardCadastro key={abaAtiva} aba={aba} />
-    </div>
+    </PageContainer>
   );
 }
 
-const s = {
-  card: {
-    backgroundColor: '#fff',
-    border: '1px solid #e5e7eb',
-    borderRadius: 10,
-    padding: 24,
-    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-  },
-  cardTitulo: {
-    fontSize: 15,
-    fontWeight: 700,
-    color: '#1a1a2e',
-    marginBottom: 16,
-  },
-  input: {
-    flex: 1,
-    padding: '8px 12px',
-    border: '1px solid #d1d5db',
-    borderRadius: 6,
-    fontSize: 13,
-    color: '#1a1a2e',
-    outline: 'none',
-  },
-  botaoAdicionar: {
-    padding: '8px 18px',
-    backgroundColor: '#E31837',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 6,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-  },
-  lista: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 6,
-  },
-  item: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '9px 12px',
-    backgroundColor: '#f9fafb',
-    borderRadius: 6,
-    border: '1px solid #f0f0f0',
-  },
-  botaoExcluir: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    color: '#9ca3af',
-    fontSize: 12,
-    padding: '2px 6px',
-    borderRadius: 4,
-    transition: 'color 0.12s',
-  },
-  vazio: {
-    padding: '20px 0',
-    textAlign: 'center',
-    fontSize: 13,
-    color: '#9ca3af',
-    fontStyle: 'italic',
-  },
-  metaBox: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: '16px 20px',
-    backgroundColor: '#f9fafb',
-    borderRadius: 8,
-    border: '1px solid #e5e7eb',
-  },
-  erro: {
-    padding: '8px 12px',
-    backgroundColor: '#fee2e2',
-    color: '#991b1b',
-    borderRadius: 6,
-    fontSize: 13,
-    marginBottom: 12,
-  },
+// ── helpers locais de botão ──
+const btnAcao = (cor, marginLeft) => ({
+  background: 'none',
+  border: 'none',
+  cursor: 'pointer',
+  color: cor,
+  fontSize: 12,
+  padding: '4px 8px',
+  borderRadius: 4,
+  transition: D.transition,
+  fontFamily: D.font,
+  marginLeft: marginLeft ?? undefined,
+});
+
+const btnSecundario = {
+  padding: '5px 14px',
+  background: 'transparent',
+  border: `1px solid ${D.border}`,
+  borderRadius: 8,
+  fontSize: 12,
+  color: D.textSec,
+  cursor: 'pointer',
+  fontWeight: 500,
+  fontFamily: D.font,
 };

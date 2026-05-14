@@ -106,6 +106,36 @@ function exportarCSV(linhasOrdenadas, diasMes, modo, mes) {
 const HOJE = new Date(); HOJE.setHours(0,0,0,0);
 const DIAS_SEMANA = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 
+// ── Helpers de horário aleatório para lançamentos retroativos ─────────────────
+// Ressuprimento: 40% Luiz (turno 23:35–01:45, atravessando meia-noite) /
+//                60% João Carlos (turno 02:00–06:25).
+// A hora sorteada determina o conferente automaticamente.
+function sorteioRessp() {
+  if (Math.random() < 0.4) {
+    // Luiz: 23:35 (1415 min) até 25:45 (1545 min, = 01:45 do dia seguinte)
+    const t = 1415 + Math.floor(Math.random() * (1545 - 1415 + 1));
+    const h = Math.floor(t / 60) % 24;
+    const m = t % 60;
+    return { hora: `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`, conferente: 'Luiz' };
+  }
+  // João Carlos: 02:00 (120 min) até 06:25 (385 min)
+  const t = 120 + Math.floor(Math.random() * (385 - 120 + 1));
+  const h = Math.floor(t / 60);
+  const m = t % 60;
+  return { hora: `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`, conferente: 'João Carlos' };
+}
+
+// Reabastecimento: hora aleatória em dois intervalos (peso proporcional ao tamanho).
+//   Range A: 09:15 (555 min) até 11:00 (660 min) = 105 minutos
+//   Range B: 12:15 (735 min) até 16:45 (1005 min) = 270 minutos
+function sorteioReab() {
+  const r = Math.floor(Math.random() * 375); // 105 + 270
+  const mins = r < 105 ? 555 + r : 735 + (r - 105);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+
 export default function PlanificadorIV() {
   const { col, docRef, db } = useDb();
   const [anoSelecionado, setAnoSelecionado]       = useSessionFilter('planiv:ano', '');
@@ -368,15 +398,16 @@ export default function PlanificadorIV() {
           if (jaExiste) continue;
 
           const [dd, mm, aaaa] = day.dateStr.split('/');
+          const hora = sorteioReab();
           registros.push({
             codProduto:      l.codProduto,
             nomeProduto:     l.nomeProduto,
             tipo:            'reabastecimento',
             qtdPaletes:      day.planejado,
-            conferente:      'Luiz Henrique',
+            conferente:      'Rodrigo',
             dataOperacional: day.dateStr,
-            hora:            '06:00',
-            criadoEm:        new Date(`${aaaa}-${mm}-${dd}T06:00:00`).toISOString(),
+            hora,
+            criadoEm:        new Date(`${aaaa}-${mm}-${dd}T${hora}:00`).toISOString(),
           });
         }
       }
@@ -410,7 +441,6 @@ export default function PlanificadorIV() {
     if (!window.confirm(`Gerar lançamentos retroativos de ressuprimento para ${nomeMes}?\n\nSerão inseridos os dias em que as vendas superaram a capacidade do Picking e que ainda não têm registro.`)) return;
 
     setLancandoRetroativoRessp(true);
-    const conferentes = ['Maciel Santana', 'Lael José'];
     try {
       const registros = [];
       for (const l of linhas) {
@@ -432,9 +462,7 @@ export default function PlanificadorIV() {
           const qtdPaletes = Math.ceil((day.vendas - capacidade) / cxPorPlt);
           if (qtdPaletes < 1) continue;
 
-          const horaNum  = 1 + Math.floor(Math.random() * 5); // 01–05
-          const hora     = `${String(horaNum).padStart(2, '0')}:00`;
-          const conferente = conferentes[Math.floor(Math.random() * conferentes.length)];
+          const { hora, conferente } = sorteioRessp();
           const [dd, mm, aaaa] = day.dateStr.split('/');
 
           registros.push({
@@ -494,7 +522,6 @@ export default function PlanificadorIV() {
       }
 
       // ── PASSO 2: inserir ressuprimentos (skip se já existe) ──────────────────
-      const conferentes = ['Maciel Santana', 'Lael José'];
       const resspRegistros = [];
       for (const l of linhas) {
         const { codProduto, nomeProduto, cxPorPlt, espacosPalete, daysData } = l;
@@ -511,8 +538,7 @@ export default function PlanificadorIV() {
           if (jaExiste) continue;
           const qtdPaletes = Math.ceil((day.vendas - capacidade) / cxPorPlt);
           if (qtdPaletes < 1) continue;
-          const hora = `${String(1 + Math.floor(Math.random() * 5)).padStart(2,'0')}:00`;
-          const conferente = conferentes[Math.floor(Math.random() * conferentes.length)];
+          const { hora, conferente } = sorteioRessp();
           const [dd, mm, aaaa] = day.dateStr.split('/');
           resspRegistros.push({ codProduto, nomeProduto, tipo: 'ressuprimento', qtdPaletes, conferente, dataOperacional: day.dateStr, hora, criadoEm: new Date(`${aaaa}-${mm}-${dd}T${hora}:00`).toISOString() });
         }
@@ -575,7 +601,8 @@ export default function PlanificadorIV() {
           if (ressp > 0) acc = Math.max(0, acc - ressp * cxPorPlt);
           if (planejado !== null && planejado >= 1) {
             const [dd, mm, aaaa] = dateStr.split('/');
-            reabRegistros.push({ codProduto: cod, nomeProduto: cfg.nomeProduto || cod, tipo: 'reabastecimento', qtdPaletes: planejado, conferente: 'Luiz Henrique', dataOperacional: dateStr, hora: '06:00', criadoEm: new Date(`${aaaa}-${mm}-${dd}T06:00:00`).toISOString() });
+            const hora = sorteioReab();
+            reabRegistros.push({ codProduto: cod, nomeProduto: cfg.nomeProduto || cod, tipo: 'reabastecimento', qtdPaletes: planejado, conferente: 'Rodrigo', dataOperacional: dateStr, hora, criadoEm: new Date(`${aaaa}-${mm}-${dd}T${hora}:00`).toISOString() });
           }
         }
       }
