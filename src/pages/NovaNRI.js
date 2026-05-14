@@ -92,11 +92,28 @@ export default function NovaNRI() {
 
   function adicionarProduto() {
     if (!codProduto || !nomeProduto) { alert('Selecione um produto.'); return; }
+
+    // ── Validação rigorosa: o par código+nome deve existir EXATAMENTE na base ──
+    // Evita que o usuário digite um código válido com nome diferente (ou vice-versa)
+    // e adicione produto "fantasma". Compara case-insensitive e ignora espaços nas pontas.
+    const produtoBase = baseProdutos.find(p =>
+      String(p.codigo).trim()                        === String(codProduto).trim() &&
+      String(p.descricao || '').trim().toUpperCase() === nomeProduto.trim().toUpperCase()
+    );
+    if (!produtoBase) {
+      alert(
+        '❌ Produto inválido!\n\n' +
+        'O código e o nome digitados não correspondem a nenhum produto da base.\n\n' +
+        'Use a busca para selecionar um produto válido (clique em uma das sugestões).'
+      );
+      return;
+    }
+
     if (!qtdPlt && !qtdCx) { alert('Preencha ao menos Qtd PLT ou Qtd CX.'); return; }
     if (!validarData(validade)) { alert('Data de validade inválida.'); return; }
-    const produtoBase = baseProdutos.find(p => String(p.codigo) === String(codProduto));
-    const cxPorPlt = produtoBase?.paletizacao || produtoBase?.cxPorPlt || '';
-    const curva = curvaMap[String(codProduto)] || null;
+
+    const cxPorPlt = produtoBase.paletizacao || produtoBase.cxPorPlt || '';
+    const curva    = curvaMap[String(codProduto)] || null;
     setProdutos([...produtos, { codProduto, nomeProduto, qtdPlt, qtdCx, validade, cxPorPlt, curva }]);
     setCodProduto(''); setNomeProduto(''); setQtdPlt(''); setQtdCx(''); setValidade(''); setSugestoes([]);
   }
