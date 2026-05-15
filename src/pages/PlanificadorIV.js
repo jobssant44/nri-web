@@ -125,15 +125,192 @@ function sorteioRessp() {
   return { hora: `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`, conferente: 'João Carlos' };
 }
 
-// Reabastecimento: hora aleatória em dois intervalos (peso proporcional ao tamanho).
-//   Range A: 09:15 (555 min) até 11:00 (660 min) = 105 minutos
-//   Range B: 12:15 (735 min) até 16:45 (1005 min) = 270 minutos
-function sorteioReab() {
-  const r = Math.floor(Math.random() * 375); // 105 + 270
-  const mins = r < 105 ? 555 + r : 735 + (r - 105);
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+// Reabastecimento: gerador de horas agrupadas por dia.
+//
+// Janela total da tarde: 14:15 (855 min) até 16:25 (985 min).
+// Por DIA, sorteia uma "base" em [14:15, 16:20] (reserva 5 min pra cima); cada
+// reab daquele mesmo dia recebe uma hora em [base, base + 5 min]. Simula o
+// cenário real onde todos os reabs do dia são registrados quase ao mesmo tempo.
+//
+// Uso: instancie um sorteador POR LOTE de inserção (uma função independente).
+// const sorteioReab = criarSorteadorReabDoMes();
+// const hora = sorteioReab(dateStr);  // mesmo dateStr → mesma janela de 5min
+function criarSorteadorReabDoMes() {
+  const basesPorDia = new Map();
+  return function sorteioReabParaDia(dateStr) {
+    if (!basesPorDia.has(dateStr)) {
+      // 855 a 980 min = 14:15 a 16:20 (5 min de margem pra última hora caber em 16:25)
+      const base = 855 + Math.floor(Math.random() * (980 - 855 + 1));
+      basesPorDia.set(dateStr, base);
+    }
+    const base = basesPorDia.get(dateStr);
+    const m = base + Math.floor(Math.random() * 6); // 0–5 min depois
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIMULAÇÃO DIA-A-DIA DO SALDO NO PICKING
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Modelo: o picking é um "tanque" com capacidade física = espacosPalete × cxPorPlt.
+// Antes usávamos um acumulador de dívida que IGNORAVA o estado físico do picking
+// (problema: ressuprimento só disparava quando venda > capacidade total, mesmo
+// que o saldo herdado do dia anterior + reab planejado não cobrisse as vendas).
+//
+// Agora simulamos cada dia em ordem cronológica:
+//   1. Reab chega (modo 'simular_passado' usa real; 'planejar' calcula via acc de paletes)
+//   2. Aplica vendas do dia
+//   3. Se saldo < 0 → ressup pra fechar a conta
+//
+// O modo 'simular_passado' é usado pra reconstruir o saldo final do mês anterior
+// (com reab/ressup REAIS do Firebase). O 'planejar' é usado pro mês atual.
+//
+function simularPicking({
+  diasMes,            // [ 'DD/MM/AAAA', ... ]
+  vendasPorDia,       // { 'DD/MM/AAAA': qtdCx }      — vendas do produto
+  reabRealPorDia,     // { 'DD/MM/AAAA': paletes }    — só usado em 'simular_passado'
+  ressupRealPorDia,   // { 'DD/MM/AAAA': paletes }    — só usado em 'simular_passado'
+  cxPorPlt,
+  espacosPalete,
+  saldoInicial,
+  modo,               // 'simular_passado' | 'planejar'
+  dataLimitePassado,  // Date — qualquer dia ≤ essa data é tratado como passado.
+                      // Default = HOJE. Use uma data > HOJE pra simular dias futuros
+                      // que já têm vendas registradas (ex: import de forecast).
+}) {
+  const capacidade = espacosPalete * cxPorPlt;
+  let saldo        = saldoInicial;
+  let accPaletes   = 0;
+  const porDia     = {};
+  const limite     = dataLimitePassado || HOJE;
+
+  for (const dateStr of diasMes) {
+    const d        = parsearData(dateStr);
+    if (!d) continue;
+    const isFuture = d > limite;
+    const isDom    = d.getDay() === 0;
+
+    if (isFuture) {
+      porDia[dateStr] = { isFuture: true, isDom, saldoFimDia: saldo, vendasHoje: null, vendasOntem: null, reabPlanejado: null, ressupNecessario: null, reabReal: null, ressupReal: null, dataRef: null };
+      continue;
+    }
+
+    if (isDom) {
+      // Domingo: sem operação. Saldo passa intacto pra segunda. Se houver
+      // ressup REAL registrado (raro), aplica.
+      if (modo === 'simular_passado') {
+        const ressupReal = ressupRealPorDia?.[dateStr] || 0;
+        if (ressupReal > 0) saldo = Math.min(capacidade, saldo + ressupReal * cxPorPlt);
+      }
+      porDia[dateStr] = { isFuture: false, isDom: true, saldoFimDia: saldo, vendasHoje: null, vendasOntem: null, reabPlanejado: null, ressupNecessario: null, reabReal: null, ressupReal: null, dataRef: null };
+      continue;
+    }
+
+    // ── Dia útil ────────────────────────────────────────────────────────────
+
+    // Saldo no início do dia (antes de qualquer movimentação) — herdado do dia anterior
+    const saldoInicioDia = saldo;
+
+    // Vendas do dia operacional ANTERIOR (D-1, ou D-2 se hoje é segunda) — base do reab do dia atual
+    const ref = new Date(d);
+    ref.setDate(ref.getDate() - (d.getDay() === 1 ? 2 : 1));
+    const dataRef = formatarData(ref);
+    let vendasOntem = vendasPorDia?.[dataRef] ?? null;
+    if (vendasOntem === null && ref.getDay() === 1) vendasOntem = 0; // segunda sem dado → trata 0
+
+    // 1. Reab que chega no início do dia (entregue na noite anterior)
+    let reabAplicado = 0;
+    if (modo === 'simular_passado') {
+      reabAplicado = reabRealPorDia?.[dateStr] || 0;
+    } else {
+      // 'planejar': acumulador em paletes a partir das vendas
+      if (vendasOntem !== null && cxPorPlt > 0) accPaletes += vendasOntem / cxPorPlt;
+      if (accPaletes >= 1 && cxPorPlt > 0) {
+        const espacoLivre         = Math.max(0, capacidade - saldo);
+        const maxPaletesPorEspaco = Math.floor(espacoLivre / cxPorPlt);
+        const maxPorConfig        = espacosPalete > 0 ? espacosPalete : Infinity;
+        reabAplicado = Math.min(Math.floor(accPaletes), maxPaletesPorEspaco, maxPorConfig);
+        accPaletes -= reabAplicado;
+      }
+    }
+    saldo = Math.min(capacidade, saldo + reabAplicado * cxPorPlt);
+
+    // 2. Vendas do dia
+    const vendasHoje = vendasPorDia?.[dateStr] ?? null;
+    if (vendasHoje !== null) saldo -= vendasHoje;
+
+    // 3. Ressuprimento se saldo ficou negativo
+    let ressupAplicado = 0;
+    if (modo === 'simular_passado') {
+      ressupAplicado = ressupRealPorDia?.[dateStr] || 0;
+      saldo += ressupAplicado * cxPorPlt;
+      saldo = Math.max(saldo, 0); // saldo físico não pode ser negativo (gap não recuperado = 0)
+    } else if (cxPorPlt > 0 && saldo < 0) {
+      ressupAplicado = Math.ceil(-saldo / cxPorPlt);
+      saldo += ressupAplicado * cxPorPlt;
+      accPaletes = Math.max(0, accPaletes - ressupAplicado); // ressup também paga dívida
+    }
+
+    porDia[dateStr] = {
+      isFuture: false,
+      isDom:    false,
+      vendasOntem,
+      vendasHoje,
+      dataRef,
+      reabPlanejado:    modo === 'planejar'         ? reabAplicado   : null,
+      ressupNecessario: modo === 'planejar'         ? ressupAplicado : null,
+      reabReal:         modo === 'simular_passado'  ? reabAplicado   : null,
+      ressupReal:       modo === 'simular_passado'  ? ressupAplicado : null,
+      saldoInicioDia,
+      saldoFimDia:      saldo,
+    };
+  }
+
+  return { saldoFinalMes: saldo, porDia };
+}
+
+// Obtém o saldo inicial do dia 1 do mês alvo (mes/ano).
+// Olha 1 mês para trás: se houver vendas, simula com reabs/ressups REAIS do
+// Firebase pra obter o saldo final. Caso contrário (primeiro mês com dados,
+// ou mês anterior sem vendas) assume picking cheio = capacidade.
+function obterSaldoInicialMes({ codProduto, ano, mes, cxPorPlt, espacosPalete, vendasMap, abastecimentos, dataLimitePassado }) {
+  const capacidade = espacosPalete * cxPorPlt;
+  if (cxPorPlt <= 0 || espacosPalete <= 0) return 0;
+
+  let mesAnt = mes - 1, anoAnt = ano;
+  if (mesAnt === 0) { mesAnt = 12; anoAnt -= 1; }
+  const mesAntKey   = `${String(mesAnt).padStart(2, '0')}/${anoAnt}`;
+  const diasMesAnt  = diasDoMes(mesAntKey);
+
+  const vendasProduto    = vendasMap?.[codProduto] || {};
+  const temVendasMesAnt  = diasMesAnt.some(d => vendasProduto[d] !== undefined);
+  if (!temVendasMesAnt) return capacidade;
+
+  // Reabs/ressups REAIS do produto no mês anterior
+  const reabReal = {}, ressupReal = {};
+  abastecimentos.forEach(a => {
+    if (String(a.codProduto) !== String(codProduto)) return;
+    if (!diasMesAnt.includes(a.dataOperacional)) return;
+    const target = a.tipo === 'reabastecimento' ? reabReal : ressupReal;
+    target[a.dataOperacional] = (target[a.dataOperacional] || 0) + (a.qtdPaletes || 1);
+  });
+
+  const { saldoFinalMes } = simularPicking({
+    diasMes:          diasMesAnt,
+    vendasPorDia:     vendasProduto,
+    reabRealPorDia:   reabReal,
+    ressupRealPorDia: ressupReal,
+    cxPorPlt,
+    espacosPalete,
+    saldoInicial:     capacidade,   // sem recursão profunda — mês N-1 sempre começa cheio
+    modo:             'simular_passado',
+    dataLimitePassado,
+  });
+
+  return saldoFinalMes;
 }
 
 export default function PlanificadorIV() {
@@ -266,83 +443,91 @@ export default function PlanificadorIV() {
     }
   });
 
-  // ===== LINHAS (modelo acumulado de depleção) =====
+  // ===== LINHAS (modelo de saldo no picking — dia a dia) =====
+  //
+  // Cada linha = um SKU do picking_config. Pra cada dia simulamos:
+  //   - reab planejado (modelo decide quantos paletes precisa entregar)
+  //   - ressup necessário (quando saldo ficaria negativo após vendas)
+  //   - saldo no fim do dia
+  //
+  // O saldo inicial do dia 1 vem de obterSaldoInicialMes (que simula o mês
+  // anterior com reabs/ressups REAIS, ou usa capacidade cheia se for o primeiro
+  // mês com dados).
+  //
+  // Última data com vendas em QUALQUER produto do vendasMap. Dias até essa data
+  // são tratados como "passado" pela simulação, mesmo que > HOJE no calendário
+  // (cenário: usuário importou dados que cobrem dias futuros — ainda assim
+  // queremos simular reab/ressup pra esses dias com vendas registradas).
+  const dataLimitePassado = (() => {
+    let max = null;
+    for (const cod of Object.keys(vendasMap)) {
+      const vendasProd = vendasMap[cod];
+      for (const dateStr of Object.keys(vendasProd)) {
+        if ((vendasProd[dateStr] ?? 0) <= 0) continue;
+        const d = parsearData(dateStr);
+        if (d && (!max || d > max)) max = d;
+      }
+    }
+    return (max && max > HOJE) ? max : HOJE;
+  })();
+
   const linhas = pickingConfig.map(cfg => {
     const cod           = String(cfg.codProduto);
     const cxPorPlt      = parseInt(cfg.cxPorPlt) || 0;
     const espacosPalete = parseInt(cfg.espacosPalete) || 0;
+
+    const reabReal   = reabMap[cod]  || {};
+    const ressupReal = resspMap[cod] || {};
+
+    const anoNum = parseInt(anoSelecionado) || 0;
+    const mesNum = parseInt(mesNumSelecionado) || 0;
+
+    const saldoInicial = obterSaldoInicialMes({
+      codProduto: cod, ano: anoNum, mes: mesNum,
+      cxPorPlt, espacosPalete, vendasMap, abastecimentos,
+      dataLimitePassado,
+    });
+
+    const simulacao = simularPicking({
+      diasMes,
+      vendasPorDia:     vendasMap[cod] || {},
+      reabRealPorDia:   reabReal,
+      ressupRealPorDia: ressupReal,
+      cxPorPlt,
+      espacosPalete,
+      saldoInicial,
+      modo: 'planejar',
+      dataLimitePassado,
+    });
+
     let totalReab = 0, totalRessp = 0;
-    let depletionAccum = 0; // picking começa cheio
-
-    const daysData = [];
-    for (const dateStr of diasMes) {
-      const d        = parsearData(dateStr);
-      const isFuture = d > HOJE;
-      const isDom    = d.getDay() === 0;
-      const real     = reabMap[cod]?.[dateStr] || 0;
-      const ressp    = resspMap[cod]?.[dateStr] || 0;
-
+    const daysData = diasMes.map(dateStr => {
+      const sim    = simulacao.porDia[dateStr] || {};
+      const real   = reabReal[dateStr]   || 0;
+      const ressp  = ressupReal[dateStr] || 0;
       totalReab  += real;
       totalRessp += ressp;
 
-      if (isDom || isFuture) {
-        if (!isFuture && cxPorPlt > 0) {
-          if (real > 0)  depletionAccum = Math.max(0, depletionAccum - real  * cxPorPlt);
-          if (ressp > 0) depletionAccum = Math.max(0, depletionAccum - ressp * cxPorPlt);
-        }
-        daysData.push({ dateStr, isDom, isFuture, planejado: null, real, ressp, gap: null, vendas: null, dataRef: null, depletionBefore: depletionAccum });
-        continue;
-      }
+      const planejado = sim.reabPlanejado;        // null em dom/futuro, número em dia útil
+      return {
+        dateStr,
+        isDom:            !!sim.isDom,
+        isFuture:         !!sim.isFuture,
+        planejado,
+        real,
+        ressp,
+        ressupNecessario: sim.ressupNecessario ?? null,  // NOVO: ressup calculado pelo modelo
+        gap:              (planejado !== null && planejado !== undefined) ? real - planejado : null,
+        vendas:           sim.vendasOntem ?? null,        // venda do dia operacional anterior (base do reab do dia)
+        vendasHoje:       sim.vendasHoje  ?? null,        // venda do PRÓPRIO dia (usada no cálculo do ressup)
+        dataRef:          sim.dataRef     ?? null,
+        saldoInicioDia:   sim.saldoInicioDia ?? null,     // NOVO: saldo no início do dia (antes do reab)
+        saldoFimDia:      sim.saldoFimDia    ?? null,
+        depletionBefore:  sim.saldoFimDia    ?? null,     // mantido pra compat com tooltips/exports antigos
+      };
+    });
 
-      const ref     = new Date(d);
-      ref.setDate(ref.getDate() - (d.getDay() === 1 ? 2 : 1));
-      const dataRef = formatarData(ref);
-      let vendas    = vendasMap[cod]?.[dataRef] ?? null;
-      // Segunda sem dado no relatório → tratar como 0 para que terça não fique em branco
-      if (vendas === null && ref.getDay() === 1) vendas = 0;
-
-      const depletionBefore = depletionAccum;
-
-      // Acumula depleção do dia
-      if (vendas !== null && cxPorPlt > 0) depletionAccum += vendas;
-
-      let planejado = null;
-      if (cxPorPlt > 0 && vendas !== null) {
-        if (depletionAccum >= cxPorPlt) {
-          // Cap em espacosPalete: picking não comporta mais do que isso de uma vez.
-          // O excesso fica no acumulador para o dia seguinte.
-          const maxP = espacosPalete > 0 ? espacosPalete : Infinity;
-          planejado      = Math.min(Math.floor(depletionAccum / cxPorPlt), maxP);
-          depletionAccum = depletionAccum - planejado * cxPorPlt;
-        } else {
-          planejado = 0;
-        }
-      }
-
-      // Ajusta acumulador pela diferença entre real e planejado.
-      // Se real = planejado, o acumulador já foi tratado no passo anterior (carry-forward).
-      // Se real > planejado, paletes extras reduzem o acumulador (estoque além do plano).
-      // Se real < planejado, o déficit aumenta o acumulador (paletes não entregues).
-      if (cxPorPlt > 0) {
-        if (planejado !== null) {
-          const extra = real - planejado;
-          if (extra !== 0) depletionAccum = Math.max(0, depletionAccum - extra * cxPorPlt);
-        } else if (real > 0) {
-          depletionAccum = Math.max(0, depletionAccum - real * cxPorPlt);
-        }
-      }
-
-      // Ressuprimento noturno (01h–05h) abastece o picking antes do turno →
-      // reduz o acumulador, diminuindo a necessidade de reabastecimento nos dias seguintes.
-      if (ressp > 0 && cxPorPlt > 0) {
-        depletionAccum = Math.max(0, depletionAccum - ressp * cxPorPlt);
-      }
-
-      const gap = planejado !== null ? real - planejado : null;
-      daysData.push({ dateStr, isDom, isFuture, planejado, real, ressp, gap, vendas, dataRef, depletionBefore });
-    }
-
-    return { codProduto: cod, nomeProduto: cfg.nomeProduto || cod, espacosPalete, cxPorPlt, daysData, totalReab, totalRessp };
+    return { codProduto: cod, nomeProduto: cfg.nomeProduto || cod, espacosPalete, cxPorPlt, daysData, totalReab, totalRessp, saldoInicial };
   });
 
   // ===== FILTRO + ORDENAÇÃO =====
@@ -385,6 +570,7 @@ export default function PlanificadorIV() {
 
     setLancandoRetroativo(true);
     try {
+      const sorteioReab = criarSorteadorReabDoMes(); // todos os reabs de um mesmo dia ficam numa janela de 5 min
       const registros = [];
       for (const l of linhas) {
         for (const day of l.daysData) {
@@ -398,7 +584,7 @@ export default function PlanificadorIV() {
           if (jaExiste) continue;
 
           const [dd, mm, aaaa] = day.dateStr.split('/');
-          const hora = sorteioReab();
+          const hora = sorteioReab(day.dateStr);
           registros.push({
             codProduto:      l.codProduto,
             nomeProduto:     l.nomeProduto,
@@ -446,11 +632,14 @@ export default function PlanificadorIV() {
       for (const l of linhas) {
         const { codProduto, nomeProduto, cxPorPlt, espacosPalete, daysData } = l;
         if (!cxPorPlt || !espacosPalete) continue;
-        const capacidade = espacosPalete * cxPorPlt;
 
         for (const day of daysData) {
-          if (day.isDom || day.isFuture || day.vendas === null) continue;
-          if (day.vendas <= capacidade) continue;
+          if (day.isDom || day.isFuture) continue;
+          // Modelo novo: usa o ressup calculado pela simulação dia-a-dia do saldo no picking.
+          // Detecta gaps mesmo quando vendas ≤ capacidade total, desde que o saldo
+          // herdado do dia anterior + reab planejado não cubra as vendas do dia.
+          const qtdPaletes = day.ressupNecessario || 0;
+          if (qtdPaletes < 1) continue;
 
           const jaExiste = abastecimentos.some(a =>
             String(a.codProduto) === codProduto &&
@@ -458,9 +647,6 @@ export default function PlanificadorIV() {
             a.tipo === 'ressuprimento'
           );
           if (jaExiste) continue;
-
-          const qtdPaletes = Math.ceil((day.vendas - capacidade) / cxPorPlt);
-          if (qtdPaletes < 1) continue;
 
           const { hora, conferente } = sorteioRessp();
           const [dd, mm, aaaa] = day.dateStr.split('/');
@@ -522,22 +708,21 @@ export default function PlanificadorIV() {
       }
 
       // ── PASSO 2: inserir ressuprimentos (skip se já existe) ──────────────────
+      // Usa o novo modelo de simulação dia-a-dia (via `daysData[].ressupNecessario`).
       const resspRegistros = [];
       for (const l of linhas) {
         const { codProduto, nomeProduto, cxPorPlt, espacosPalete, daysData } = l;
         if (!cxPorPlt || !espacosPalete) continue;
-        const capacidade = espacosPalete * cxPorPlt;
         for (const day of daysData) {
-          if (day.isDom || day.isFuture || day.vendas === null) continue;
-          if (day.vendas <= capacidade) continue;
+          if (day.isDom || day.isFuture) continue;
+          const qtdPaletes = day.ressupNecessario || 0;
+          if (qtdPaletes < 1) continue;
           const jaExiste = abastecimentos.some(a =>
             String(a.codProduto) === codProduto &&
             a.dataOperacional === day.dateStr &&
             a.tipo === 'ressuprimento'
           );
           if (jaExiste) continue;
-          const qtdPaletes = Math.ceil((day.vendas - capacidade) / cxPorPlt);
-          if (qtdPaletes < 1) continue;
           const { hora, conferente } = sorteioRessp();
           const [dd, mm, aaaa] = day.dateStr.split('/');
           resspRegistros.push({ codProduto, nomeProduto, tipo: 'ressuprimento', qtdPaletes, conferente, dataOperacional: day.dateStr, hora, criadoEm: new Date(`${aaaa}-${mm}-${dd}T${hora}:00`).toISOString() });
@@ -567,43 +752,59 @@ export default function PlanificadorIV() {
         }
       });
 
-      // ── PASSO 4: modelo de depleção — reabastecimentos foram apagados no Passo 1,
-      // portanto não existe "real" para corrigir o acumulador. Usar apenas planejado.
+      // ── PASSO 4: planejar reabastecimentos usando o modelo de saldo no picking ──
+      // Usa a mesma função simularPicking() em modo 'planejar'. Como o passo 1
+      // apagou todos os reabs do mês, mas o passo 2/3 já inseriu os ressups
+      // novos e recarregou abasts, o saldo inicial vem do mês anterior (real)
+      // e a simulação calcula reab+ressup de novo. Os ressups já foram inseridos
+      // no passo 2, então só inserimos os REABS aqui (a simulação garante que
+      // os números são consistentes entre si).
+      const anoNum = parseInt(anoSelecionado) || 0;
+      const mesNum = parseInt(mesNumSelecionado) || 0;
       const reabRegistros = [];
+      const sorteioReab = criarSorteadorReabDoMes(); // mesma janela de 5 min por dia
+
       for (const cfg of pickingConfig) {
-        const cod = String(cfg.codProduto);
-        const cxPorPlt = parseInt(cfg.cxPorPlt) || 0;
+        const cod           = String(cfg.codProduto);
+        const cxPorPlt      = parseInt(cfg.cxPorPlt) || 0;
         const espacosPalete = parseInt(cfg.espacosPalete) || 0;
-        if (!cxPorPlt) continue;
-        let acc = 0;
+        if (!cxPorPlt || !espacosPalete) continue;
+
+        const saldoInicial = obterSaldoInicialMes({
+          codProduto: cod, ano: anoNum, mes: mesNum,
+          cxPorPlt, espacosPalete, vendasMap, abastecimentos: abastsFresh,
+          dataLimitePassado,
+        });
+
+        const { porDia } = simularPicking({
+          diasMes,
+          vendasPorDia:     vendasMap[cod] || {},
+          reabRealPorDia:   reabMapF[cod]  || {},
+          ressupRealPorDia: resspMapF[cod] || {},
+          cxPorPlt,
+          espacosPalete,
+          saldoInicial,
+          modo: 'planejar',
+          dataLimitePassado,
+        });
+
         for (const dateStr of diasMes) {
-          const d = parsearData(dateStr);
-          const isFuture = d > HOJE;
-          const isDom    = d.getDay() === 0;
-          const ressp = resspMapF[cod]?.[dateStr] || 0;
-          if (isDom || isFuture) {
-            if (!isFuture && ressp > 0) acc = Math.max(0, acc - ressp * cxPorPlt);
-            continue;
-          }
-          const ref = new Date(d);
-          ref.setDate(ref.getDate() - (d.getDay() === 1 ? 2 : 1));
-          let vendas = vendasMap[cod]?.[formatarData(ref)] ?? null;
-          if (vendas === null && ref.getDay() === 1) vendas = 0;
-          if (vendas !== null) acc += vendas;
-          let planejado = null;
-          if (vendas !== null) {
-            if (acc >= cxPorPlt) {
-              const maxP = espacosPalete > 0 ? espacosPalete : Infinity;
-              planejado = Math.min(Math.floor(acc / cxPorPlt), maxP);
-              acc -= planejado * cxPorPlt;
-            } else { planejado = 0; }
-          }
-          if (ressp > 0) acc = Math.max(0, acc - ressp * cxPorPlt);
-          if (planejado !== null && planejado >= 1) {
-            const [dd, mm, aaaa] = dateStr.split('/');
-            const hora = sorteioReab();
-            reabRegistros.push({ codProduto: cod, nomeProduto: cfg.nomeProduto || cod, tipo: 'reabastecimento', qtdPaletes: planejado, conferente: 'Rodrigo', dataOperacional: dateStr, hora, criadoEm: new Date(`${aaaa}-${mm}-${dd}T${hora}:00`).toISOString() });
-          }
+          const sim = porDia[dateStr];
+          if (!sim || sim.isDom || sim.isFuture) continue;
+          const planejado = sim.reabPlanejado || 0;
+          if (planejado < 1) continue;
+          const [dd, mm, aaaa] = dateStr.split('/');
+          const hora = sorteioReab(dateStr);
+          reabRegistros.push({
+            codProduto:      cod,
+            nomeProduto:     cfg.nomeProduto || cod,
+            tipo:            'reabastecimento',
+            qtdPaletes:      planejado,
+            conferente:      'Rodrigo',
+            dataOperacional: dateStr,
+            hora,
+            criadoEm:        new Date(`${aaaa}-${mm}-${dd}T${hora}:00`).toISOString(),
+          });
         }
       }
       for (let i = 0; i < reabRegistros.length; i += 450) {
@@ -615,6 +816,173 @@ export default function PlanificadorIV() {
       alert(
         `✅ Concluído para ${nomeMes}!\n` +
         `• ${reabParaApagar.length} reabastecimento(s) anterior(es) substituído(s)\n` +
+        `• ${resspRegistros.length} ressuprimento(s) inserido(s)\n` +
+        `• ${reabRegistros.length} reabastecimento(s) inserido(s)`
+      );
+      invalidarCache('abastecimentos');
+      await carregar();
+    } catch (err) {
+      alert('Erro: ' + err.message);
+    } finally {
+      setLancandoTudo(false);
+    }
+  }
+
+  // ===== RESETAR E LANÇAR TUDO (apaga reabs + ressups antes de relançar) =====
+  // Diferença pro lancarTudoRetroativo: aqui APAGA também os ressups existentes
+  // antes de inserir os novos. Útil pra reset completo com o modelo novo de
+  // saldo no picking (especialmente em meses lançados com a lógica antiga).
+  async function resetarELancarTudo() {
+    const nomeMes = `${MESES_NOME[parseInt(mesNumSelecionado)-1]}/${anoSelecionado}`;
+    if (!window.confirm(
+      `🧹 RESETAR e lançar TUDO retroativo para ${nomeMes}?\n\n` +
+      `⚠️ Esta ação APAGA tanto reabastecimentos QUANTO ressuprimentos do mês\n` +
+      `(incluindo lançamentos manuais e legados), e relança do zero usando o\n` +
+      `modelo novo de saldo no picking.\n\n` +
+      `1. Apaga TODOS os reabs e ressups do mês\n` +
+      `2. Simula o mês com o modelo de saldo e insere os ressups necessários\n` +
+      `3. Insere os reabs planejados pelo mesmo modelo\n\n` +
+      `Continuar?`
+    )) return;
+
+    setLancandoTudo(true);
+    try {
+      // ── PASSO 1: apagar TODOS os abastecimentos (reabs E ressups) do mês ──
+      const abastsParaApagar = abastecimentos.filter(a => diasMes.includes(a.dataOperacional));
+      for (let i = 0; i < abastsParaApagar.length; i += 450) {
+        const batch = writeBatch(db);
+        abastsParaApagar.slice(i, i + 450).forEach(a => batch.delete(docRef('abastecimentos', a._id)));
+        await batch.commit();
+      }
+
+      // ── PASSO 2: simular e inserir ressuprimentos novos ──
+      // Como o passo 1 apagou tudo, não tem o que pular — usamos a simulação
+      // direto sobre o estado limpo. Como `abastecimentos` (state) ainda tem
+      // os antigos por enquanto, vamos simular SEM usar o `linhas` cache:
+      // chamamos simularPicking direto com abastecimentos vazios (do mês).
+      const anoNum = parseInt(anoSelecionado) || 0;
+      const mesNum = parseInt(mesNumSelecionado) || 0;
+      // Abastecimentos do mês anterior continuam intactos — usados pra obter saldoInicial.
+      const abastsExceto = abastecimentos.filter(a => !diasMes.includes(a.dataOperacional));
+
+      const resspRegistros = [];
+      for (const cfg of pickingConfig) {
+        const cod           = String(cfg.codProduto);
+        const cxPorPlt      = parseInt(cfg.cxPorPlt) || 0;
+        const espacosPalete = parseInt(cfg.espacosPalete) || 0;
+        if (!cxPorPlt || !espacosPalete) continue;
+
+        const saldoInicial = obterSaldoInicialMes({
+          codProduto: cod, ano: anoNum, mes: mesNum,
+          cxPorPlt, espacosPalete, vendasMap, abastecimentos: abastsExceto,
+          dataLimitePassado,
+        });
+
+        const { porDia } = simularPicking({
+          diasMes,
+          vendasPorDia:     vendasMap[cod] || {},
+          reabRealPorDia:   {},
+          ressupRealPorDia: {},
+          cxPorPlt,
+          espacosPalete,
+          saldoInicial,
+          modo: 'planejar',
+          dataLimitePassado,
+        });
+
+        for (const dateStr of diasMes) {
+          const sim = porDia[dateStr];
+          if (!sim || sim.isDom || sim.isFuture) continue;
+          const qtdPaletes = sim.ressupNecessario || 0;
+          if (qtdPaletes < 1) continue;
+          const { hora, conferente } = sorteioRessp();
+          const [dd, mm, aaaa] = dateStr.split('/');
+          resspRegistros.push({
+            codProduto:      cod,
+            nomeProduto:     cfg.nomeProduto || cod,
+            tipo:            'ressuprimento',
+            qtdPaletes,
+            conferente,
+            dataOperacional: dateStr,
+            hora,
+            criadoEm:        new Date(`${aaaa}-${mm}-${dd}T${hora}:00`).toISOString(),
+          });
+        }
+      }
+      for (let i = 0; i < resspRegistros.length; i += 450) {
+        const batch = writeBatch(db);
+        resspRegistros.slice(i, i + 450).forEach(reg => batch.set(doc(col('abastecimentos')), reg));
+        await batch.commit();
+      }
+
+      // ── PASSO 3: recarregar abastecimentos frescos ──
+      const aSnapFresh = await getDocs(col('abastecimentos'));
+      const abastsFresh = aSnapFresh.docs.map(d => ({ _id: d.id, ...d.data() }));
+      const reabMapF = {}, resspMapF = {};
+      abastsFresh.forEach(a => {
+        if (!diasMes.includes(a.dataOperacional)) return;
+        const cod = String(a.codProduto);
+        const qtd = a.qtdPaletes || 1;
+        const target = a.tipo === 'reabastecimento' ? reabMapF : resspMapF;
+        if (!target[cod]) target[cod] = {};
+        target[cod][a.dataOperacional] = (target[cod][a.dataOperacional] || 0) + qtd;
+      });
+
+      // ── PASSO 4: simular e inserir reabastecimentos planejados ──
+      const reabRegistros = [];
+      const sorteioReab = criarSorteadorReabDoMes(); // mesma janela de 5 min por dia
+      for (const cfg of pickingConfig) {
+        const cod           = String(cfg.codProduto);
+        const cxPorPlt      = parseInt(cfg.cxPorPlt) || 0;
+        const espacosPalete = parseInt(cfg.espacosPalete) || 0;
+        if (!cxPorPlt || !espacosPalete) continue;
+
+        const saldoInicial = obterSaldoInicialMes({
+          codProduto: cod, ano: anoNum, mes: mesNum,
+          cxPorPlt, espacosPalete, vendasMap, abastecimentos: abastsFresh,
+          dataLimitePassado,
+        });
+
+        const { porDia } = simularPicking({
+          diasMes,
+          vendasPorDia:     vendasMap[cod] || {},
+          reabRealPorDia:   reabMapF[cod]  || {},
+          ressupRealPorDia: resspMapF[cod] || {},
+          cxPorPlt,
+          espacosPalete,
+          saldoInicial,
+          modo: 'planejar',
+          dataLimitePassado,
+        });
+
+        for (const dateStr of diasMes) {
+          const sim = porDia[dateStr];
+          if (!sim || sim.isDom || sim.isFuture) continue;
+          const planejado = sim.reabPlanejado || 0;
+          if (planejado < 1) continue;
+          const [dd, mm, aaaa] = dateStr.split('/');
+          const hora = sorteioReab(dateStr);
+          reabRegistros.push({
+            codProduto:      cod,
+            nomeProduto:     cfg.nomeProduto || cod,
+            tipo:            'reabastecimento',
+            qtdPaletes:      planejado,
+            conferente:      'Rodrigo',
+            dataOperacional: dateStr,
+            hora,
+            criadoEm:        new Date(`${aaaa}-${mm}-${dd}T${hora}:00`).toISOString(),
+          });
+        }
+      }
+      for (let i = 0; i < reabRegistros.length; i += 450) {
+        const batch = writeBatch(db);
+        reabRegistros.slice(i, i + 450).forEach(reg => batch.set(doc(col('abastecimentos')), reg));
+        await batch.commit();
+      }
+
+      alert(
+        `🧹 Reset concluído para ${nomeMes}!\n` +
+        `• ${abastsParaApagar.length} lançamento(s) antigo(s) apagado(s)\n` +
         `• ${resspRegistros.length} ressuprimento(s) inserido(s)\n` +
         `• ${reabRegistros.length} reabastecimento(s) inserido(s)`
       );
@@ -816,6 +1184,17 @@ export default function PlanificadorIV() {
               style={{ ...btnSec, backgroundColor: lancandoTudo ? '#eee' : '#f0fdf4', borderColor: '#16a34a', color: '#14532d', fontWeight: 'bold', opacity: lancandoTudo ? 0.6 : 1 }}
             >
               {lancandoTudo ? '⏳ Processando...' : '🚀 Lançar Tudo Retroativo'}
+            </button>
+          )}
+
+          {diasMes.length > 0 && linhas.length > 0 && (
+            <button
+              onClick={resetarELancarTudo}
+              disabled={lancandoTudo}
+              title="Apaga reabs + ressups do mês e relança tudo do zero com o modelo novo"
+              style={{ ...btnSec, backgroundColor: lancandoTudo ? '#eee' : '#fef3c7', borderColor: '#b45309', color: '#78350f', fontWeight: 'bold', opacity: lancandoTudo ? 0.6 : 1 }}
+            >
+              {lancandoTudo ? '⏳ Processando...' : '🧹 Resetar e Lançar Tudo'}
             </button>
           )}
 
@@ -1022,7 +1401,7 @@ export default function PlanificadorIV() {
                     <td style={{ ...tdBase, textAlign: 'left' }}>{l.nomeProduto}</td>
 
                     {modo === 'reabastecimento'
-                      ? l.daysData.map(({ dateStr, isDom, isFuture, planejado, real, gap, vendas, dataRef, depletionBefore }) => {
+                      ? l.daysData.map(({ dateStr, isDom, isFuture, planejado, real, gap, vendas, vendasHoje, dataRef, saldoInicioDia, saldoFimDia, ressupNecessario }) => {
                           if (isDom) return [
                             <td key={`${dateStr}-p`} style={tdDom}>—</td>,
                             <td key={`${dateStr}-r`} style={tdDom}>—</td>,
@@ -1054,7 +1433,7 @@ export default function PlanificadorIV() {
                                 const rect = e.currentTarget.getBoundingClientRect();
                                 const x = Math.min(rect.left, window.innerWidth - 260);
                                 const y = rect.bottom + 210 > window.innerHeight ? rect.top - 220 : rect.bottom + 4;
-                                setTooltip({ x, y, nomeProduto: l.nomeProduto, espacosPalete: l.espacosPalete, cxPorPlt: l.cxPorPlt, vendas, dataRef, planejado, depletionBefore });
+                                setTooltip({ x, y, nomeProduto: l.nomeProduto, espacosPalete: l.espacosPalete, cxPorPlt: l.cxPorPlt, vendas, vendasHoje, dataRef, planejado, saldoInicioDia, saldoFimDia, ressupNecessario });
                               } : undefined}
                               onMouseLeave={() => setTooltip(null)}
                             >
@@ -1098,15 +1477,16 @@ export default function PlanificadorIV() {
           <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 10, color: '#999', flexWrap: 'wrap', borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
             {modo === 'reabastecimento' ? (
               <>
-                <span><b>P</b> = Paletes planejados (acumulado depleção) · <b>R</b> = Real · <b>G</b> = R−P</span>
+                <span><b>P</b> = Paletes planejados (modelo de saldo) · <b>R</b> = Real · <b>G</b> = R−P</span>
                 <span><b>·</b> = sem ação necessária neste dia</span>
                 <span>Seg usa vendas de Sáb (pula dom.)</span>
                 <span><b style={{ color: '#c0392b' }}>G+</b> reabasteceu a mais &nbsp;<b style={{ color: '#b45309' }}>G−</b> reabasteceu a menos &nbsp;<b style={{ color: '#166534' }}>G=0</b> ok</span>
-                <span style={{ color: '#aaa', fontStyle: 'italic' }}>Passe o cursor em P para ver detalhes</span>
+                <span style={{ color: '#aaa', fontStyle: 'italic' }}>Passe o cursor em P para ver saldo no fim do dia, ressup necessário, etc.</span>
               </>
             ) : (
               <>
                 <span>Valores = paletes ressupridos por dia · — = nenhum</span>
+                <span style={{ color: '#aaa', fontStyle: 'italic' }}>Modelo novo: detecta gap quando saldo herdado + reab não cobre a venda do dia</span>
               </>
             )}
           </div>
@@ -1126,12 +1506,38 @@ export default function PlanificadorIV() {
             {tooltip.nomeProduto}
           </div>
           <div>📦 Espaços picking: <b>{tooltip.espacosPalete} plt</b> ({tooltip.espacosPalete * tooltip.cxPorPlt} cx)</div>
-          <div>📊 Vendas {tooltip.dataRef}: <b>{tooltip.vendas !== null ? `${tooltip.vendas} cx` : '—'}</b></div>
-          <div>🔄 Acumulado antes: <b>{Math.round(tooltip.depletionBefore)} cx</b></div>
-          <div>📈 Total acumulado: <b>{Math.round(tooltip.depletionBefore + (tooltip.vendas || 0))} cx</b></div>
-          <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,0.15)', color: '#93c5fd' }}>
-            Planejado: <b>{tooltip.planejado} plt</b>
-            <span style={{ color: '#94a3b8', fontSize: 11 }}> (a cada {tooltip.cxPorPlt} cx)</span>
+
+          <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+            <div style={{ fontSize: 9.5, color: '#94a3b8', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 4 }}>
+              Equação do dia
+            </div>
+            <div>
+              Saldo início:{' '}
+              <b>{tooltip.saldoInicioDia !== null && tooltip.saldoInicioDia !== undefined ? `${Math.round(tooltip.saldoInicioDia)} cx` : '—'}</b>
+            </div>
+            <div style={{ color: '#86efac' }}>
+              Reab realizado:{' '}
+              <b>{tooltip.planejado} plt</b>
+              <span style={{ color: '#94a3b8' }}> (+{tooltip.planejado * tooltip.cxPorPlt} cx)</span>
+            </div>
+            <div style={{ color: '#fca5a5' }}>
+              − Vendas do dia:{' '}
+              <b>{tooltip.vendasHoje !== null && tooltip.vendasHoje !== undefined ? `${tooltip.vendasHoje} cx` : '0 cx'}</b>
+            </div>
+            <div style={{ marginTop: 2, paddingTop: 4, borderTop: '1px dashed rgba(255,255,255,0.15)' }}>
+              = Saldo fim:{' '}
+              <b>{tooltip.saldoFimDia !== null && tooltip.saldoFimDia !== undefined ? `${Math.round(tooltip.saldoFimDia)} cx` : '—'}</b>
+            </div>
+          </div>
+
+          {tooltip.ressupNecessario > 0 && (
+            <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,0.15)', color: '#fca5a5' }}>
+              ⚠️ Ressup realizado: <b>{tooltip.ressupNecessario} plt</b>
+            </div>
+          )}
+
+          <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,0.15)', fontSize: 11, color: '#94a3b8' }}>
+            Base do reab: vendas {tooltip.dataRef} = <b style={{ color: '#cbd5e1' }}>{tooltip.vendas !== null ? `${tooltip.vendas} cx` : '—'}</b>
           </div>
         </div>
       )}

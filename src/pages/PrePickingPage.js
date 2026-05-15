@@ -453,7 +453,8 @@ export default function PrePickingPage() {
         </div>
       </div>
 
-      {/* OS Card */}
+      {/* OS Card — ocultado temporariamente. Pra reativar, troque `false &&` por nada. */}
+      {false && (
       <div style={{ backgroundColor: '#fff', borderRadius: 12, padding: '12px 18px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', borderLeft: '4px solid #E31837' }}>
         <span style={{ fontSize: 13, fontWeight: 'bold', color: '#E31837' }}>📋 OS de Pré-Picking</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -473,6 +474,7 @@ export default function PrePickingPage() {
         </button>
         <span style={{ fontSize: 11, color: '#aaa' }}>Gera os produtos com vendas no dia selecionado</span>
       </div>
+      )}
 
       {/* OS Avulsas Card */}
       <div style={{ backgroundColor: '#fff', borderRadius: 12, padding: '12px 18px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', borderLeft: '4px solid #1D5A9E' }}>
@@ -495,8 +497,8 @@ export default function PrePickingPage() {
         <span style={{ fontSize: 11, color: '#aaa' }}>Todos os produtos com unidades avulsas no dia selecionado</span>
       </div>
 
-      {/* Planificador */}
-      {!mes || diasMes.length === 0 ? (
+      {/* Planificador — ocultado temporariamente. Pra reativar, troque `false &&` por nada. */}
+      {false && (!mes || diasMes.length === 0 ? (
         <div style={{ ...card, textAlign: 'center', padding: 40, color: '#999' }}>
           {mesesDisponiveis.length === 0
             ? 'Nenhum dado de Pré-Picking. Reimporte o relatório 03.02.36.08 para capturar os produtos fora do picking.'
@@ -588,7 +590,7 @@ export default function PrePickingPage() {
             Valores = caixas vendidas por dia · — = sem venda · domingos sem operação
           </div>
         </div>
-      )}
+      ))}
     </div>
   );
 }

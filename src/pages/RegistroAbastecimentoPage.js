@@ -31,6 +31,8 @@ export default function RegistroAbastecimentoPage() {
   const [salvando, setSalvando] = useState(false);
   const [importando, setImportando] = useState(false);
   const [corrigindo, setCorrigindo] = useState(false);
+  const [excluindoFiltrados, setExcluindoFiltrados] = useState(false);
+  const [reorganizandoReabs, setReorganizandoReabs] = useState(false);
   const [busca, setBusca] = useSessionFilter('regab:busca', '');
   const [filtroTipo, setFiltroTipo] = useSessionFilter('regab:tipo', 'todos');
   const [dataInicio, setDataInicio] = useSessionFilter('regab:inicio', '');
@@ -49,6 +51,101 @@ export default function RegistroAbastecimentoPage() {
       console.error(err);
     } finally {
       setCarregando(false);
+    }
+  }
+
+  // Apaga em massa todos os registros que estão visíveis pela combinação atual
+  // de filtros (busca + tipo + data início + data fim). Útil pra limpeza
+  // cirúrgica: ex. "todos os reabs do dia 20/05/2026" → filtra tipo=reab +
+  // data início/fim = 20/05/2026 + clica em "Excluir filtrados".
+  async function excluirFiltrados(filtradosAtuais) {
+    if (!filtradosAtuais || filtradosAtuais.length === 0) {
+      alert('Nenhum registro para excluir. Ajuste os filtros.');
+      return;
+    }
+    const resumo = [
+      `${filtradosAtuais.length} registro(s)`,
+      filtroTipo !== 'todos' && (filtroTipo === 'reabastecimento' ? 'tipo: Reabastecimento' : 'tipo: Ressuprimento'),
+      busca && `busca: "${busca}"`,
+      dataInicio && `de ${dataInicio}`,
+      dataFim && `até ${dataFim}`,
+    ].filter(Boolean).join(' · ');
+    if (!window.confirm(`⚠️ Excluir ${resumo}?\n\nEsta ação não pode ser desfeita.`)) return;
+    setExcluindoFiltrados(true);
+    try {
+      const ids = filtradosAtuais.map(r => r._id);
+      for (let i = 0; i < ids.length; i += 450) {
+        const batch = writeBatch(db);
+        ids.slice(i, i + 450).forEach(id => batch.delete(docRef('abastecimentos', id)));
+        await batch.commit();
+      }
+      setRegistros(prev => prev.filter(r => !ids.includes(r._id)));
+      alert(`✅ ${ids.length} registro(s) excluído(s) com sucesso.`);
+    } catch (err) {
+      alert('Erro ao excluir: ' + err.message);
+    } finally {
+      setExcluindoFiltrados(false);
+    }
+  }
+
+  // Reorganiza as horas de TODOS os reabastecimentos do Firebase agrupando-os
+  // por dia em uma janela de até 5 minutos dentro de [14:15, 16:25].
+  // Cada dia recebe uma "base" aleatória; todos os reabs daquele dia ficam
+  // entre [base, base+5min]. Simula o cenário real onde os reabs são
+  // registrados quase ao mesmo tempo.
+  async function reorganizarHorasReabs() {
+    const reabs = registros.filter(r => r.tipo === 'reabastecimento');
+    if (reabs.length === 0) {
+      alert('Nenhum reabastecimento encontrado.');
+      return;
+    }
+    const diasUnicos = new Set(reabs.map(r => r.dataOperacional)).size;
+    if (!window.confirm(
+      `🔄 Reorganizar horas de ${reabs.length} reabastecimento(s) em ${diasUnicos} dia(s) distinto(s)?\n\n` +
+      `Cada dia receberá uma janela aleatória de 5 minutos dentro de 14:15–16:25.\n` +
+      `Todos os reabs do mesmo dia ficarão agrupados nessa janela.\n\n` +
+      `⚠️ Esta ação reescreve "hora" e "criadoEm" de TODOS os reabs. Irreversível.`
+    )) return;
+
+    setReorganizandoReabs(true);
+    try {
+      // Sorteia uma "base" aleatória por dia (14:15=855min até 16:20=980min, reserva 5min pra cima)
+      const basePorDia = new Map();
+      for (const r of reabs) {
+        if (!basePorDia.has(r.dataOperacional)) {
+          const base = 855 + Math.floor(Math.random() * (980 - 855 + 1));
+          basePorDia.set(r.dataOperacional, base);
+        }
+      }
+
+      // Atualiza em batches de 450 (limite Firestore é 500)
+      let atualizados = 0;
+      for (let i = 0; i < reabs.length; i += 450) {
+        const batch = writeBatch(db);
+        const lote = reabs.slice(i, i + 450);
+        for (const r of lote) {
+          const base = basePorDia.get(r.dataOperacional);
+          const m   = base + Math.floor(Math.random() * 6); // 0–5 min depois
+          const hh  = String(Math.floor(m / 60)).padStart(2, '0');
+          const mm  = String(m % 60).padStart(2, '0');
+          const hora = `${hh}:${mm}`;
+          const [dd, mes, aaaa] = r.dataOperacional.split('/');
+          const criadoEm = new Date(`${aaaa}-${mes}-${dd}T${hora}:00`).toISOString();
+          batch.update(docRef('abastecimentos', r._id), { hora, criadoEm });
+          // Atualiza no state local também
+          r.hora = hora;
+          r.criadoEm = criadoEm;
+        }
+        await batch.commit();
+        atualizados += lote.length;
+      }
+
+      setRegistros([...registros]); // força re-render
+      alert(`✅ ${atualizados} reabastecimento(s) reorganizado(s) em ${diasUnicos} dia(s).`);
+    } catch (err) {
+      alert('Erro ao reorganizar: ' + err.message);
+    } finally {
+      setReorganizandoReabs(false);
     }
   }
 
@@ -185,7 +282,8 @@ export default function RegistroAbastecimentoPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
         <h2 style={{ color: '#333', margin: 0 }}>Registro de Reabastecimento / Ressuprimento</h2>
-        {isSupervisor && (
+        {/* Botões "Importar CSV Retroativo" e "Corrigir Minutos Zerados" ocultados — pra reativar, troque `false &&` por `isSupervisor &&` */}
+        {false && isSupervisor && (
           <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
             <label style={{ ...btnSec, cursor: 'pointer', opacity: importando ? 0.6 : 1 }}>
               {importando ? '⏳ Importando...' : '📥 Importar CSV Retroativo'}
@@ -202,7 +300,8 @@ export default function RegistroAbastecimentoPage() {
         )}
       </div>
 
-      {isSupervisor && (
+      {/* Box explicativo de formato CSV ocultado — pra reativar, troque `false &&` por `isSupervisor &&` */}
+      {false && isSupervisor && (
         <div style={{ backgroundColor: '#f0f4ff', borderRadius: 8, padding: '10px 16px', marginBottom: 16, fontSize: 12, color: '#555', lineHeight: 1.7 }}>
           📋 <b>Formato CSV para importação:</b> Codigo ; Tipo ; QtdPaletes ; DataOperacional — separador ponto e vírgula, primeira linha é cabeçalho.<br />
           📌 <b>Regra da data:</b> <b>Ressuprimento</b> → DataOperacional = dia das vendas de referência (D+0). <b>Reabastecimento</b> → DataOperacional = dia do reabastecimento físico (o dashboard usa D-1 automático para buscar vendas).
@@ -233,6 +332,46 @@ export default function RegistroAbastecimentoPage() {
           >
             ✕ Limpar
           </button>
+          {isSupervisor && filtrados.length > 0 && (busca || filtroTipo !== 'todos' || dataInicio || dataFim) && (
+            <button
+              onClick={() => excluirFiltrados(filtrados)}
+              disabled={excluindoFiltrados}
+              title="Apaga em massa todos os registros visíveis pela combinação atual de filtros"
+              style={{
+                padding: '8px 12px',
+                backgroundColor: excluindoFiltrados ? '#eee' : '#fee2e2',
+                border: '1px solid #fca5a5',
+                borderRadius: 8,
+                color: '#991b1b',
+                fontSize: 13,
+                fontWeight: 'bold',
+                cursor: excluindoFiltrados ? 'not-allowed' : 'pointer',
+                opacity: excluindoFiltrados ? 0.6 : 1,
+              }}
+            >
+              {excluindoFiltrados ? '⏳ Excluindo...' : `🗑️ Excluir ${filtrados.length} filtrado(s)`}
+            </button>
+          )}
+          {isSupervisor && (
+            <button
+              onClick={reorganizarHorasReabs}
+              disabled={reorganizandoReabs}
+              title="Reagrupa todos os reabastecimentos do Firebase: cada dia ganha uma janela aleatória de até 5 min dentro de 14:15–16:25, e todos os reabs daquele dia ficam nessa janela"
+              style={{
+                padding: '8px 12px',
+                backgroundColor: reorganizandoReabs ? '#eee' : '#fef3c7',
+                border: '1px solid #fcd34d',
+                borderRadius: 8,
+                color: '#78350f',
+                fontSize: 13,
+                fontWeight: 'bold',
+                cursor: reorganizandoReabs ? 'not-allowed' : 'pointer',
+                opacity: reorganizandoReabs ? 0.6 : 1,
+              }}
+            >
+              {reorganizandoReabs ? '⏳ Reorganizando...' : '🔄 Reorganizar horas dos reabs'}
+            </button>
+          )}
           <span style={{ fontSize: 12, color: '#888', marginLeft: 'auto', whiteSpace: 'nowrap' }}>
             {filtrados.length} registro(s) &nbsp;·&nbsp;
             <b style={{ color: '#1D5A9E' }}>{totalReab} plt reab.</b> &nbsp;·&nbsp;

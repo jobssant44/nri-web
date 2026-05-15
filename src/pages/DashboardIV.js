@@ -8,6 +8,18 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Labe
 
 const MESES_NOME = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
+// Regras padrão dos paletes mistos — usadas como fallback quando o mês ainda
+// não tem regras salvas no Firestore (`picking_config_mensal/<chave>.regrasMistos`).
+// O supervisor pode ajustar essas regras pelo painel ⚙️ no Dashboard IV e cada
+// mês mantém suas próprias configurações.
+const REGRAS_MISTOS_PADRAO = {
+  skusPorPalete:           4,    // máx. SKUs num palete misto (chunk). Mínimo 2 fixo.
+  ociosidadePct:          20,    // candidato se (mediaVendas / cxPorPlt) < ociosidadePct/100
+  tetoSinergiaPct:        60,    // teto total = floor(cxPlt * tetoSinergiaPct/100)
+  tetoDiversoPct:         10,    // qtd base por SKU = floor(cxPlt * tetoDiversoPct/100)
+  coberturaDiasSinergia:   5,    // qtdInicial por SKU = ceil(mediaVendas * coberturaDias)
+};
+
 function dataParaChaveMes(str) {
   if (!str) return null;
   const m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
@@ -75,6 +87,9 @@ export default function DashboardIV() {
   const [tooltip, setTooltip]                     = useState(null);
   const [previewConfig, setPreviewConfig]         = useState(null);
   const [salvandoConfig, setSalvandoConfig]       = useState(false);
+  const [regras,        setRegras]                = useState(REGRAS_MISTOS_PADRAO);
+  const [regrasSalvas,  setRegrasSalvas]          = useState(REGRAS_MISTOS_PADRAO);
+  const [salvandoRegras, setSalvandoRegras]       = useState(false);
 
   const mesSel = anoSelecionado && mesNumSelecionado ? `${anoSelecionado}-${mesNumSelecionado}` : '';
   const anos      = [...new Set(mesesDisponiveis.map(m => m.split('-')[0]))].sort();
@@ -94,6 +109,12 @@ export default function DashboardIV() {
           const pSnap = await getDocs(col('picking_config'));
           setPickingConfig(pSnap.docs.map(d => d.data()));
         }
+        // Carrega regras dos paletes mistos do mês (ou usa padrão se não houver)
+        const regrasDoMes = pDoc.exists() && pDoc.data().regrasMistos
+          ? { ...REGRAS_MISTOS_PADRAO, ...pDoc.data().regrasMistos }
+          : REGRAS_MISTOS_PADRAO;
+        setRegras(regrasDoMes);
+        setRegrasSalvas(regrasDoMes);
       } catch {}
     })();
   }, [anoSelecionado, mesNumSelecionado]);
@@ -247,10 +268,16 @@ export default function DashboardIV() {
   const totalSurplus = superdimensionados.reduce((s, p) => s + (p.espacos - p.espacosIdeal), 0);
   const saldo        = totalSurplus - totalDeficit;
 
-  // ── PALETES MISTOS ─────────────────────────────────────────────────────────────
+  // ── PALETES MISTOS (parâmetros vêm do state `regras`, editáveis pelo painel ⚙️) ──
+  const _skusPorPalete   = Math.max(2, regras.skusPorPalete || 4);
+  const _ociosidadeFrac  = (regras.ociosidadePct || 20) / 100;
+  const _tetoSinergiaFrac = (regras.tetoSinergiaPct || 60) / 100;
+  const _tetoDiversoFrac  = (regras.tetoDiversoPct || 10) / 100;
+  const _diasAlvo         = regras.coberturaDiasSinergia || 5;
+
   const candidatosMisto = produtos.filter(p => {
     if (!p.mediaVendas || p.cxPorPlt === 0) return false;
-    return (p.mediaVendas / p.cxPorPlt) < 0.20;
+    return (p.mediaVendas / p.cxPorPlt) < _ociosidadeFrac;
   });
 
   const _gruposMap = {};
@@ -263,15 +290,15 @@ export default function DashboardIV() {
   // Singletons = produtos sem par na mesma embalagem ou sobras de chunks maiores
   const _singletons = [];
 
-  // Paletes com sinergia (mesma embalagem, máx. 4 produtos, teto 60% do palete)
+  // Paletes com sinergia (mesma embalagem, máx. `skusPorPalete` produtos, teto configurável)
   const gruposSinergia = Object.entries(_gruposMap)
     .flatMap(([tipo, prods]) => {
       const cxPlt    = prods[0].cxPorPlt;
-      const teto     = Math.floor(cxPlt * 0.60);
-      const diasAlvo = 5;
+      const teto     = Math.floor(cxPlt * _tetoSinergiaFrac);
+      const diasAlvo = _diasAlvo;
       const chunks   = [];
-      for (let i = 0; i < prods.length; i += 4) {
-        const chunk = prods.slice(i, i + 4);
+      for (let i = 0; i < prods.length; i += _skusPorPalete) {
+        const chunk = prods.slice(i, i + _skusPorPalete);
         if (chunk.length >= 2) chunks.push(chunk);
         else _singletons.push(...chunk);
       }
@@ -295,14 +322,14 @@ export default function DashboardIV() {
     .filter(g => g.espacosLiberados > 0)
     .sort((a, b) => b.espacosLiberados - a.espacosLiberados);
 
-  // Paletes diversos (sobras sem sinergia, agrupadas por maior liberação, 10% de cada palete)
+  // Paletes diversos (sobras sem sinergia, agrupadas por maior liberação, % configurável por SKU)
   const _sortedSingletons = [..._singletons].sort((a, b) => b.espacos - a.espacos);
   const _gruposDiverso = [];
-  for (let i = 0; i < _sortedSingletons.length; i += 4) {
-    const chunk = _sortedSingletons.slice(i, i + 4);
+  for (let i = 0; i < _sortedSingletons.length; i += _skusPorPalete) {
+    const chunk = _sortedSingletons.slice(i, i + _skusPorPalete);
     if (chunk.length < 2) continue;
     const composicao       = chunk.map(p => {
-      const base     = Math.max(1, Math.floor(p.cxPorPlt * 0.10));
+      const base     = Math.max(1, Math.floor(p.cxPorPlt * _tetoDiversoFrac));
       const minUmDia = p.mediaVendas > 0 ? Math.ceil(p.mediaVendas) : 1;
       return { ...p, qtdCaixas: Math.max(base, minUmDia) };
     });
@@ -341,6 +368,28 @@ export default function DashboardIV() {
       ? { ano: String(a + 1), mes: '01' }
       : { ano: String(a),     mes: String(m + 1).padStart(2, '0') };
   }
+
+  // ── REGRAS DOS PALETES MISTOS — salvar/restaurar ─────────────────────────────
+  async function salvarRegras() {
+    if (!anoSelecionado || !mesNumSelecionado) return;
+    setSalvandoRegras(true);
+    try {
+      const chave = `${anoSelecionado}-${mesNumSelecionado}`;
+      await setDoc(docRef('picking_config_mensal', chave), { regrasMistos: regras }, { merge: true });
+      setRegrasSalvas(regras);
+    } catch (err) {
+      alert('Erro ao salvar regras: ' + err.message);
+    } finally {
+      setSalvandoRegras(false);
+    }
+  }
+
+  function restaurarPadroes() {
+    setRegras(REGRAS_MISTOS_PADRAO);
+  }
+
+  // Comparação rápida de igualdade dos 5 campos pra detectar alterações pendentes
+  const regrasMudaram = JSON.stringify(regras) !== JSON.stringify(regrasSalvas);
 
   function gerarConfigProximoMes() {
     const prox = proximoMes();
@@ -453,7 +502,8 @@ export default function DashboardIV() {
             {mesesDoAno.map(m => <option key={m} value={m}>{MESES_NOME[parseInt(m)-1]}</option>)}
           </select>
           <button onClick={carregar} style={btn}>🔄 Atualizar</button>
-          {isSupervisor && mesSel && produtos.length > 0 && (() => {
+          {/* Botão "Sugerir Picking" ocultado temporariamente — descomentar pra reativar */}
+          {false && isSupervisor && mesSel && produtos.length > 0 && (() => {
             const prox = proximoMes();
             if (!prox) return null;
             const nomeMesProx = `${MESES_NOME[parseInt(prox.mes)-1]}/${prox.ano}`;
@@ -469,14 +519,13 @@ export default function DashboardIV() {
       {/* ── KPI CARDS ── */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:16, marginBottom:24 }}>
         {[
-          { label:'Paletes Reabastecidos', valor:kpiReab,      cor:'#1D5A9E', sub:'🌅 movidos durante o dia'     },
-          { label:'Paletes Ressupridos',    valor:kpiRessp,     cor:'#E31837', sub:'🌙 movidos durante a noite'   },
-          { label:'Produtos c/ Ressupr.',   valor:kpiProdRessp, cor:'#dc2626', sub:'🚨 picking subdimensionado'   },
-        ].map(({ label, valor, cor, sub }) => (
+          { label:'Paletes Reabastecidos', valor:kpiReab,      cor:'#1D5A9E' },
+          { label:'Paletes Ressupridos',    valor:kpiRessp,     cor:'#E31837' },
+          { label:'Produtos c/ Ressupr.',   valor:kpiProdRessp, cor:'#dc2626' },
+        ].map(({ label, valor, cor }) => (
           <div key={label} style={{ backgroundColor:'#fff', borderRadius:12, padding:'18px 20px', boxShadow:'0 2px 8px rgba(0,0,0,.08)', borderLeft:`4px solid ${cor}` }}>
             <div style={{ fontSize:34, fontWeight:'bold', color:cor, lineHeight:1 }}>{valor}</div>
             <div style={{ fontSize:13, fontWeight:'600', color:'#333', marginTop:6 }}>{label}</div>
-            <div style={{ fontSize:11, color:'#999', marginTop:2 }}>{sub}</div>
           </div>
         ))}
       </div>
@@ -485,9 +534,6 @@ export default function DashboardIV() {
       {dadosEvolucao.length > 1 && (
         <div style={{ ...secao, marginBottom:24 }}>
           <h3 style={titulo}>📈 Evolução Mensal — Reabastecimento × Ressuprimento</h3>
-          <p style={{ fontSize:12, color:'#888', marginTop:-10, marginBottom:16 }}>
-            Total de paletes movidos por mês em todo o histórico de registros.
-          </p>
           <ResponsiveContainer width="100%" height={290}>
             <BarChart data={dadosEvolucao} margin={{ top:4, right:16, left:0, bottom:4 }} barCategoryGap="30%">
               <XAxis dataKey="label" tick={{ fontSize:11, fill:'#666' }} />
@@ -677,8 +723,8 @@ export default function DashboardIV() {
             return (
               <div style={{ marginTop:14, display:'flex', flexDirection:'column', gap:6 }}>
                 <div style={insight('#1D5A9E','#eff6ff')}>⏰ Pico: {picoH.hora} — {picoH.reab+picoH.ressp} paletes</div>
-                <div style={insight('#7c3aed','#f5f3ff')}>🌙 Ressuprimentos noturnos: {totalNight} plt</div>
-                <div style={insight('#059669','#ecfdf5')}>☀️ Reabastecimentos diurnos: {totalDay} plt</div>
+                <div style={insight('#7c3aed','#f5f3ff')}>Ressuprimento: {totalNight} plt</div>
+                <div style={insight('#059669','#ecfdf5')}>Reabastecimento: {totalDay} plt</div>
               </div>
             );
           })()}
@@ -817,12 +863,90 @@ export default function DashboardIV() {
         </div>
       )}
 
+      {/* ── PAINEL DE REGRAS DOS PALETES MISTOS ── */}
+      {isSupervisor && produtos.length > 0 && (
+        <div style={{ ...secao, marginTop:20, backgroundColor:'#fafaff', borderTop:'4px solid #4338ca' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14, flexWrap:'wrap', gap:8 }}>
+            <h3 style={{ ...titulo, marginBottom:0 }}>⚙️ Regras dos Paletes Mistos — {MESES_NOME[parseInt(mesNumSelecionado)-1]}/{anoSelecionado}</h3>
+            {regrasMudaram && (
+              <span style={{ fontSize:11, fontWeight:'bold', color:'#b45309', backgroundColor:'#fef3c7', padding:'4px 10px', borderRadius:20 }}>
+                ⚠️ Alterações pendentes
+              </span>
+            )}
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:14, marginBottom:14 }}>
+            <RegrasField
+              label="SKUs por palete misto"
+              valor={regras.skusPorPalete}
+              onChange={v => setRegras({ ...regras, skusPorPalete: v })}
+              min={2} max={10} sufixo="SKUs"
+              hint="Máx. de produtos que dividem 1 palete (mín. 2 fixo)"
+            />
+            <RegrasField
+              label="Ociosidade (candidato)"
+              valor={regras.ociosidadePct}
+              onChange={v => setRegras({ ...regras, ociosidadePct: v })}
+              min={1} max={100} sufixo="%"
+              hint="Produto é candidato se vende menos que X% do palete/dia"
+            />
+            <RegrasField
+              label="Teto Sinergia"
+              valor={regras.tetoSinergiaPct}
+              onChange={v => setRegras({ ...regras, tetoSinergiaPct: v })}
+              min={5} max={100} sufixo="%"
+              hint="Soma máx. de caixas no palete misto (mesma embalagem)"
+            />
+            <RegrasField
+              label="Teto Diverso"
+              valor={regras.tetoDiversoPct}
+              onChange={v => setRegras({ ...regras, tetoDiversoPct: v })}
+              min={5} max={30} sufixo="%"
+              hint="Qtd base por SKU no palete diverso (embalagens diferentes)"
+            />
+            <RegrasField
+              label="Cobertura Sinergia"
+              valor={regras.coberturaDiasSinergia}
+              onChange={v => setRegras({ ...regras, coberturaDiasSinergia: v })}
+              min={1} max={14} sufixo="dias"
+              hint="Quantos dias de venda cobrir por SKU em palete sinergia"
+            />
+          </div>
+
+          <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+            <button
+              onClick={salvarRegras}
+              disabled={salvandoRegras || !regrasMudaram}
+              style={{
+                padding:'8px 18px',
+                backgroundColor: salvandoRegras || !regrasMudaram ? '#e5e7eb' : '#4338ca',
+                color: salvandoRegras || !regrasMudaram ? '#9ca3af' : '#fff',
+                border:'none', borderRadius:8, fontWeight:'bold', fontSize:13,
+                cursor: salvandoRegras || !regrasMudaram ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {salvandoRegras ? '⏳ Salvando...' : '💾 Salvar regras'}
+            </button>
+            <button
+              onClick={restaurarPadroes}
+              disabled={salvandoRegras}
+              style={{ ...btn, padding:'8px 16px', fontSize:13 }}
+            >
+              ↩️ Restaurar padrões
+            </button>
+            <span style={{ fontSize:11, color:'#888', marginLeft:'auto' }}>
+              Atualmente: <b style={{ color:'#4338ca' }}>{candidatosMisto.length}</b> candidato(s) · <b style={{ color:'#166534' }}>{totalEspacosMisto}</b> espaço(s) liberados · <b style={{ color:'#7c3aed' }}>{gruposMisto.length}</b> palete(s) misto(s)
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* ── PALETES MISTOS ── */}
       {gruposMisto.length > 0 && (
         <div style={{ ...secao, marginTop:20 }}>
           <h3 style={titulo}>🔀 Paletes Mistos Sugeridos</h3>
           <p style={{ fontSize:12, color:'#888', marginTop:-10, marginBottom:16 }}>
-            Produtos com venda diária inferior a 20% da capacidade de um palete — candidatos a compartilhar um único palete. Paletes com sinergia agrupam a mesma embalagem; paletes diversos agrupam sobras de embalagens distintas.
+            Produtos com venda diária inferior a {regras.ociosidadePct}% da capacidade de um palete — candidatos a compartilhar um único palete. Paletes com sinergia agrupam a mesma embalagem; paletes diversos agrupam sobras de embalagens distintas.
           </p>
 
           <div style={{ padding:'10px 16px', backgroundColor:'#f0f1ff', borderRadius:8, borderLeft:'4px solid #4338ca', fontSize:12, color:'#3730a3', marginBottom:20, fontWeight:'600' }}>
@@ -1021,6 +1145,33 @@ export default function DashboardIV() {
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// Campo de input numérico do painel de regras (label + input + dica)
+function RegrasField({ label, valor, onChange, min, max, sufixo, hint }) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+      <label style={{ fontSize:10, fontWeight:'700', letterSpacing:0.5, textTransform:'uppercase', color:'#555' }}>
+        {label}
+      </label>
+      <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+        <input
+          type="number"
+          value={valor}
+          min={min}
+          max={max}
+          onChange={e => {
+            const n = parseInt(e.target.value, 10);
+            if (isNaN(n)) return;
+            onChange(Math.max(min, Math.min(max, n)));
+          }}
+          style={{ width:70, padding:'7px 10px', border:'1px solid #c7d2fe', borderRadius:8, fontSize:14, fontWeight:'bold', color:'#1a1a2e', textAlign:'center' }}
+        />
+        <span style={{ fontSize:11, color:'#888' }}>{sufixo}</span>
+      </div>
+      {hint && <span style={{ fontSize:10, color:'#888', lineHeight:1.3 }}>{hint}</span>}
     </div>
   );
 }
