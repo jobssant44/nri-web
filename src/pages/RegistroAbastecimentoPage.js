@@ -352,7 +352,7 @@ export default function RegistroAbastecimentoPage() {
               {excluindoFiltrados ? '⏳ Excluindo...' : `🗑️ Excluir ${filtrados.length} filtrado(s)`}
             </button>
           )}
-          {isSupervisor && (
+          {false && isSupervisor && (
             <button
               onClick={reorganizarHorasReabs}
               disabled={reorganizandoReabs}

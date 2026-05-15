@@ -17,6 +17,7 @@ import VendasPage from './pages/VendasPage';
 import DashboardIV from './pages/DashboardIV';
 import RegistroAbastecimentoPage from './pages/RegistroAbastecimentoPage';
 import PlanificadorIV from './pages/PlanificadorIV';
+import ResultadoIV from './pages/ResultadoIV';
 import ConfigPicking from './pages/ConfigPicking';
 import DashboardCurvaABC from './pages/curva-abc/DashboardCurvaABC';
 import ImportarRelatorio from './pages/curva-abc/ImportarRelatorio';
@@ -126,6 +127,7 @@ function AppInner() {
             <Route path="/reab/vendas"             element={<VendasPage />} />
             <Route path="/reab/registro"           element={<RegistroAbastecimentoPage />} />
             <Route path="/reab/planificador"       element={<PlanificadorIV />} />
+            <Route path="/reab/resultado"          element={<ResultadoIV />} />
             <Route path="/reab/prepicking"         element={<PrePickingPage />} />
 
             {/* Curva ABC */}

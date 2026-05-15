@@ -557,8 +557,8 @@ export default function DashboardIV() {
         </div>
       )}
 
-      {/* ── MAPA DE CALOR ── */}
-      {produtosHeatmap.length > 0 && dias.length > 0 && (
+      {/* ── MAPA DE CALOR — ocultado temporariamente. Pra reativar, troque `false &&` por nada. ── */}
+      {false && produtosHeatmap.length > 0 && dias.length > 0 && (
         <div style={secao}>
           <h3 style={titulo}>🗓 Mapa de Calor — Movimentos por Produto × Dia</h3>
           <div style={{ display:'flex', gap:16, fontSize:11, color:'#666', marginBottom:10, flexWrap:'wrap' }}>
@@ -636,7 +636,8 @@ export default function DashboardIV() {
       {/* ── RANKING + HORÁRIO ── */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 380px', gap:20, marginTop:20, alignItems:'start' }}>
 
-        {/* Ranking de esforço */}
+        {/* Ranking de esforço — ocultado temporariamente. Pra reativar, troque `false &&` por nada. */}
+        {false && (
         <div style={secao}>
           <h3 style={titulo}>🏋️ Ranking de Esforço por Produto</h3>
           {rankingOrdenado.length === 0
@@ -694,6 +695,7 @@ export default function DashboardIV() {
             </div>
           )}
         </div>
+        )}
 
         {/* Distribuição horária */}
         <div style={secao}>
@@ -904,6 +906,8 @@ export default function DashboardIV() {
               min={5} max={30} sufixo="%"
               hint="Qtd base por SKU no palete diverso (embalagens diferentes)"
             />
+            {/* Campo "Cobertura Sinergia" ocultado — pra reativar, troque `false &&` por nada */}
+            {false && (
             <RegrasField
               label="Cobertura Sinergia"
               valor={regras.coberturaDiasSinergia}
@@ -911,6 +915,7 @@ export default function DashboardIV() {
               min={1} max={14} sufixo="dias"
               hint="Quantos dias de venda cobrir por SKU em palete sinergia"
             />
+            )}
           </div>
 
           <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>

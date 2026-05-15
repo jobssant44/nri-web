@@ -1177,7 +1177,8 @@ export default function PlanificadorIV() {
 
           <button onClick={() => carregar(true)} style={btnSec}>🔄 Atualizar</button>
 
-          {diasMes.length > 0 && linhas.length > 0 && (
+          {/* Botões ocultados temporariamente — pra reativar, troque `false &&` por nada */}
+          {false && diasMes.length > 0 && linhas.length > 0 && (
             <button
               onClick={lancarTudoRetroativo}
               disabled={lancandoTudo}
@@ -1187,7 +1188,7 @@ export default function PlanificadorIV() {
             </button>
           )}
 
-          {diasMes.length > 0 && linhas.length > 0 && (
+          {false && diasMes.length > 0 && linhas.length > 0 && (
             <button
               onClick={resetarELancarTudo}
               disabled={lancandoTudo}
@@ -1198,7 +1199,7 @@ export default function PlanificadorIV() {
             </button>
           )}
 
-          {modo === 'reabastecimento' && diasMes.length > 0 && linhas.length > 0 && (
+          {false && modo === 'reabastecimento' && diasMes.length > 0 && linhas.length > 0 && (
             <button
               onClick={lancarRetroativo}
               disabled={lancandoRetroativo}
@@ -1208,7 +1209,7 @@ export default function PlanificadorIV() {
             </button>
           )}
 
-          {modo === 'ressuprimento' && diasMes.length > 0 && linhas.length > 0 && (
+          {false && modo === 'ressuprimento' && diasMes.length > 0 && linhas.length > 0 && (
             <button
               onClick={lancarRetroativoRessuprimento}
               disabled={lancandoRetroativoRessp}
@@ -1218,7 +1219,7 @@ export default function PlanificadorIV() {
             </button>
           )}
 
-          {diasMes.length > 0 && linhasOrdenadas.length > 0 && (
+          {false && diasMes.length > 0 && linhasOrdenadas.length > 0 && (
             <button onClick={() => exportarCSV(linhasOrdenadas, diasMes, modo, mes)} style={btnSec}>📤 Exportar CSV</button>
           )}
           <input

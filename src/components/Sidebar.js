@@ -33,6 +33,7 @@ const TODOS_GRUPOS = [
     itens: [
       { path: '/reab/dashboard',       label: 'Dashboard IV',          todos: true },
       { path: '/reab/planificador',    label: 'Planificador IV',       todos: true },
+      { path: '/reab/resultado',       label: 'Resultado',             todos: true },
       { path: '/reab/prepicking',      label: 'Pré-Picking',           todos: true },
       { path: '/reab/vendas',          label: 'Vendas',                todos: true },
       { path: '/reab/config',          label: 'Configurar Picking',    supervisor: true },

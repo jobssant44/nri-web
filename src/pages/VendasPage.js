@@ -135,10 +135,6 @@ export default function VendasPage() {
   return (
     <div style={{ maxWidth: '100%', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
       <h1 style={{ color: '#E31837', marginBottom: '4px' }}>📊 Vendas</h1>
-      <p style={{ color: '#666', marginBottom: '20px', fontSize: '13px' }}>
-        Quantidade de caixas vendidas por produto por dia (apenas produtos do Picking Config)
-      </p>
-
       <div style={cardStyle}>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#333' }}>Ano:</label>
