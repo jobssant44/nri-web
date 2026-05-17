@@ -1,0 +1,373 @@
+/**
+ * Helpers compartilhados pelas 4 sub-páginas de Gestão de Idade.
+ *
+ * Glossário:
+ *  - PZV (Prazo de Validade Total): vida útil em dias do produto (cadastrável)
+ *  - Shelf Life % = (dias até vencer) / PZV * 100
+ *  - Segregar: % SL < threshold (padrão 60%)
+ *  - Cobertura (P.E. — Período de Estoque): quantidade ÷ venda média
+ *  - Quant. Perda: caixas que provavelmente não vão ser vendidas a tempo
+ *  - Hecto Perda: quant. Perda × hecto/cx
+ */
+
+import { getDocs } from 'firebase/firestore';
+
+export const THRESHOLD_SEGREGAR_PCT  = 60;      // % shelf life — usado no Stock Age Index
+export const THRESHOLD_SEGREGAR_DIAS = 30;      // ≤ 30 dias até vencer → Segregar
+export const THRESHOLD_ATENCAO_DIAS  = 45;      // 31-45 dias → Atenção; > 45 → OK
+export const THRESHOLD_CRITICO_DIAS  = 30;      // dias até vencer p/ HL < 30d (Stock Age)
+export const THRESHOLD_BAIXO_DIAS    = 45;      // hecto < 45d (Stock Age + Estoque x Estoque)
+export const TOLERANCIA_QUEBRA_FEFO  = 0;       // dias de diferença permitida picking→estoque
+export const PZV_PADRAO_DIAS         = 240;     // Default quando produto não tem PZV cadastrado
+
+/**
+ * Resolve o PZV (Prazo de Validade Total em dias) para um produto.
+ * Ordem de precedência:
+ *   1. pzv_produtos/{codigo}   (importação dedicada)
+ *   2. produtos/{codigo}.pzvDias (campo legado se existir)
+ *   3. PZV_PADRAO_DIAS (240) como fallback global
+ */
+export function resolverPZV(codigo, pzvMap, produto) {
+  const cod = String(codigo || '').trim();
+  if (pzvMap && pzvMap[cod] > 0) return pzvMap[cod];
+  if (produto?.pzvDias > 0) return produto.pzvDias;
+  return PZV_PADRAO_DIAS;
+}
+
+export const COR = {
+  segregar:    '#ef4444',
+  atencao:     '#f59e0b',
+  ok:          '#22c55e',
+  alto:        '#ef4444',
+  critico:     '#f59e0b',
+  medio:       '#fbbf24',
+  baixo:       '#22c55e',
+  gestaoIdade: '#fbbf24',
+  liberado:    '#22c55e',
+  curva: { A: '#22c55e', B: '#f59e0b', C: '#ef4444' },
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// Datas
+// ─────────────────────────────────────────────────────────────────────
+export function tsToDate(ts) {
+  if (!ts) return null;
+  if (ts.toDate) return ts.toDate();
+  if (ts instanceof Date) return ts;
+  if (typeof ts === 'string') {
+    const m = ts.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]));
+  }
+  return null;
+}
+
+export function diasEntre(a, b) {
+  if (!a || !b) return null;
+  const MS_DIA = 86400000;
+  const da = new Date(a.getFullYear(), a.getMonth(), a.getDate());
+  const db = new Date(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((db - da) / MS_DIA);
+}
+
+export function fmtData(d) {
+  if (!d) return '—';
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+}
+
+export function fmtPct(v, casas = 0) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return `${v.toFixed(casas)}%`;
+}
+
+export function fmtNum(v, casas = 2) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return v.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Núcleo: classificação de cada palete contado
+// ─────────────────────────────────────────────────────────────────────
+/**
+ * Avalia um inventory_log contra produtos / vendas / curva e devolve
+ * todas as métricas necessárias para a tela de FEFO.
+ *
+ * @param {Object} log              — doc de inventory_logs
+ * @param {Date}   dataReferencia   — data da contagem (ou hoje)
+ * @param {Object} produto          — { codigo, descricao, hecto, paletizacao, ... }
+ * @param {Number} pzvDias          — Prazo de Validade Total em dias (pode ser null)
+ * @param {Number} vendaMediaCxDia  — média diária em caixas (pode ser null)
+ * @param {String} curvaProduto     — 'A' | 'B' | 'C' | null
+ */
+export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMediaCxDia, curvaProduto }) {
+  const vencimento = tsToDate(log.expiryDate);
+  const prazo = vencimento ? diasEntre(dataReferencia, vencimento) : null;
+  const quantidadeCx = paraCaixas(log, produto);
+  const hectoUnit = produto?.hecto || 0;
+  const hectoTotal = quantidadeCx * hectoUnit;
+
+  let pctShelfLife = null;
+  if (vencimento && pzvDias > 0 && prazo != null) {
+    pctShelfLife = Math.max(0, Math.min(100, (prazo / pzvDias) * 100));
+  }
+
+  // Status agora segue regra simples por DIAS ATÉ VENCER:
+  //   prazo ≤ 30  → Segregar  (vermelho)
+  //   31-45 dias  → Atenção   (amarelo)
+  //   > 45 dias   → OK        (verde)
+  //   sem vencim. → sem-vencimento
+  let status;
+  if (prazo == null) status = 'sem-vencimento';
+  else if (prazo <= THRESHOLD_SEGREGAR_DIAS) status = 'segregar';
+  else if (prazo <= THRESHOLD_ATENCAO_DIAS)  status = 'atencao';
+  else status = 'ok';
+
+  // Cobertura em dias: cobertura = quantidade / venda média
+  const cobertura = vendaMediaCxDia > 0
+    ? Math.ceil(quantidadeCx / vendaMediaCxDia)
+    : null;
+
+  // Quant. perda
+  let quantPerda = 0;
+  if (status === 'segregar') {
+    // Tudo é perda: ≤ 30 dias, não dá pra vender no prazo
+    quantPerda = quantidadeCx;
+  } else if ((status === 'ok' || status === 'atencao') && vendaMediaCxDia > 0 && prazo != null && prazo > 0) {
+    // Só perde se o estoque não der pra escoar dentro do prazo de venda (PZV - 30d)
+    const vendavelNoPrazo = vendaMediaCxDia * prazo;
+    quantPerda = Math.max(0, quantidadeCx - vendavelNoPrazo);
+  }
+  const hectoPerda = quantPerda * hectoUnit;
+
+  // Situação (severidade da perda em HL — thresholds chutados pra inicio)
+  let situacao = 'baixo';
+  if (hectoPerda >= 40) situacao = 'alto';
+  else if (hectoPerda >= 10) situacao = 'critico';
+  else if (hectoPerda >= 2) situacao = 'medio';
+  else if (hectoPerda > 0) situacao = 'baixo';
+  else situacao = 'baixo'; // 0 → ainda baixo (sem perda)
+
+  return {
+    productCode: String(log.productCode || ''),
+    descricao: produto?.descricao || log.productName || '',
+    embalagem: produto?.embalagem || null,
+    tipoMarca: produto?.tipoMarca || null,
+    local: deduzirLocal(log.endereco),
+    rua: deduzirRua(log.endereco),
+    endereco: log.endereco || null,
+    curva: curvaProduto || log.productCurva || null,
+    vencimento,
+    prazo,
+    pctShelfLife,
+    status,
+    quantidadeCx,
+    hecto: hectoUnit,
+    hectoTotal,
+    cobertura,
+    quantPerda,
+    hectoPerda,
+    valorPerda: 0, // placeholder até termos R$/HL
+    situacao,
+    pzvDias: pzvDias || null,
+    vendaMediaCxDia: vendaMediaCxDia || null,
+  };
+}
+
+// Converte qualquer unidade (palete/lastro/caixa/unidade) para caixas, usando
+// fatores do produto (paletizacao/lastro). Conservador: se faltar fator, mantém.
+export function paraCaixas(log, produto) {
+  const qtd = Number(log.quantidade) || 0;
+  if (!qtd) return 0;
+  const unidade = (log.unidade || 'caixa').toLowerCase();
+  if (unidade === 'caixa') return qtd;
+  if (unidade === 'palete' && produto?.paletizacao > 0) return qtd * produto.paletizacao;
+  if (unidade === 'lastro' && produto?.lastro > 0) return qtd * produto.lastro;
+  // 'unidade' sem fator → assume 1:1 com caixas pra não zerar (impreciso)
+  return qtd;
+}
+
+// Regra da casa (CBB):
+//   PN*  → PNC      (10 ruas: PN01..PN10, produtos não-conformes/segregados)
+//   P*   → Picking  (qualquer prefixo P que NÃO seja PN)
+//   resto → Estoque (A, B, C, M, ...)
+export function deduzirLocal(endereco) {
+  if (!endereco) return null;
+  const p = String(endereco).trim().toUpperCase();
+  if (p.startsWith('PN')) return 'PNC';
+  if (p.startsWith('P'))  return 'Picking';
+  return 'Estoque';
+}
+
+// "Rua" exibida nas páginas = endereço completo registrado na contagem
+// (ex: "A-1-007"), seguindo a convenção da CBB.
+export function deduzirRua(endereco) {
+  if (!endereco) return null;
+  return String(endereco).trim().toUpperCase();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Loaders compartilhados
+// ─────────────────────────────────────────────────────────────────────
+export async function carregarLogsContagem({ col, dataInicio, dataFim }) {
+  const snap = await getDocs(col('inventory_logs'));
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(l => {
+      const ts = tsToDate(l.timestamp);
+      if (!ts) return false;
+      if (dataInicio && ts < dataInicio) return false;
+      if (dataFim && ts > dataFim) return false;
+      return true;
+    });
+}
+
+export async function carregarProdutosMap({ col }) {
+  const snap = await getDocs(col('produtos'));
+  const map = {};
+  snap.docs.forEach(d => {
+    const x = d.data();
+    const cod = String(x.codigo || d.id || '').trim();
+    if (cod) {
+      map[cod] = {
+        codigo:      cod,
+        descricao:   x.descricao || x.nome || '',
+        tipoMarca:   x.tipoMarca || null,
+        embalagem:   x.embalagem || null,
+        peso:        Number(x.peso) || 0,
+        hecto:       Number(x.hecto) || 0,
+        paletizacao: Number(x.paletizacao) || 0,
+        lastro:      Number(x.lastro) || 0,
+        pzvDias:     Number(x.pzvDias) || null,   // pode vir da importação de PZV
+      };
+    }
+  });
+  return map;
+}
+
+export async function carregarPZVMap({ col }) {
+  // Coleção independente: pzv_produtos/{codigo} = { codigo, pzvDias }
+  try {
+    const snap = await getDocs(col('pzv_produtos'));
+    const map = {};
+    snap.docs.forEach(d => {
+      const x = d.data();
+      const cod = String(x.codigo || d.id || '').trim();
+      const pzv = Number(x.pzvDias);
+      if (cod && Number.isFinite(pzv) && pzv > 0) map[cod] = pzv;
+    });
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Carrega vendas dos últimos N dias (ex: 30) e devolve mapa codigo → cx/dia.
+ * Usa a coleção `vendas_relatorio` do módulo Reab (docs com produtos[] e
+ * vendas: { 'DD/MM/AAAA': qtd }).
+ */
+export async function carregarVendaMediaMap({ col, diasJanela = 30 }) {
+  const map = {};
+  try {
+    const snap = await getDocs(col('vendas_relatorio'));
+    if (snap.empty) return map;
+
+    const hoje = new Date();
+    const limite = new Date(hoje); limite.setDate(hoje.getDate() - diasJanela);
+    const acumulado = {};
+    const diasComVenda = {};
+
+    snap.docs.forEach(doc => {
+      const d = doc.data();
+      (d.produtos || []).forEach(p => {
+        const cod = String(p.codigo || '').trim();
+        if (!cod) return;
+        Object.entries(p.vendas || {}).forEach(([data, qtd]) => {
+          const dataM = data.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+          if (!dataM) return;
+          const dt = new Date(parseInt(dataM[3]), parseInt(dataM[2]) - 1, parseInt(dataM[1]));
+          if (dt < limite || dt > hoje) return;
+          const q = Number(qtd) || 0;
+          if (q <= 0) return;
+          acumulado[cod] = (acumulado[cod] || 0) + q;
+          if (!diasComVenda[cod]) diasComVenda[cod] = new Set();
+          diasComVenda[cod].add(data);
+        });
+      });
+    });
+
+    Object.entries(acumulado).forEach(([cod, soma]) => {
+      const ndias = (diasComVenda[cod] && diasComVenda[cod].size) || diasJanela;
+      map[cod] = soma / Math.max(1, ndias);
+    });
+  } catch {
+    // Sem coleção ainda
+  }
+  return map;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Agregadores
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Agrupa logs por (productCode, vencimento) e separa Estoque × Picking
+ * para detectar quebra de FEFO.
+ */
+export function detectarQuebraFEFO(linhas) {
+  // Agrupa por productCode → { estoque: { menorVencimento }, picking: { menorVencimento } }
+  const grupos = {};
+  linhas.forEach(l => {
+    if (!l.vencimento || !l.local) return;
+    if (!grupos[l.productCode]) grupos[l.productCode] = { estoque: null, picking: null, descricao: l.descricao, curva: l.curva };
+    const slot = l.local === 'Picking' ? 'picking' : 'estoque';
+    if (!grupos[l.productCode][slot] || l.vencimento < grupos[l.productCode][slot].vencimento) {
+      grupos[l.productCode][slot] = { vencimento: l.vencimento, quantidade: l.quantidadeCx };
+    }
+  });
+  // Devolve array só com produtos que têm AMBOS local
+  return Object.entries(grupos)
+    .filter(([, g]) => g.estoque && g.picking)
+    .map(([cod, g]) => {
+      const dif = diasEntre(g.picking.vencimento, g.estoque.vencimento); // estoque - picking
+      // Se picking vence DEPOIS do estoque → quebra (estoque deveria sair antes)
+      const quebra = dif < -TOLERANCIA_QUEBRA_FEFO;
+      return {
+        productCode: cod,
+        descricao: g.descricao,
+        curva: g.curva,
+        vencimentoEstoque: g.estoque.vencimento,
+        vencimentoPicking: g.picking.vencimento,
+        diferenca: dif,
+        toleranciaPermitida: TOLERANCIA_QUEBRA_FEFO,
+        quebra,
+      };
+    })
+    .sort((a, b) => a.diferenca - b.diferenca);
+}
+
+/** Stock Age Index — agregado total e por dimensão */
+export function calcularStockAge(linhas) {
+  let hectoTotal = 0;
+  let hectoSegregar = 0;     // Hecto < 60% Shelf Life
+  let hl30 = 0;              // HL < 30 dias
+  let hecto45 = 0;           // Hecto < 45 dias
+
+  linhas.forEach(l => {
+    hectoTotal += l.hectoTotal;
+    if (l.pctShelfLife != null && l.pctShelfLife < THRESHOLD_SEGREGAR_PCT) {
+      hectoSegregar += l.hectoTotal;
+    }
+    if (l.prazo != null && l.prazo < THRESHOLD_CRITICO_DIAS) {
+      hl30 += l.hectoTotal;
+    }
+    if (l.prazo != null && l.prazo < THRESHOLD_BAIXO_DIAS) {
+      hecto45 += l.hectoTotal;
+    }
+  });
+
+  const pctSegregar = hectoTotal > 0 ? (hectoSegregar / hectoTotal) * 100 : 0;
+  // Stock Age Index = % hecto "saudável" (acima de 60% shelf life)
+  const stockAgeIndex = hectoTotal > 0 ? ((hectoTotal - hectoSegregar) / hectoTotal) * 100 : 0;
+
+  return { hectoTotal, hectoSegregar, hl30, hecto45, pctSegregar, stockAgeIndex };
+}

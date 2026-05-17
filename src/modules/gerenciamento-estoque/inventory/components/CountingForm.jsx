@@ -1,658 +1,647 @@
 /**
- * CountingForm - Formulário para registrar uma contagem de inventário (Versão Melhorada)
+ * CountingForm — Registrar contagem (versão 2)
  *
- * Fluxo:
- * 1. Usuário seleciona Área
- * 2. Usuário digita Rua e Posição → validação contra DB
- * 3. Usuário digita Código do Produto ou Nome → autocomplete, preenchimento automático, sincronização
- * 4. Validação cruzada: Código ↔ Nome
- * 5. Data com auto-formatação DD/MM/AAAA
- * 6. Opcionalmente marca checkbox para repetir em todas as posições da rua
- * 7. Clica "Adicionar novo produto" ou "Registrar" quando terminar
- * 8. Dados salvos no Firebase
+ * - Endereço: dropdown searchable carregado de `locations` (ativos)
+ * - Código ↔ Descrição: bidirecional contra a base `produtos`
+ * - Quantidade: toggle Palete | Lastro | Caixa | Unidade + campo numérico
+ * - Validade: DD/MM/AAAA
+ *
+ * Ao registrar, busca:
+ *   - curva do endereço em locations_mensal/{YYYY-MM_endereco}
+ *   - curva do produto em curva_abc_mensal (com fallback p/ curva_abc)
+ * e grava no inventory_log o snapshot completo (enderecoCurva, productCurva, aderenteABC).
  */
-
-import React, { useState, useEffect } from 'react';
-import { getDocs, addDoc } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { getDocs, addDoc, query, where, Timestamp } from 'firebase/firestore';
 import { useDb } from '../../../../utils/db';
+import {
+  monthKey, nowYearMonth,
+  carregarMapaCurvaComFallback, calcularAderenteABC,
+} from '../../shared/curvaLookup';
 
-const initialFormState = {
-  area: '',
-  street: '',
-  palettePosition: '',
+const UNIDADES = [
+  { key: 'palete',  label: 'Palete'  },
+  { key: 'lastro',  label: 'Lastro'  },
+  { key: 'caixa',   label: 'Caixa'   },
+  { key: 'unidade', label: 'Unidade' },
+];
+
+const initialForm = {
+  endereco: '',
   productCode: '',
   productName: '',
+  quantidade: '',
+  unidade: 'caixa',
   expiryDate: '',
-  repeatForAllPositions: false,
 };
 
 export function CountingForm({ conferente, onSuccess, onError }) {
-  const { col, colRevenda, stamp } = useDb();
-  const [form, setForm] = useState(initialFormState);
-  const [areas, setAreas] = useState([]);
-  const [produtos, setProdutosDB] = useState([]); // Base de produtos
-  const [locationAssignments, setLocationAssignments] = useState({}); // productCode → locationId
-  const [curvaMap, setCurvaMap] = useState({}); // productCode → curva
-  const [loadingAreas, setLoadingAreas] = useState(true);
+  const { col, docRef, colRevenda, rid, stamp } = useDb();
+  const { ano, mes } = nowYearMonth();
+  const chave = monthKey(ano, mes);
+
+  const [form, setForm] = useState(initialForm);
+  const [enderecos, setEnderecos] = useState([]);       // [{ endereco, isActive }]
+  const [mensaisDoMes, setMensaisDoMes] = useState({}); // { endereco: {curva, produtoCodigo, produtoNome} }
+  const [produtos, setProdutos] = useState([]);         // base de produtos
+  const [curvaMap, setCurvaMap] = useState({});         // codigo -> curva
+  const [curvaOrigem, setCurvaOrigem] = useState('vazio');
+  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [fila, setFila] = useState([]);
   const [message, setMessage] = useState('');
-  const [produtosQueueados, setProdutosQueueados] = useState([]); // Fila de produtos a registrar
-
-  // Validações e erros
-  const [erros, setErros] = useState({});
-
-  // Autocomplete de produtos por nome
+  const [errs, setErrs] = useState({});
   const [sugestoesNome, setSugestoesNome] = useState([]);
-  const [mostrarSugestoesNome, setMostrarSugestoesNome] = useState(false);
+  const [mostrarSug, setMostrarSug] = useState(false);
+  // Para o combobox de endereço (filtra à medida que digita)
+  const [enderecoBusca, setEnderecoBusca] = useState('');
+  const [mostrarSugEnd, setMostrarSugEnd] = useState(false);
+  // Para o autocomplete de código
+  const [sugestoesCodigo, setSugestoesCodigo] = useState([]);
+  const [mostrarSugCod, setMostrarSugCod] = useState(false);
 
-  const containerStyle = {
-    maxWidth: '700px',
-    margin: '20px auto',
-    padding: '20px',
-    backgroundColor: '#fff',
-    borderRadius: '8px',
+  // ─── Estilos ──────────────────────────────────────────────────────────
+  const cs = {
+    maxWidth: '760px', margin: '20px auto', padding: '20px',
+    backgroundColor: '#fff', borderRadius: '8px',
     boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
   };
-
-  const formGroupStyle = { marginBottom: '15px' };
-  const labelStyle = {
-    display: 'block',
-    marginBottom: '5px',
-    fontWeight: 'bold',
-    color: '#333',
+  const group = { marginBottom: '15px' };
+  const lbl = { display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333', fontSize: '13px' };
+  const inp = {
+    width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '4px',
+    boxSizing: 'border-box', fontSize: '14px',
   };
-  const inputStyle = {
-    width: '100%',
-    padding: '10px',
-    border: '1px solid #ddd',
-    borderRadius: '4px',
-    boxSizing: 'border-box',
-    fontSize: '14px',
-  };
-  const buttonStyle = {
-    padding: '10px 20px',
-    backgroundColor: '#E31837',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    fontWeight: 'bold',
-    cursor: 'pointer',
-    marginRight: '10px',
+  const btn = {
+    padding: '10px 20px', backgroundColor: '#E31837', color: 'white',
+    border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', marginRight: '10px',
   };
 
-  const tableStyle = {
-    width: '100%',
-    borderCollapse: 'collapse',
-    marginTop: '20px',
-  };
+  // ─── Carregar dados ────────────────────────────────────────────────────
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { carregar(); }, [ano, mes, rid]);
 
-  const thStyle = {
-    backgroundColor: '#E31837',
-    color: 'white',
-    padding: '12px',
-    textAlign: 'left',
-    fontWeight: 'bold',
-  };
-
-  const tdStyle = {
-    padding: '12px',
-    borderBottom: '1px solid #ddd',
-  };
-
-  // Carregar áreas e produtos ao montar
-  useEffect(() => {
-    carregarDados();
-  }, []);
-
-  async function carregarDados() {
-    setLoadingAreas(true);
+  async function carregar() {
+    setLoading(true);
     try {
-      const [locationsSnap, produtosSnap, curvaSnap] = await Promise.all([
+      const [snapLoc, snapMensal, snapProd] = await Promise.all([
         getDocs(col('locations')),
+        getDocs(query(col('locations_mensal'), where('chaveMes', '==', chave))),
         getDocs(col('produtos')),
-        getDocs(colRevenda('curva_abc')),
       ]);
 
-      // Áreas disponíveis + mapa de localização por produto
-      const areasSet = new Set();
-      const assignments = {};
-      locationsSnap.docs.forEach((d) => {
-        const loc = d.data();
-        if (loc.area) areasSet.add(loc.area);
-        if (loc.assignedSkuId) {
-          assignments[String(loc.assignedSkuId)] = d.id; // ex: "A-1-5"
-        }
-      });
-      setAreas(Array.from(areasSet).sort());
-      setLocationAssignments(assignments);
+      const listaEnd = snapLoc.docs.map(d => {
+        const data = d.data();
+        const endStr = data.endereco
+          || (data.area != null ? `${data.area}-${data.street}-${data.palettePosition}` : d.id);
+        return { endereco: endStr, isActive: data.isActive !== false };
+      })
+        .filter(e => e.isActive)
+        .sort((a, b) => a.endereco.localeCompare(b.endereco, 'pt-BR', { numeric: true }));
 
-      // Base de produtos
-      setProdutosDB(produtosSnap.docs.map(doc => ({
-        codigo: doc.data().codigo,
-        nome: doc.data().nome,
-      })));
-
-      // Mapa de curva ABC
-      const curvas = {};
-      curvaSnap.docs.forEach(d => {
-        const { codigo, curva } = d.data();
-        if (codigo) curvas[String(codigo)] = curva || null;
+      const mapMensal = {};
+      snapMensal.docs.forEach(d => {
+        const data = d.data();
+        if (data.endereco) mapMensal[data.endereco] = data;
       });
-      setCurvaMap(curvas);
-    } catch (error) {
-      console.error('Erro ao carregar dados:', error);
+
+      setEnderecos(listaEnd);
+      setMensaisDoMes(mapMensal);
+      // A coleção `produtos` (importada pelo relatório 01.11 em Configurações)
+      // usa o campo `descricao`. Mantemos `nome` no shape interno para
+      // simplicidade, mas a fonte é `descricao`. Para arquivos antigos que
+      // pudessem usar `nome`, mantemos como fallback.
+      setProdutos(snapProd.docs.map(d => {
+        const x = d.data();
+        return {
+          codigo: String(x.codigo || d.id || ''),
+          nome: x.descricao || x.nome || '',
+        };
+      }).filter(p => p.codigo));
+
+      const { mapa, origem } = await carregarMapaCurvaComFallback({
+        docRefFn: docRef, colFn: col, colRevendaFn: colRevenda, rid, ano, mes,
+      });
+      setCurvaMap(mapa);
+      setCurvaOrigem(origem);
+    } catch (e) {
+      console.error('Erro ao carregar dados:', e);
+      setMessage(`❌ Erro ao carregar dados: ${e.message}`);
     } finally {
-      setLoadingAreas(false);
+      setLoading(false);
     }
   }
 
-  // ========== VALIDAÇÕES ==========
-
-  // Buscar produto por código
-  function buscarProdutoPorCodigo(codigo) {
-    return produtos.find(p => p.codigo === codigo);
+  // ─── Lookup de produto ─────────────────────────────────────────────────
+  function acharProdutoPorCodigo(codigo) {
+    if (!codigo) return null;
+    return produtos.find(p => p.codigo === String(codigo).trim());
   }
-
-  // Validar localização (Area + Street + Position)
-  async function validarLocalizacao(area, street, palettePosition) {
-    try {
-      const locationId = `${area}-${street}-${palettePosition}`;
-      const snap = await getDocs(col('locations'));
-      const existe = snap.docs.some(doc => doc.id === locationId);
-      return existe;
-    } catch (error) {
-      console.error('Erro ao validar localização:', error);
-      return false;
-    }
-  }
-
-  // Auto-formatar data DD/MM/AAAA
-  function formatarData(valor) {
-    // Remove caracteres não-numéricos
-    const apenas_numeros = valor.replace(/\D/g, '');
-
-    if (apenas_numeros.length === 0) return '';
-    if (apenas_numeros.length <= 2) return apenas_numeros;
-    if (apenas_numeros.length <= 4) return `${apenas_numeros.slice(0, 2)}/${apenas_numeros.slice(2)}`;
-    return `${apenas_numeros.slice(0, 2)}/${apenas_numeros.slice(2, 4)}/${apenas_numeros.slice(4, 8)}`;
-  }
-
-  // Validar formato de data
-  function validarFormatoData(dateStr) {
-    const match = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (!match) return null;
-    const [, day, month, year] = match;
-    const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    if (isNaN(date.getTime())) return null;
-    return date;
-  }
-
-  function parseDate(dateStr) {
-    return validarFormatoData(dateStr);
-  }
-
-  // Gerar sugestões de produtos por nome
-  function gerarSugestoesNome(texto) {
-    if (!texto.trim()) return [];
-    const textoBaixo = texto.toLowerCase();
+  function sugestoesPorNome(texto) {
+    if (!texto?.trim()) return [];
+    const q = texto.toLowerCase();
     return produtos
-      .filter(p => p.nome.toLowerCase().includes(textoBaixo))
+      .filter(p => p.nome && p.nome.toLowerCase().includes(q))
       .slice(0, 10);
   }
-
-  // Validar formulário completo
-  function validarFormulario() {
-    const novosErros = {};
-
-    if (!form.area.trim()) novosErros.area = 'Área é obrigatória';
-    if (!form.street.trim()) novosErros.street = 'Rua é obrigatória';
-    if (!form.palettePosition.trim()) novosErros.palettePosition = 'Posição Palete é obrigatória';
-
-    // Validar código do produto
-    if (!form.productCode.trim()) {
-      novosErros.productCode = 'Código do Produto é obrigatório';
-    } else {
-      const prodEncontrado = buscarProdutoPorCodigo(form.productCode.trim());
-      if (!prodEncontrado) {
-        novosErros.productCode = 'Código do produto não existe na base de dados';
-      } else if (form.productName && form.productName !== prodEncontrado.nome) {
-        novosErros.productName = 'Nome não corresponde ao código selecionado';
-      }
-    }
-
-    // Validar nome do produto se preenchido
-    if (form.productName && !form.productCode) {
-      novosErros.productName = 'Selecione um produto da lista';
-    }
-
-    // Validar data
-    if (!form.expiryDate.trim()) {
-      novosErros.expiryDate = 'Data de Validade é obrigatória';
-    } else {
-      const dataParsed = validarFormatoData(form.expiryDate);
-      if (!dataParsed) {
-        novosErros.expiryDate = 'Data inválida (use DD/MM/AAAA)';
-      }
-    }
-
-    setErros(novosErros);
-    return Object.keys(novosErros).length === 0;
+  function sugestoesPorCodigo(texto) {
+    if (!texto?.trim()) return [];
+    const q = String(texto).trim();
+    // Mostra os códigos que começam ou contêm o que está sendo digitado
+    return produtos
+      .filter(p => p.codigo && p.codigo.includes(q))
+      .slice(0, 10);
+  }
+  function sugestoesPorEndereco(texto) {
+    const q = (texto || '').trim().toUpperCase();
+    const base = enderecos;
+    if (!q) return base.slice(0, 30);
+    return base.filter(e => e.endereco.includes(q)).slice(0, 30);
   }
 
-  async function handleAdicionarProduto(e) {
+  // ─── Auto-formato de data ──────────────────────────────────────────────
+  function formatarData(valor) {
+    const n = valor.replace(/\D/g, '');
+    if (n.length === 0) return '';
+    if (n.length <= 2) return n;
+    if (n.length <= 4) return `${n.slice(0, 2)}/${n.slice(2)}`;
+    return `${n.slice(0, 2)}/${n.slice(2, 4)}/${n.slice(4, 8)}`;
+  }
+  function parseData(s) {
+    const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!m) return null;
+    const [, dd, mm, yyyy] = m;
+    const d = new Date(parseInt(yyyy), parseInt(mm) - 1, parseInt(dd));
+    if (isNaN(d.getTime())) return null;
+    return d;
+  }
+
+  // ─── Validar formulário ───────────────────────────────────────────────
+  function validar() {
+    const e = {};
+    if (!form.endereco) e.endereco = 'Selecione um endereço';
+    if (!form.productCode.trim()) {
+      e.productCode = 'Código é obrigatório';
+    } else {
+      const p = acharProdutoPorCodigo(form.productCode);
+      if (!p) e.productCode = 'Código não encontrado na base';
+      else if (form.productName && form.productName !== p.nome) {
+        e.productName = 'Nome não corresponde ao código';
+      }
+    }
+    const qt = parseFloat(String(form.quantidade).replace(',', '.'));
+    if (!form.quantidade || isNaN(qt) || qt <= 0) e.quantidade = 'Quantidade deve ser maior que zero';
+    if (!form.expiryDate) e.expiryDate = 'Validade é obrigatória';
+    else if (!parseData(form.expiryDate)) e.expiryDate = 'Data inválida (DD/MM/AAAA)';
+    setErrs(e);
+    return Object.keys(e).length === 0;
+  }
+
+  // ─── Adicionar à fila ──────────────────────────────────────────────────
+  function adicionar(e) {
     e.preventDefault();
     setMessage('');
-    setErros({});
+    if (!validar()) return;
 
-    // Validar formulário
-    if (!validarFormulario()) {
-      return; // erros já foram setados
-    }
+    const prod = acharProdutoPorCodigo(form.productCode);
+    const dadosMensal = mensaisDoMes[form.endereco];
 
-    // Validar localização contra o banco
-    const localizacaoValida = await validarLocalizacao(
-      form.area,
-      parseInt(form.street),
-      parseInt(form.palettePosition)
-    );
-
-    if (!localizacaoValida) {
-      setErros(prev => ({
-        ...prev,
-        localizacao: `❌ Localização ${form.area}-${form.street}-${form.palettePosition} não está cadastrada`
-      }));
-      setMessage(`❌ A localização ${form.area}-${form.street}-${form.palettePosition} não existe no banco de dados. Cadastre-a em "Gerenciar Localizações" primeiro.`);
-      return;
-    }
-
-    // Tudo validado, adicionar à fila
-    const produtoEncontrado = buscarProdutoPorCodigo(form.productCode);
-    const novoProduto = {
-      area: form.area,
-      street: parseInt(form.street),
-      palettePosition: parseInt(form.palettePosition),
-      productCode: form.productCode,
-      productName: produtoEncontrado?.nome || form.productName,
+    const item = {
+      endereco: form.endereco,
+      enderecoCurva: dadosMensal?.curva || null,
+      produtoEsperadoCodigo: dadosMensal?.produtoCodigo || null,
+      productCode: form.productCode.trim(),
+      productName: prod?.nome || form.productName.trim(),
+      productCurva: curvaMap[form.productCode.trim()] || null,
+      curvaOrigem,
+      quantidade: parseFloat(String(form.quantidade).replace(',', '.')),
+      unidade: form.unidade,
       expiryDate: form.expiryDate,
-      repeatForAllPositions: form.repeatForAllPositions,
     };
 
-    setProdutosQueueados([...produtosQueueados, novoProduto]);
-
-    // Limpar apenas Rua, Posição, Código e Data - MANTER Área
-    setForm({
-      ...form,
-      street: '',
-      palettePosition: '',
-      productCode: '',
-      productName: '',
-      expiryDate: '',
-      repeatForAllPositions: false,
-    });
-
-    setMostrarSugestoesNome(false);
-    setSugestoesNome([]);
-
-    setMessage(`✅ Produto ${novoProduto.productCode} adicionado à fila`);
-    setTimeout(() => setMessage(''), 2000);
+    setFila(prev => [...prev, item]);
+    setMessage(`✅ ${item.productCode} (${item.quantidade} ${item.unidade}) adicionado à fila`);
+    setForm(f => ({ ...initialForm, endereco: f.endereco })); // mantém endereço
+    setSugestoesNome([]); setMostrarSug(false);
+    setTimeout(() => setMessage(''), 2200);
   }
 
-  async function handleRegistrarTudo(e) {
-    e.preventDefault();
-    if (produtosQueueados.length === 0) {
-      setMessage('❌ Adicione pelo menos um produto');
+  function removerDaFila(idx) {
+    setFila(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  // ─── Salvar fila no Firebase ──────────────────────────────────────────
+  async function registrarTudo() {
+    if (fila.length === 0) {
+      setMessage('❌ Adicione pelo menos um item.');
       return;
     }
-
     setSubmitting(true);
-    setMessage('');
-
+    setMessage('⏳ Registrando...');
     try {
-      let count = 0;
-
-      for (const prod of produtosQueueados) {
-        const locations = [];
-
-        if (prod.repeatForAllPositions) {
-          // Buscar todas as posições desta rua/área
-          const snap = await getDocs(col('locations'));
-          snap.docs.forEach((d) => {
-            const data = d.data();
-            if (data.area === prod.area && data.street === prod.street) {
-              locations.push({
-                area: data.area,
-                street: data.street,
-                palettePosition: data.palettePosition,
-              });
-            }
-          });
-        } else {
-          // Apenas uma posição
-          locations.push({
-            area: prod.area,
-            street: prod.street,
-            palettePosition: prod.palettePosition,
-          });
-        }
-
-        // Salvar cada contagem
-        for (const loc of locations) {
-          const locationId = `${loc.area}-${loc.street}-${loc.palettePosition}`;
-
-          await addDoc(col('inventory_logs'), {
-            area: loc.area,
-            street: loc.street,
-            palettePosition: loc.palettePosition,
-            locationId: locationId,
-            productCode: prod.productCode,
-            productName: prod.productName,
-            expiryDate: parseDate(prod.expiryDate),
-            conferente: conferente || 'Conferente',
-            timestamp: new Date(),
-            notes: '',
-            // Snapshots para integridade histórica
-            assignedLocation: locationAssignments[String(prod.productCode)] || null,
-            productCurva: curvaMap[String(prod.productCode)] || null,
-            ...stamp(),
-          });
-
-          count++;
-        }
+      for (const item of fila) {
+        const validade = parseData(item.expiryDate);
+        const aderenteABC = calcularAderenteABC(item.productCurva, item.enderecoCurva);
+        await addDoc(col('inventory_logs'), {
+          // Endereço + chaves de tempo
+          endereco: item.endereco,
+          ano, mes, chaveMes: chave,
+          // Produto
+          productCode: item.productCode,
+          productName: item.productName,
+          // Quantidade
+          quantidade: item.quantidade,
+          unidade: item.unidade,
+          // Validade
+          expiryDate: validade ? Timestamp.fromDate(validade) : null,
+          // Snapshots para cálculo histórico
+          enderecoCurva: item.enderecoCurva,
+          productCurva: item.productCurva,
+          curvaOrigem: item.curvaOrigem,
+          aderenteABC,
+          produtoEsperadoCodigo: item.produtoEsperadoCodigo,
+          // Layout adherence (futuro) — comparamos quando habilitar
+          aderenteLayout: item.produtoEsperadoCodigo
+            ? String(item.produtoEsperadoCodigo) === String(item.productCode)
+            : null,
+          // Auditoria
+          conferente: conferente || 'Conferente',
+          timestamp: new Date(),
+          origem: 'manual',
+          ...stamp(),
+        });
       }
-
-      setMessage(`✅ ${count} contagem(ns) registrada(s) com sucesso!`);
-      setProdutosQueueados([]);
-      setForm(initialFormState);
-      setErros({});
-      onSuccess?.({ count });
-
-      setTimeout(() => setMessage(''), 3000);
-    } catch (error) {
-      setMessage(`❌ Erro ao registrar: ${error.message}`);
-      onError?.(error);
+      setMessage(`✅ ${fila.length} contagem(ns) registrada(s)!`);
+      setFila([]);
+      setForm(initialForm);
+      setEnderecoBusca('');
+      onSuccess?.({ count: fila.length });
+      setTimeout(() => setMessage(''), 3500);
+    } catch (e) {
+      setMessage(`❌ Erro: ${e.message}`);
+      onError?.(e);
     } finally {
       setSubmitting(false);
     }
   }
 
-  function handleRemoverProduto(idx) {
-    setProdutosQueueados(produtosQueueados.filter((_, i) => i !== idx));
-  }
+  // ─── Derivados ────────────────────────────────────────────────────────
+  const enderecoSelInfo = useMemo(() => {
+    if (!form.endereco) return null;
+    return mensaisDoMes[form.endereco] || null;
+  }, [form.endereco, mensaisDoMes]);
+
+  const aderenciaPreview = useMemo(() => {
+    if (!form.productCode || !form.endereco) return null;
+    const curvaProd = curvaMap[form.productCode.trim()];
+    const curvaEnd = enderecoSelInfo?.curva;
+    if (!curvaProd || !curvaEnd) return null;
+    return curvaProd === curvaEnd ? 'aderente' : 'nao-aderente';
+  }, [form.productCode, form.endereco, curvaMap, enderecoSelInfo]);
 
   return (
-    <div style={containerStyle}>
-      <h2 style={{ color: '#E31837', marginBottom: '20px' }}>📝 Registrar Contagem</h2>
+    <div style={cs}>
+      <h2 style={{ color: '#E31837', marginBottom: '15px' }}>Registrar Contagem</h2>
 
       {message && (
-        <div
-          style={{
-            padding: '12px',
-            marginBottom: '15px',
-            borderRadius: '4px',
-            backgroundColor: message.includes('✅') ? '#dcfce7' : '#fee2e2',
-            color: message.includes('✅') ? '#166534' : '#991b1b',
-            borderLeft: `4px solid ${message.includes('✅') ? '#22c55e' : '#ef4444'}`,
-          }}
-        >
-          {message}
-        </div>
+        <div style={{
+          padding: '10px', marginBottom: '12px', borderRadius: '4px',
+          backgroundColor: message.includes('✅') ? '#dcfce7' : message.includes('⏳') ? '#dbeafe' : '#fee2e2',
+          color: message.includes('✅') ? '#166534' : message.includes('⏳') ? '#0369a1' : '#991b1b',
+          borderLeft: `4px solid ${message.includes('✅') ? '#22c55e' : message.includes('⏳') ? '#0ea5e9' : '#ef4444'}`,
+          fontSize: '13px',
+        }}>{message}</div>
       )}
 
-      <form onSubmit={handleAdicionarProduto}>
-        <div style={formGroupStyle}>
-          <label style={labelStyle}>📍 Área</label>
-          <select
-            style={inputStyle}
-            value={form.area}
-            onChange={(e) => setForm({ ...form, area: e.target.value })}
-            disabled={loadingAreas || submitting}
-          >
-            <option value="">-- Selecionar Área --</option>
-            {areas.map((area) => (
-              <option key={area} value={area}>
-                {area}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div style={formGroupStyle}>
-          <label style={labelStyle}>🛣️ Rua (número)</label>
-          <input
-            type="text"
-            placeholder="Ex: 1, 2, 35..."
-            value={form.street}
-            onChange={(e) =>
-              setForm({ ...form, street: e.target.value.replace(/\D/g, '') })
-            }
-            disabled={submitting}
-            style={{...inputStyle, borderColor: erros.street ? '#e31837' : '#ddd'}}
-          />
-          {erros.street && <div style={{ color: '#e31837', fontSize: '12px', marginTop: '4px' }}>❌ {erros.street}</div>}
-        </div>
-
-        <div style={formGroupStyle}>
-          <label style={labelStyle}>📦 Posição Palete (número)</label>
-          <input
-            type="text"
-            placeholder="Ex: 1, 2, 209..."
-            value={form.palettePosition}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                palettePosition: e.target.value.replace(/\D/g, ''),
-              })
-            }
-            disabled={submitting}
-            style={{...inputStyle, borderColor: erros.palettePosition ? '#e31837' : '#ddd'}}
-          />
-          {erros.palettePosition && <div style={{ color: '#e31837', fontSize: '12px', marginTop: '4px' }}>❌ {erros.palettePosition}</div>}
-        </div>
-
-        {erros.localizacao && (
-          <div style={{ padding: '12px', marginBottom: '15px', borderRadius: '4px', backgroundColor: '#fee2e2', color: '#991b1b', borderLeft: '4px solid #ef4444' }}>
-            {erros.localizacao}
-          </div>
-        )}
-
-        <div style={formGroupStyle}>
-          <label style={labelStyle}>📛 Código do Produto</label>
-          <input
-            type="text"
-            placeholder="Ex: 1695"
-            value={form.productCode}
-            onChange={(e) => {
-              const codigo = e.target.value;
-              setForm({ ...form, productCode: codigo });
-
-              // Auto-preenchimento: se código existe, preenche nome
-              const prodEncontrado = buscarProdutoPorCodigo(codigo);
-              if (prodEncontrado) {
-                setForm(prev => ({ ...prev, productCode: codigo, productName: prodEncontrado.nome }));
-              }
-            }}
-            disabled={submitting}
-            style={{...inputStyle, borderColor: erros.productCode ? '#e31837' : '#ddd'}}
-          />
-          {erros.productCode && <div style={{ color: '#e31837', fontSize: '12px', marginTop: '4px' }}>❌ {erros.productCode}</div>}
-        </div>
-
-        <div style={formGroupStyle}>
-          <label style={labelStyle}>📦 Produto (Nome)</label>
+      <form onSubmit={adicionar}>
+        {/* Endereço — combobox: digita pra filtrar, clica pra selecionar */}
+        <div style={group}>
+          <label style={lbl}>Endereço</label>
           <div style={{ position: 'relative' }}>
             <input
               type="text"
-              placeholder="Comece a digitar o nome do produto..."
-              value={form.productName}
+              placeholder="Digite parte do endereço (ex: A-1)"
+              value={enderecoBusca}
               onChange={(e) => {
-                const nome = e.target.value;
-                setForm({ ...form, productName: nome });
-
-                // Gerar sugestões
-                const sugestoes = gerarSugestoesNome(nome);
-                setSugestoesNome(sugestoes);
-                setMostrarSugestoesNome(sugestoes.length > 0);
+                const txt = e.target.value.toUpperCase();
+                setEnderecoBusca(txt);
+                // Se o usuário apagou tudo ou o texto não bate exato com a seleção,
+                // limpa o endereço escolhido — assim o usuário tem que escolher de novo
+                if (txt !== form.endereco) setForm(prev => ({ ...prev, endereco: '' }));
+                setMostrarSugEnd(true);
               }}
-              onFocus={() => {
-                if (form.productName) {
-                  const sugestoes = gerarSugestoesNome(form.productName);
-                  setSugestoesNome(sugestoes);
-                  setMostrarSugestoesNome(sugestoes.length > 0);
-                }
-              }}
-              disabled={submitting}
-              style={{...inputStyle, borderColor: erros.productName ? '#e31837' : '#ddd'}}
+              onFocus={() => setMostrarSugEnd(true)}
+              onBlur={() => setTimeout(() => setMostrarSugEnd(false), 150)}
+              disabled={loading || submitting}
+              style={{ ...inp, borderColor: errs.endereco ? '#e31837' : '#ddd', fontFamily: 'monospace', textTransform: 'uppercase' }}
             />
-
-            {mostrarSugestoesNome && sugestoesNome.length > 0 && (
-              <div style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                right: 0,
-                backgroundColor: '#fff',
-                border: '1px solid #ddd',
-                borderTop: 'none',
-                borderRadius: '0 0 4px 4px',
-                zIndex: 10,
-                maxHeight: '200px',
-                overflowY: 'auto',
-                boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-              }}>
-                {sugestoesNome.map((prod, idx) => (
-                  <div
-                    key={idx}
-                    onClick={() => {
-                      setForm({ ...form, productCode: prod.codigo, productName: prod.nome });
-                      setMostrarSugestoesNome(false);
-                      setSugestoesNome([]);
-                    }}
-                    style={{
-                      padding: '10px',
-                      borderBottom: idx < sugestoesNome.length - 1 ? '1px solid #eee' : 'none',
-                      cursor: 'pointer',
-                      backgroundColor: '#f9f9f9',
-                      fontSize: '12px',
-                    }}
-                    onMouseEnter={(e) => e.target.style.backgroundColor = '#efefef'}
-                    onMouseLeave={(e) => e.target.style.backgroundColor = '#f9f9f9'}
-                  >
-                    <strong>{prod.codigo}</strong> - {prod.nome}
-                  </div>
-                ))}
-              </div>
-            )}
+            {mostrarSugEnd && (() => {
+              const lista = sugestoesPorEndereco(enderecoBusca);
+              if (lista.length === 0) return null;
+              return (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, right: 0,
+                  backgroundColor: '#fff', border: '1px solid #ddd', borderTop: 'none',
+                  borderRadius: '0 0 4px 4px', zIndex: 10,
+                  maxHeight: '240px', overflowY: 'auto',
+                  boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                }}>
+                  {lista.map((e, idx) => {
+                    const m = mensaisDoMes[e.endereco];
+                    return (
+                      <div
+                        key={e.endereco}
+                        onMouseDown={() => {
+                          setForm(prev => ({ ...prev, endereco: e.endereco }));
+                          setEnderecoBusca(e.endereco);
+                          setMostrarSugEnd(false);
+                        }}
+                        style={{
+                          padding: '8px 10px', cursor: 'pointer', fontSize: '13px',
+                          borderBottom: idx < lista.length - 1 ? '1px solid #eee' : 'none',
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        }}
+                        onMouseEnter={(ev) => ev.currentTarget.style.backgroundColor = '#f3f4f6'}
+                        onMouseLeave={(ev) => ev.currentTarget.style.backgroundColor = '#fff'}
+                      >
+                        <span style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{e.endereco}</span>
+                        {m?.curva ? (
+                          <span style={{
+                            padding: '1px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold',
+                            backgroundColor: m.curva === 'A' ? '#dcfce7' : m.curva === 'B' ? '#fef3c7' : '#fee2e2',
+                            color: m.curva === 'A' ? '#166534' : m.curva === 'B' ? '#92400e' : '#991b1b',
+                          }}>Curva {m.curva}</span>
+                        ) : (
+                          <span style={{ fontSize: '10px', color: '#999', fontStyle: 'italic' }}>sem curva</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
-          {erros.productName && <div style={{ color: '#e31837', fontSize: '12px', marginTop: '4px' }}>❌ {erros.productName}</div>}
+          {form.endereco && enderecoSelInfo && (
+            <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+              {enderecoSelInfo.curva ? `Curva do endereço: ${enderecoSelInfo.curva}` : `Sem curva definida no mês atual`}
+              {enderecoSelInfo.produtoCodigo && (
+                <> · Produto previsto: <strong>{enderecoSelInfo.produtoCodigo}</strong>{enderecoSelInfo.produtoNome ? ` — ${enderecoSelInfo.produtoNome}` : ''}</>
+              )}
+            </div>
+          )}
+          {errs.endereco && <div style={{ color: '#e31837', fontSize: 12, marginTop: 4 }}>❌ {errs.endereco}</div>}
         </div>
 
-        <div style={formGroupStyle}>
-          <label style={labelStyle}>📅 Data de Validade</label>
+        {/* Código + Descrição bidirecionais */}
+        <div style={{ display: 'grid', gridTemplateColumns: '170px 1fr', gap: 12 }}>
+          <div style={group}>
+            <label style={lbl}>Código</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                placeholder="Ex: 1695"
+                value={form.productCode}
+                onChange={(e) => {
+                  const codigo = e.target.value;
+                  const pe = acharProdutoPorCodigo(codigo);
+                  setForm(prev => ({
+                    ...prev,
+                    productCode: codigo,
+                    // Se bate exato → preenche descrição. Senão, mantém o que tinha.
+                    productName: pe ? pe.nome : (codigo ? prev.productName : ''),
+                  }));
+                  const sug = sugestoesPorCodigo(codigo);
+                  setSugestoesCodigo(sug); setMostrarSugCod(sug.length > 0);
+                }}
+                onFocus={() => {
+                  if (form.productCode) {
+                    const sug = sugestoesPorCodigo(form.productCode);
+                    setSugestoesCodigo(sug); setMostrarSugCod(sug.length > 0);
+                  }
+                }}
+                onBlur={() => setTimeout(() => setMostrarSugCod(false), 150)}
+                disabled={submitting}
+                style={{ ...inp, borderColor: errs.productCode ? '#e31837' : '#ddd', fontFamily: 'monospace' }}
+              />
+              {mostrarSugCod && sugestoesCodigo.length > 0 && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, right: 0,
+                  backgroundColor: '#fff', border: '1px solid #ddd', borderTop: 'none',
+                  borderRadius: '0 0 4px 4px', zIndex: 10, maxHeight: '200px', overflowY: 'auto',
+                  boxShadow: '0 4px 6px rgba(0,0,0,0.1)', minWidth: '320px',
+                }}>
+                  {sugestoesCodigo.map((p, idx) => (
+                    <div
+                      key={idx}
+                      onMouseDown={() => {
+                        setForm(prev => ({ ...prev, productCode: p.codigo, productName: p.nome }));
+                        setMostrarSugCod(false);
+                      }}
+                      style={{
+                        padding: '8px 10px', cursor: 'pointer', fontSize: '12px',
+                        borderBottom: idx < sugestoesCodigo.length - 1 ? '1px solid #eee' : 'none',
+                      }}
+                      onMouseEnter={(ev) => ev.currentTarget.style.backgroundColor = '#f3f4f6'}
+                      onMouseLeave={(ev) => ev.currentTarget.style.backgroundColor = '#fff'}
+                    >
+                      <strong style={{ fontFamily: 'monospace' }}>{p.codigo}</strong> — {p.nome}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {errs.productCode && <div style={{ color: '#e31837', fontSize: 12, marginTop: 4 }}>❌ {errs.productCode}</div>}
+          </div>
+
+          <div style={group}>
+            <label style={lbl}>Descrição</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                placeholder="Digite para buscar..."
+                value={form.productName}
+                onChange={(e) => {
+                  const nome = e.target.value;
+                  setForm(prev => ({ ...prev, productName: nome }));
+                  const sug = sugestoesPorNome(nome);
+                  setSugestoesNome(sug); setMostrarSug(sug.length > 0);
+                }}
+                onFocus={() => {
+                  if (form.productName) {
+                    const sug = sugestoesPorNome(form.productName);
+                    setSugestoesNome(sug); setMostrarSug(sug.length > 0);
+                  }
+                }}
+                onBlur={() => setTimeout(() => setMostrarSug(false), 150)}
+                disabled={submitting}
+                style={{ ...inp, borderColor: errs.productName ? '#e31837' : '#ddd' }}
+              />
+              {mostrarSug && sugestoesNome.length > 0 && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, right: 0,
+                  backgroundColor: '#fff', border: '1px solid #ddd', borderTop: 'none',
+                  borderRadius: '0 0 4px 4px', zIndex: 10, maxHeight: '200px', overflowY: 'auto',
+                  boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                }}>
+                  {sugestoesNome.map((p, idx) => (
+                    <div
+                      key={idx}
+                      onMouseDown={() => {
+                        setForm(prev => ({ ...prev, productCode: p.codigo, productName: p.nome }));
+                        setMostrarSug(false);
+                      }}
+                      style={{
+                        padding: '8px 10px', cursor: 'pointer', fontSize: '12px',
+                        borderBottom: idx < sugestoesNome.length - 1 ? '1px solid #eee' : 'none',
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#fff'}
+                    >
+                      <strong>{p.codigo}</strong> — {p.nome}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {errs.productName && <div style={{ color: '#e31837', fontSize: 12, marginTop: 4 }}>❌ {errs.productName}</div>}
+          </div>
+        </div>
+
+        {/* Aderência preview */}
+        {aderenciaPreview && (
+          <div style={{
+            padding: '8px 12px', borderRadius: '4px', marginBottom: '12px', fontSize: '12px',
+            backgroundColor: aderenciaPreview === 'aderente' ? '#dcfce7' : '#fee2e2',
+            color: aderenciaPreview === 'aderente' ? '#166534' : '#991b1b',
+            borderLeft: `4px solid ${aderenciaPreview === 'aderente' ? '#22c55e' : '#ef4444'}`,
+          }}>
+            {aderenciaPreview === 'aderente'
+              ? `Aderente: produto Curva ${curvaMap[form.productCode.trim()]} no endereço Curva ${enderecoSelInfo?.curva}`
+              : `Não aderente: produto Curva ${curvaMap[form.productCode.trim()]} em endereço Curva ${enderecoSelInfo?.curva}`}
+          </div>
+        )}
+
+        {/* Quantidade — toggle de unidade + número */}
+        <div style={group}>
+          <label style={lbl}>Quantidade</label>
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
+            {UNIDADES.map(u => {
+              const sel = form.unidade === u.key;
+              return (
+                <button
+                  key={u.key}
+                  type="button"
+                  onClick={() => setForm({ ...form, unidade: u.key })}
+                  disabled={submitting}
+                  style={{
+                    padding: '8px 14px',
+                    backgroundColor: sel ? '#E31837' : '#f8fafc',
+                    color: sel ? '#fff' : '#475569',
+                    border: `1px solid ${sel ? '#E31837' : '#e2e8f0'}`,
+                    borderRadius: '6px',
+                    fontSize: '12.5px',
+                    fontWeight: sel ? 700 : 500,
+                    cursor: 'pointer',
+                    transition: '0.15s',
+                  }}
+                >{u.label}</button>
+              );
+            })}
+          </div>
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder={`Quantidade em ${form.unidade}(s)`}
+            value={form.quantidade}
+            onChange={(e) => setForm({ ...form, quantidade: e.target.value.replace(/[^0-9.,]/g, '') })}
+            disabled={submitting}
+            style={{
+              ...inp,
+              borderColor: errs.quantidade ? '#e31837' : '#ddd',
+              fontSize: '22px',
+              fontWeight: 'bold',
+              textAlign: 'center',
+              fontFamily: 'monospace',
+            }}
+          />
+          {errs.quantidade && <div style={{ color: '#e31837', fontSize: 12, marginTop: 4 }}>❌ {errs.quantidade}</div>}
+        </div>
+
+        {/* Validade */}
+        <div style={group}>
+          <label style={lbl}>Data de Validade</label>
           <input
             type="text"
             placeholder="DD/MM/AAAA"
             maxLength="10"
             value={form.expiryDate}
-            onChange={(e) => {
-              const dataFormatada = formatarData(e.target.value);
-              setForm({ ...form, expiryDate: dataFormatada });
-            }}
+            onChange={(e) => setForm({ ...form, expiryDate: formatarData(e.target.value) })}
             disabled={submitting}
-            style={{...inputStyle, borderColor: erros.expiryDate ? '#e31837' : '#ddd'}}
+            style={{ ...inp, borderColor: errs.expiryDate ? '#e31837' : '#ddd', fontFamily: 'monospace' }}
           />
-          {erros.expiryDate && <div style={{ color: '#e31837', fontSize: '12px', marginTop: '4px' }}>❌ {erros.expiryDate}</div>}
+          {errs.expiryDate && <div style={{ color: '#e31837', fontSize: 12, marginTop: 4 }}>❌ {errs.expiryDate}</div>}
         </div>
 
-        <div style={formGroupStyle}>
-          <label style={{ display: 'flex', alignItems: 'center', fontWeight: 'bold', color: '#333' }}>
-            <input
-              type="checkbox"
-              checked={form.repeatForAllPositions}
-              onChange={(e) =>
-                setForm({ ...form, repeatForAllPositions: e.target.checked })
-              }
-              disabled={submitting}
-              style={{ marginRight: '10px', cursor: 'pointer', width: '18px', height: '18px' }}
-            />
-            🔁 Repetir este produto para todas as posições desta rua
-          </label>
-        </div>
-
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            type="submit"
-            style={buttonStyle}
-            disabled={submitting || loadingAreas}
-          >
-            {submitting ? '⏳ Salvando...' : '➕ Adicionar novo produto'}
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <button type="submit" style={btn} disabled={loading || submitting}>
+            Adicionar à fila
           </button>
-          {produtosQueueados.length > 0 && (
+          {fila.length > 0 && (
             <button
               type="button"
-              onClick={handleRegistrarTudo}
-              style={{ ...buttonStyle, backgroundColor: '#22c55e' }}
+              onClick={registrarTudo}
+              style={{ ...btn, backgroundColor: '#22c55e' }}
               disabled={submitting}
             >
-              ✅ Registrar {produtosQueueados.length} produto(s)
+              Registrar {fila.length} contagem(ns)
             </button>
           )}
         </div>
       </form>
 
-      {/* Tabela de produtos adicionados */}
-      {produtosQueueados.length > 0 && (
+      {/* Tabela de fila */}
+      {fila.length > 0 && (
         <div style={{ marginTop: '30px' }}>
-          <h3 style={{ color: '#E31837' }}>📋 Produtos a Registrar</h3>
+          <h3 style={{ color: '#E31837', fontSize: '15px', marginBottom: '8px' }}>Fila ({fila.length})</h3>
           <div style={{ overflowX: 'auto' }}>
-            <table style={tableStyle}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
-                <tr>
-                  <th style={thStyle}>Área</th>
-                  <th style={thStyle}>Rua</th>
-                  <th style={thStyle}>Posição</th>
-                  <th style={thStyle}>Código</th>
-                  <th style={thStyle}>Produto</th>
-                  <th style={thStyle}>Validade</th>
-                  <th style={thStyle}>Repetir Rua</th>
-                  <th style={thStyle}>Ações</th>
+                <tr style={{ backgroundColor: '#E31837', color: 'white' }}>
+                  <th style={{ padding: '8px' }}>Endereço</th>
+                  <th style={{ padding: '8px' }}>Cód.</th>
+                  <th style={{ padding: '8px' }}>Produto</th>
+                  <th style={{ padding: '8px' }}>Qtde</th>
+                  <th style={{ padding: '8px' }}>Validade</th>
+                  <th style={{ padding: '8px' }}>Ader. ABC</th>
+                  <th style={{ padding: '8px' }}></th>
                 </tr>
               </thead>
               <tbody>
-                {produtosQueueados.map((prod, idx) => (
-                  <tr
-                    key={idx}
-                    style={{
-                      backgroundColor: idx % 2 === 0 ? '#fff' : '#f9f9f9',
-                    }}
-                  >
-                    <td style={tdStyle}>{prod.area}</td>
-                    <td style={tdStyle}>{prod.street}</td>
-                    <td style={tdStyle}>{prod.palettePosition}</td>
-                    <td style={tdStyle}><strong>{prod.productCode}</strong></td>
-                    <td style={tdStyle}>{prod.productName}</td>
-                    <td style={tdStyle}>{prod.expiryDate}</td>
-                    <td style={tdStyle}>
-                      {prod.repeatForAllPositions ? '✅ Sim' : '❌ Não'}
-                    </td>
-                    <td style={tdStyle}>
-                      <button
-                        onClick={() => handleRemoverProduto(idx)}
-                        style={{
-                          padding: '6px 12px',
-                          backgroundColor: '#ef4444',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '4px',
-                          cursor: 'pointer',
-                          fontSize: '12px',
-                          fontWeight: 'bold',
-                        }}
-                      >
-                        🗑️ Remover
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {fila.map((it, idx) => {
+                  const ader = calcularAderenteABC(it.productCurva, it.enderecoCurva);
+                  return (
+                    <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#fff' : '#f9f9f9' }}>
+                      <td style={{ padding: '8px', borderBottom: '1px solid #eee', fontWeight: 'bold' }}>{it.endereco}</td>
+                      <td style={{ padding: '8px', borderBottom: '1px solid #eee', fontFamily: 'monospace' }}>{it.productCode}</td>
+                      <td style={{ padding: '8px', borderBottom: '1px solid #eee' }}>{it.productName}</td>
+                      <td style={{ padding: '8px', borderBottom: '1px solid #eee', fontFamily: 'monospace' }}>{it.quantidade} {it.unidade}</td>
+                      <td style={{ padding: '8px', borderBottom: '1px solid #eee', fontFamily: 'monospace' }}>{it.expiryDate}</td>
+                      <td style={{ padding: '8px', borderBottom: '1px solid #eee' }}>
+                        {ader == null
+                          ? <span style={{ color: '#92400e' }}>—</span>
+                          : ader
+                            ? <span style={{ color: '#166534', fontWeight: 'bold' }}>✅</span>
+                            : <span style={{ color: '#991b1b', fontWeight: 'bold' }}>❌</span>}
+                      </td>
+                      <td style={{ padding: '8px', borderBottom: '1px solid #eee' }}>
+                        <button onClick={() => removerDaFila(idx)} style={{
+                          padding: '4px 10px', backgroundColor: '#ef4444', color: 'white',
+                          border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold',
+                        }}>Remover</button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

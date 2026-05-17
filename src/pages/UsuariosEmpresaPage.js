@@ -6,7 +6,7 @@ import { useUser } from '../context/UserContext';
 import { useDb } from '../utils/db';
 import { NIVEIS, NIVEIS_SUPERVISOR } from './admin/ConfigurarEmpresaPage';
 
-const NIVEIS_PRECISA_REVENDA = ['ajudante', 'operador', 'conferente', 'analista'];
+const NIVEIS_PRECISA_REVENDA = ['ajudante', 'operador', 'porteiro', 'conferente', 'analista'];
 
 export default function UsuariosEmpresaPage() {
   const { usuario, empresa } = useUser();
@@ -42,7 +42,10 @@ export default function UsuariosEmpresaPage() {
       const targetIndex = NIVEIS.findIndex(n => n.valor === novoNivel);
       if (targetIndex >= meuIndex) { setErroUser('Você não pode criar usuários com nível igual ou superior ao seu.'); return; }
     }
-    const precisaRev = NIVEIS_PRECISA_REVENDA.includes(novoNivel);
+    // Só exige revenda se o nível precisar E a empresa tiver revendas cadastradas.
+    // Empresa "matriz única" (sem revendas) → revendaId = null.
+    const empTemRevendas = revendas.filter(Boolean).length > 0;
+    const precisaRev = NIVEIS_PRECISA_REVENDA.includes(novoNivel) && empTemRevendas;
     if (precisaRev && !novaRevId) { setErroUser('Selecione a revenda para este nível.'); return; }
 
     setCriando(true);
@@ -79,7 +82,10 @@ export default function UsuariosEmpresaPage() {
     carregarUsuarios();
   }
 
-  const precisaRev = NIVEIS_PRECISA_REVENDA.includes(novoNivel);
+  // Esconde o campo Revenda no formulário quando a empresa não tem revendas
+  // cadastradas (caso da matriz única — ex: CBB).
+  const empTemRevendas = revendas.filter(Boolean).length > 0;
+  const precisaRev = NIVEIS_PRECISA_REVENDA.includes(novoNivel) && empTemRevendas;
 
   return (
     <div>

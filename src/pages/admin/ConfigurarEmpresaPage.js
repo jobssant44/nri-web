@@ -16,11 +16,13 @@ const TODOS_MODULOS = [
   { slug: 'mpd',             label: 'Gestão MDP' },
   { slug: 'tma',             label: 'TMA' },
   { slug: 'conciliacao',     label: 'Conciliação de Estoque' },
+  { slug: 'portaria',        label: 'Portaria' },
 ];
 
 export const NIVEIS = [
   { valor: 'ajudante',    label: 'Ajudante' },
   { valor: 'operador',    label: 'Operador' },
+  { valor: 'porteiro',    label: 'Porteiro' },
   { valor: 'conferente',  label: 'Conferente' },
   { valor: 'analista',    label: 'Analista' },
   { valor: 'supervisor',  label: 'Supervisor' },
@@ -32,7 +34,7 @@ export const NIVEIS = [
 // Níveis com acesso de supervisor (importar, cadastros, gerenciar)
 export const NIVEIS_SUPERVISOR = ['admin', 'supervisor', 'coordenador', 'gerente', 'diretor'];
 // Níveis vinculados a uma revenda específica (precisam de revendaId)
-const NIVEIS_PRECISA_REVENDA = ['ajudante', 'operador', 'conferente', 'analista'];
+const NIVEIS_PRECISA_REVENDA = ['ajudante', 'operador', 'porteiro', 'conferente', 'analista'];
 
 export default function ConfigurarEmpresaPage() {
   const { id } = useParams();
@@ -106,7 +108,10 @@ export default function ConfigurarEmpresaPage() {
     e.preventDefault();
     setErroUser('');
     if (!novoEmail || !novoNome || !novaSenha) { setErroUser('Preencha todos os campos.'); return; }
-    const precisaRev = NIVEIS_PRECISA_REVENDA.includes(novoNivel);
+    // Só exige revenda se o nível precisar E a empresa realmente tiver
+    // revendas cadastradas. Empresa "matriz única" (sem revendas) → revendaId = null.
+    const empTemRevendas = (revendas || []).filter(Boolean).length > 0;
+    const precisaRev = NIVEIS_PRECISA_REVENDA.includes(novoNivel) && empTemRevendas;
     if (precisaRev && !novaRevId) { setErroUser('Selecione a revenda para este nível.'); return; }
 
     setCriando(true);
@@ -143,7 +148,10 @@ export default function ConfigurarEmpresaPage() {
     carregarUsuarios();
   }
 
-  const precisaRev = NIVEIS_PRECISA_REVENDA.includes(novoNivel);
+  // Empresa "matriz única" (sem revendas configuradas) → nem mostra o campo
+  // de revenda no formulário. O usuário fica com revendaId = null.
+  const empTemRevendas = (revendas || []).filter(Boolean).length > 0;
+  const precisaRev = NIVEIS_PRECISA_REVENDA.includes(novoNivel) && empTemRevendas;
 
   if (!empresa) return <div style={{ padding: 40, color: '#aaa' }}>Carregando...</div>;
 

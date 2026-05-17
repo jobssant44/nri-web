@@ -74,6 +74,9 @@ export default function ConfiguracoesPage() {
   const [limpando,    setLimpando]    = useState(false);
   const [totalSalvo,  setTotalSalvo]  = useState(null);
   const [erro,        setErro]        = useState('');
+  // Progresso 0..100 da operação em andamento (importação ou limpeza)
+  const [progresso,   setProgresso]   = useState(0);
+  const [progressoMsg, setProgressoMsg] = useState('');
 
   async function handleFile(e) {
     const file = e.target.files[0];
@@ -100,14 +103,24 @@ export default function ConfiguracoesPage() {
     if (!preview || preview.length === 0) return;
     setImportando(true);
     setErro('');
+    setProgresso(0);
+    setProgressoMsg('Iniciando...');
     try {
-      for (let i = 0; i < preview.length; i += 450) {
+      const CHUNK = 450;
+      let salvos = 0;
+      for (let i = 0; i < preview.length; i += CHUNK) {
         const batch = writeBatch(db);
-        preview.slice(i, i + 450).forEach(p => {
+        const slice = preview.slice(i, i + CHUNK);
+        slice.forEach(p => {
           batch.set(doc(col('produtos'), String(p.codigo)), p);
         });
         await batch.commit();
+        salvos += slice.length;
+        setProgresso(Math.round((salvos / preview.length) * 100));
+        setProgressoMsg(`Salvando ${salvos} de ${preview.length} produtos...`);
       }
+      setProgresso(100);
+      setProgressoMsg('Finalizado');
       setTotalSalvo(preview.length);
       setPreview(null);
       setNomeArquivo('');
@@ -122,13 +135,30 @@ export default function ConfiguracoesPage() {
     setLimpando(true);
     setErro('');
     setTotalSalvo(null);
+    setProgresso(0);
+    setProgressoMsg('Lendo catálogo atual...');
     try {
       const snap = await getDocs(col('produtos'));
-      for (let i = 0; i < snap.docs.length; i += 450) {
-        const batch = writeBatch(db);
-        snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
-        await batch.commit();
+      const total = snap.docs.length;
+      if (total === 0) {
+        setProgresso(100);
+        setTotalSalvo(0);
+        setLimpando(false);
+        return;
       }
+      const CHUNK = 450;
+      let apagados = 0;
+      for (let i = 0; i < total; i += CHUNK) {
+        const batch = writeBatch(db);
+        const slice = snap.docs.slice(i, i + CHUNK);
+        slice.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        apagados += slice.length;
+        setProgresso(Math.round((apagados / total) * 100));
+        setProgressoMsg(`Excluindo ${apagados} de ${total} produtos...`);
+      }
+      setProgresso(100);
+      setProgressoMsg('Finalizado');
       setTotalSalvo(0);
     } catch (err) {
       setErro('Erro ao limpar: ' + err.message);
@@ -167,6 +197,28 @@ export default function ConfiguracoesPage() {
         )}
 
         {erro && <div style={erroBox}>{erro}</div>}
+
+        {/* Barra de progresso — visível durante salvar/limpar */}
+        {(importando || limpando) && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                {limpando ? '⏳ Limpando catálogo...' : '⏳ Salvando catálogo...'}
+              </span>
+              <span style={{ fontSize: 11, color: '#666', fontFamily: 'monospace' }}>{progresso}%</span>
+            </div>
+            <div style={{ height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', width: `${progresso}%`,
+                background: limpando ? '#6b7280' : '#E31837',
+                transition: 'width 0.2s ease',
+              }} />
+            </div>
+            {progressoMsg && (
+              <div style={{ fontSize: 11, color: '#666', marginTop: 6 }}>{progressoMsg}</div>
+            )}
+          </div>
+        )}
 
         {totalSalvo !== null && (
           <div style={okBox}>

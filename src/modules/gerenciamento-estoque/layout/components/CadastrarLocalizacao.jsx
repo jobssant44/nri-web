@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
-import { setDoc } from 'firebase/firestore';
+import { setDoc, serverTimestamp } from 'firebase/firestore';
 import { useDb } from '../../../../utils/db';
+import { nowYearMonth } from '../../shared/curvaLookup';
 
 export function CadastrarLocalizacao({ onSuccess }) {
-  const { docRef } = useDb();
+  const { docRef, stamp } = useDb();
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    area: '',
-    street: '',
-    palettePosition: '',
-  });
+  const [endereco, setEndereco] = useState('');
   const [errors, setErrors] = useState([]);
   const [success, setSuccess] = useState('');
+
+  const { ano, mes } = nowYearMonth();
+  const mesLabel = `${String(mes).padStart(2, '0')}/${ano}`;
 
   const containerStyle = {
     maxWidth: '600px',
@@ -26,11 +26,13 @@ export function CadastrarLocalizacao({ onSuccess }) {
   const labelStyle = { display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333' };
   const inputStyle = {
     width: '100%',
-    padding: '10px',
+    padding: '12px',
     border: '1px solid #ddd',
     borderRadius: '4px',
     boxSizing: 'border-box',
-    fontSize: '14px',
+    fontSize: '15px',
+    fontFamily: 'monospace',
+    letterSpacing: '0.5px',
   };
   const buttonStyle = {
     width: '100%',
@@ -41,33 +43,18 @@ export function CadastrarLocalizacao({ onSuccess }) {
     borderRadius: '4px',
     fontWeight: 'bold',
     cursor: 'pointer',
+    fontSize: '14px',
   };
 
-  function validarEntrada() {
-    const erros = [];
-
-    const area = formData.area.trim().toUpperCase();
-    if (!area) {
-      erros.push('Área é obrigatória');
-    } else if (area.length !== 1 || !/^[A-Z]$/.test(area)) {
-      erros.push('Área deve ser uma única letra (A-Z)');
+  function validar() {
+    const errs = [];
+    const e = endereco.trim().toUpperCase();
+    if (!e) {
+      errs.push('Endereço é obrigatório');
+    } else if (!/^[A-Z0-9.\-_/]+$/.test(e)) {
+      errs.push('Endereço pode conter apenas letras, números, "-", ".", "_", "/"');
     }
-
-    const rua = formData.street.trim();
-    if (!rua) {
-      erros.push('Rua é obrigatória');
-    } else if (!/^\d+$/.test(rua)) {
-      erros.push('Rua deve conter apenas números');
-    }
-
-    const posicao = formData.palettePosition.trim();
-    if (!posicao) {
-      erros.push('Posição Palete é obrigatória');
-    } else if (!/^\d+$/.test(posicao)) {
-      erros.push('Posição Palete deve conter apenas números');
-    }
-
-    return { valid: erros.length === 0, errors: erros };
+    return errs;
   }
 
   async function handleSubmit(e) {
@@ -75,35 +62,24 @@ export function CadastrarLocalizacao({ onSuccess }) {
     setErrors([]);
     setSuccess('');
 
-    const { valid, errors: validationErrors } = validarEntrada();
-    if (!valid) {
-      setErrors(validationErrors);
-      return;
-    }
+    const errs = validar();
+    if (errs.length > 0) { setErrors(errs); return; }
 
     setLoading(true);
 
     try {
-      const area = formData.area.trim().toUpperCase();
-      const street = parseInt(formData.street.trim());
-      const palettePosition = parseInt(formData.palettePosition.trim());
+      const enderecoFinal = endereco.trim().toUpperCase();
 
-      // ID no formato A-1-1
-      const docId = `${area}-${street}-${palettePosition}`;
-
-      await setDoc(docRef('locations', docId), {
-        area,
-        street,
-        palettePosition,
-        createdAt: new Date(),
+      await setDoc(docRef('locations', enderecoFinal), {
+        endereco: enderecoFinal,
         isActive: true,
-      });
+        criadoEm: serverTimestamp(),
+        ...stamp(),
+      }, { merge: true });
 
-      setSuccess(`✅ Localização ${docId} cadastrada com sucesso!`);
-      setFormData({ area: '', street: '', palettePosition: '' });
-      onSuccess?.({ id: docId, area, street, palettePosition });
-
-      // Limpar mensagem após 3 segundos
+      setSuccess(`✅ Endereço ${enderecoFinal} cadastrado (mês de referência atual: ${mesLabel})`);
+      setEndereco('');
+      onSuccess?.({ endereco: enderecoFinal });
       setTimeout(() => setSuccess(''), 3000);
     } catch (error) {
       setErrors([`Erro ao salvar: ${error.message}`]);
@@ -114,77 +90,50 @@ export function CadastrarLocalizacao({ onSuccess }) {
 
   return (
     <div style={containerStyle}>
-      <h2 style={{ color: '#E31837', marginBottom: '20px' }}>📍 Cadastrar Localização</h2>
+      <h2 style={{ color: '#E31837', marginBottom: '6px' }}>📍 Cadastrar Endereço</h2>
+      <p style={{ fontSize: '12px', color: '#666', marginBottom: '20px' }}>
+        Mês de referência: <strong>{mesLabel}</strong> · A curva e o produto desse endereço podem ser preenchidos na aba "Editar" ou via "Importar".
+      </p>
 
       {success && (
-        <div style={{ color: '#22c55e', marginBottom: '15px', fontWeight: 'bold' }}>
+        <div style={{
+          padding: '12px', marginBottom: '15px', borderRadius: '4px',
+          backgroundColor: '#dcfce7', color: '#166534', borderLeft: '4px solid #22c55e',
+        }}>
           {success}
         </div>
       )}
 
       {errors.length > 0 && (
-        <div
-          style={{
-            backgroundColor: '#fee2e2',
-            border: '1px solid #fca5a5',
-            color: '#991b1b',
-            padding: '12px',
-            borderRadius: '4px',
-            marginBottom: '15px',
-          }}
-        >
-          {errors.map((err, idx) => (
-            <div key={idx}>❌ {err}</div>
-          ))}
+        <div style={{
+          padding: '12px', marginBottom: '15px', borderRadius: '4px',
+          backgroundColor: '#fee2e2', color: '#991b1b', borderLeft: '4px solid #ef4444',
+        }}>
+          {errors.map((err, i) => <div key={i}>❌ {err}</div>)}
         </div>
       )}
 
       <form onSubmit={handleSubmit}>
         <div style={formGroupStyle}>
-          <label style={labelStyle}>🔤 Área (uma letra: A-Z)</label>
+          <label style={labelStyle}>📌 Endereço</label>
           <input
             type="text"
-            placeholder="Ex: A, B, C, D..."
-            maxLength="1"
-            value={formData.area}
-            onChange={(e) => setFormData({ ...formData, area: e.target.value.toUpperCase() })}
-            style={inputStyle}
+            placeholder="Ex: A-1-007"
+            value={endereco}
+            onChange={(e) => setEndereco(e.target.value.toUpperCase())}
             disabled={loading}
+            style={inputStyle}
+            autoFocus
           />
+          <div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
+            Texto livre — escolha o padrão que faz sentido pro armazém (ex: A-1-007, A.01.07, EST-A-RUA1-POS007).
+          </div>
         </div>
 
-        <div style={formGroupStyle}>
-          <label style={labelStyle}>🛣️ Rua (número)</label>
-          <input
-            type="text"
-            placeholder="Ex: 1, 2, 35, 100..."
-            value={formData.street}
-            onChange={(e) => setFormData({ ...formData, street: e.target.value.replace(/\D/g, '') })}
-            style={inputStyle}
-            disabled={loading}
-          />
-        </div>
-
-        <div style={formGroupStyle}>
-          <label style={labelStyle}>📦 Posição Palete (número)</label>
-          <input
-            type="text"
-            placeholder="Ex: 1, 2, 209, 500..."
-            value={formData.palettePosition}
-            onChange={(e) => setFormData({ ...formData, palettePosition: e.target.value.replace(/\D/g, '') })}
-            style={inputStyle}
-            disabled={loading}
-          />
-        </div>
-
-        <button style={buttonStyle} type="submit" disabled={loading}>
-          {loading ? '⏳ Salvando...' : '✅ Cadastrar'}
+        <button type="submit" style={buttonStyle} disabled={loading}>
+          {loading ? '⏳ Salvando...' : '➕ Cadastrar Endereço'}
         </button>
       </form>
-
-      <div style={{ marginTop: '20px', padding: '12px', backgroundColor: '#f0f9ff', borderRadius: '4px', fontSize: '12px', color: '#0369a1' }}>
-        <strong>ℹ️ ID Gerado:</strong> A localização receberá um ID automático no formato <strong>ÁREA-RUA-POSIÇÃO</strong> (ex: A-1-1)
-      </div>
     </div>
   );
 }

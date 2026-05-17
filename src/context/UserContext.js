@@ -79,9 +79,46 @@ export function UserProvider({ children }) {
         const empSel = todas.find(e => e.id === savedEmpId) || empresaData;
         setEmpresaSelecionadaRaw(empSel);
 
-        // 5. Restaura revenda selecionada
+        // 5. Restaura revenda selecionada — validando contra a empresa atual.
+        //    Regras:
+        //     a) Se savedRev existe e está nas revendas da empresa → usa.
+        //     b) Senão, se a empresa tem exatamente 1 revenda → auto-seleciona
+        //        (caso comum: empresa "indivisa" cuja única revenda fica
+        //         oculta no sidebar porque só faz sentido mostrar quando há >1).
+        //     c) Senão, se o usuário tem revendaId própria E ela existe na
+        //        empresa → usa (operador/conferente vinculado).
+        //     d) Caso contrário → vazio (consultas usam 'global').
         const savedRev = localStorage.getItem('wjs-revenda-sel') || '';
-        setRevendaSelecionadaRaw(savedRev);
+        const revendasDaEmp = (empSel?.revendas || []).filter(Boolean);
+        const revendaIds = revendasDaEmp.map(r => typeof r === 'string' ? r : (r?.id || r?.nome || ''));
+
+        let revAtiva = '';
+        if (savedRev && revendaIds.includes(savedRev)) {
+          revAtiva = savedRev;
+        } else if (revendaIds.length === 1) {
+          revAtiva = revendaIds[0];
+        } else if (usuarioFinal.revendaId && revendaIds.includes(usuarioFinal.revendaId)) {
+          revAtiva = usuarioFinal.revendaId;
+        }
+
+        // [DEBUG TEMPORÁRIO — Curva ABC vazia] remover quando confirmado o fix
+        console.log('[WJS DEBUG][UserContext] resolve revenda', {
+          empresaId: empSel?.id,
+          empresaNome: empSel?.nome,
+          revendasRaw: empSel?.revendas,
+          revendaIds,
+          savedRev,
+          revendaIdDoUsuario: usuarioFinal?.revendaId,
+          revAtivaResolvida: revAtiva,
+        });
+
+        // Sincroniza localStorage com a escolha resolvida
+        if (revAtiva) {
+          localStorage.setItem('wjs-revenda-sel', revAtiva);
+        } else if (savedRev) {
+          localStorage.removeItem('wjs-revenda-sel');
+        }
+        setRevendaSelecionadaRaw(revAtiva);
 
       } catch (err) {
         console.error('Erro ao carregar usuário:', err);
@@ -99,9 +136,20 @@ export function UserProvider({ children }) {
 
   function setEmpresaSelecionada(emp) {
     setEmpresaSelecionadaRaw(emp);
-    setRevendaSelecionadaRaw(''); // reseta revenda ao trocar empresa
     localStorage.setItem('wjs-empresa-sel', emp.id);
-    localStorage.removeItem('wjs-revenda-sel');
+
+    // Resolve revenda ativa para a nova empresa (mesma regra do bootstrap):
+    // se a empresa tem exatamente 1 revenda, auto-seleciona — assim consultas
+    // que usam o `rid` apontam pro lugar certo sem o usuário ter que escolher.
+    const revs = (emp?.revendas || []).filter(Boolean)
+      .map(r => typeof r === 'string' ? r : (r?.id || r?.nome || ''));
+    let revAtiva = '';
+    if (revs.length === 1) revAtiva = revs[0];
+    else if (usuario?.revendaId && revs.includes(usuario.revendaId)) revAtiva = usuario.revendaId;
+
+    if (revAtiva) localStorage.setItem('wjs-revenda-sel', revAtiva);
+    else localStorage.removeItem('wjs-revenda-sel');
+    setRevendaSelecionadaRaw(revAtiva);
   }
 
   function setRevendaSelecionada(rev) {

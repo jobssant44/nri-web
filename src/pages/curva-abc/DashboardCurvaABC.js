@@ -69,6 +69,9 @@ export default function DashboardCurvaABC() {
   const [indices, setIndices]       = useState([]);
   const [anos, setAnos]             = useState([]);
   const [mesesDoAno, setMesesDoAno] = useState([]);
+  // Prefixo descoberto dinamicamente em curva_abc_meta — usado para montar
+  // os IDs dos docs em curva_abc_mensal. Fallback: `rid || 'global'`.
+  const [prefixoMeta, setPrefixoMeta] = useState(null);
   const [anoSel, setAnoSel]         = useSessionFilter('dabc:ano', '');
   const [mesSel, setMesSel]         = useSessionFilter('dabc:mes', '');
   const [dadosM0, setDadosM0]       = useState(null);
@@ -131,8 +134,32 @@ export default function DashboardCurvaABC() {
   }
 
   async function carregarIndices() {
-    const snap = await getDoc(docRef('curva_abc_meta', rid || 'global'));
+    const docIdPreferido = rid || 'global';
+    let snap = await getDoc(docRef('curva_abc_meta', docIdPreferido));
+
+    // Auto-discovery: se o doc esperado não existe (porque os dados foram
+    // importados sob outro `rid`, ou a revenda foi removida da empresa),
+    // varre a coleção e usa o doc encontrado. Quando há vários, escolhe o
+    // que tem MAIS meses (assume que é o "principal").
+    if (!snap.exists()) {
+      const snapAll = await getDocs(col('curva_abc_meta'));
+      if (!snapAll.empty) {
+        let melhor = null;
+        snapAll.docs.forEach(d => {
+          const data = d.data();
+          const qtMeses = Array.isArray(data?.meses) ? data.meses.length : 0;
+          if (!melhor || qtMeses > melhor.qtMeses) melhor = { ref: d, data, qtMeses, id: d.id };
+        });
+        if (melhor) {
+          snap = melhor.ref;
+          console.info(`[Curva ABC] Auto-discovery: doc esperado "${docIdPreferido}" não encontrado, usando "${melhor.id}" (${melhor.qtMeses} meses).`);
+        }
+      }
+    }
+
     if (!snap.exists()) return;
+    // Guarda o prefixo descoberto para usar nas chamadas seguintes (carregarDados)
+    setPrefixoMeta(snap.id);
     const lista = (snap.data().meses || []).sort();
     setIndices(lista);
     const anosUnicos = [...new Set(lista.map(k => k.split('-')[0]))].sort((a,b)=>b-a);
@@ -167,7 +194,7 @@ export default function DashboardCurvaABC() {
     setCarregando(true); setPagina(1);
     const m1 = prevMonth(ano, mes, 1);
     const m2 = prevMonth(ano, mes, 2);
-    const prefixo = rid || 'global';
+    const prefixo = prefixoMeta || rid || 'global';
     const [s0, s1, s2] = await Promise.all([
       getDoc(docRef('curva_abc_mensal', `${prefixo}_${monthKey(ano, mes)}`)),
       getDoc(docRef('curva_abc_mensal', `${prefixo}_${monthKey(m1.ano, m1.mes)}`)),

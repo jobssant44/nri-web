@@ -4,6 +4,7 @@ import { signOut } from 'firebase/auth';
 import {
   Package, RefreshCw, TrendingUp, Warehouse, Map,
   Clock, TrendingDown, ClipboardList, Scale, Truck, Timer,
+  DoorOpen,
   LogOut, Pin, PinOff, Building2, Settings, ChevronDown,
 } from 'lucide-react';
 import { auth } from '../firebaseConfig';
@@ -34,11 +35,11 @@ const TODOS_GRUPOS = [
       { path: '/reab/dashboard',       label: 'Dashboard IV',          todos: true },
       { path: '/reab/planificador',    label: 'Planificador IV',       todos: true },
       { path: '/reab/resultado',       label: 'Resultado',             todos: true },
-      { path: '/reab/prepicking',      label: 'Pré-Picking',           todos: true },
-      { path: '/reab/vendas',          label: 'Vendas',                todos: true },
-      { path: '/reab/config',          label: 'Configurar Picking',    supervisor: true },
       { path: '/reab/lancar',          label: 'Lançar Abastecimento',  todos: true },
       { path: '/reab/registro',        label: 'Registro',              todos: true },
+      { path: '/reab/vendas',          label: 'Vendas',                todos: true },
+      { path: '/reab/prepicking',      label: 'Pré-Picking',           todos: true },
+      { path: '/reab/config',          label: 'Configurar Picking',    supervisor: true },
       { path: '/reab/importar-vendas', label: 'Importar 03.02.36.08',  supervisor: true },
     ],
   },
@@ -56,10 +57,12 @@ const TODOS_GRUPOS = [
     Icon: Warehouse,
     moduloSlug: 'estoque',
     itens: [
-      { path: '/estoque/dashboard',              label: 'Dashboard',                 todos: true },
+      // Dashboard de Aderência ao Layout — oculto por enquanto, será reativado
+      // quando a métrica de layout for implementada de fato.
+      // { path: '/estoque/dashboard',              label: 'Dashboard',                 todos: true },
+      { path: '/estoque/aderencia-abc',          label: 'Aderência Curva ABC',       todos: true },
       { path: '/estoque/contar',                 label: 'Registrar Contagem',        todos: true },
       { path: '/estoque/gerenciar-localizacoes', label: 'Gerenciar Localizações',    supervisor: true },
-      { path: '/estoque/enderecamento',          label: 'Endereçamento de Produtos', todos: true },
       { path: '/estoque/coletas-validade',       label: 'Coletas de Validade',       todos: true },
     ],
   },
@@ -75,7 +78,13 @@ const TODOS_GRUPOS = [
     label: 'Gestão de Idade',
     Icon: Clock,
     moduloSlug: 'gestao-idade',
-    itens: [],
+    itens: [
+      { path: '/gestao-idade/fefo',             label: 'Gestão de FEFO',     todos: true },
+      { path: '/gestao-idade/stock-age',        label: 'Stock Age Index',    todos: true },
+      { path: '/gestao-idade/estoque-picking',  label: 'Estoque x Picking',  todos: true },
+      { path: '/gestao-idade/estoque-estoque',  label: 'Estoque x Estoque',  todos: true },
+      { path: '/gestao-idade/importar-pzv',     label: 'Importar PZV',       supervisor: true },
+    ],
   },
   {
     label: 'Gestão de Prejuízo',
@@ -109,6 +118,17 @@ const TODOS_GRUPOS = [
       { path: '/gestao-mpd/histograma', label: 'Histograma',          todos: true },
       { path: '/gestao-mpd/importar',   label: 'Importar relatórios', supervisor: true },
       { path: '/gestao-mpd/metas',      label: 'Metas',               supervisor: true },
+    ],
+  },
+  {
+    label: 'Portaria',
+    Icon: DoorOpen,
+    moduloSlug: 'portaria',
+    itens: [
+      { path: '/portaria',           label: 'Painel de Operação', todos: true },
+      { path: '/portaria/dashboard', label: 'Dashboard',          todos: true },
+      { path: '/portaria/registros', label: 'Registros',          todos: true },
+      { path: '/portaria/cadastros', label: 'Cadastros',          supervisor: true },
     ],
   },
   {

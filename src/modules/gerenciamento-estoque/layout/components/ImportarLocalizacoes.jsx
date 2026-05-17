@@ -1,10 +1,43 @@
 import React, { useState } from 'react';
-import { writeBatch } from 'firebase/firestore';
+import { writeBatch, serverTimestamp } from 'firebase/firestore';
 import { useDb } from '../../../../utils/db';
 import * as XLSX from 'xlsx';
+import { monthKey } from '../../shared/curvaLookup';
+
+const CURVAS_VALIDAS = ['A', 'B', 'C'];
+
+// Aceita o mês como número (1–12), número-string ("01"), nome completo
+// ("Janeiro") ou abreviação ("Jan"), em qualquer caixa. Retorna o número
+// 1–12 ou NaN se não reconhecer.
+const NOMES_MES = {
+  janeiro: 1, jan: 1,
+  fevereiro: 2, fev: 2,
+  marco: 3, 'março': 3, mar: 3,
+  abril: 4, abr: 4,
+  maio: 5, mai: 5,
+  junho: 6, jun: 6,
+  julho: 7, jul: 7,
+  agosto: 8, ago: 8,
+  setembro: 9, set: 9, sept: 9, sep: 9,
+  outubro: 10, out: 10,
+  novembro: 11, nov: 11,
+  dezembro: 12, dez: 12,
+};
+function parseMes(valor) {
+  if (valor == null || valor === '') return NaN;
+  // Número direto
+  if (typeof valor === 'number' && Number.isFinite(valor)) return Math.round(valor);
+  const s = String(valor).trim();
+  // String numérica
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  // Nome (com ou sem acento) — normaliza para forma sem diacríticos
+  const limpo = s.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return NOMES_MES[limpo] ?? NaN;
+}
 
 export function ImportarLocalizacoes() {
-  const { docRef, db } = useDb();
+  const { docRef, db, stamp } = useDb();
   const [arquivo, setArquivo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState([]);
@@ -13,7 +46,7 @@ export function ImportarLocalizacoes() {
   const [dadosValidos, setDadosValidos] = useState([]);
 
   const containerStyle = {
-    maxWidth: '800px',
+    maxWidth: '900px',
     margin: '20px auto',
     padding: '20px',
     backgroundColor: '#fff',
@@ -43,75 +76,33 @@ export function ImportarLocalizacoes() {
     marginRight: '8px',
   };
 
-  const buttonSecundarioStyle = {
-    ...buttonStyle,
-    backgroundColor: '#1D5A9E',
-    marginRight: '8px',
-  };
+  const buttonCancelStyle = { ...buttonStyle, backgroundColor: '#6b7280' };
 
-  const buttonCancelStyle = {
-    ...buttonStyle,
-    backgroundColor: '#6b7280',
-  };
+  const tableStyle = { width: '100%', borderCollapse: 'collapse', marginTop: '20px', fontSize: '12px' };
+  const thStyle = { backgroundColor: '#E31837', color: 'white', padding: '10px', textAlign: 'left', fontWeight: 'bold' };
+  const tdStyle = { padding: '8px 10px', borderBottom: '1px solid #ddd' };
 
-  const tableStyle = {
-    width: '100%',
-    borderCollapse: 'collapse',
-    marginTop: '20px',
-    fontSize: '12px',
-  };
+  // ─── Validar linha individual ─────────────────────────────────────────
+  function validarLinha(linha, n) {
+    const errs = [];
+    const { ano, mes, endereco, curva } = linha;
 
-  const thStyle = {
-    backgroundColor: '#E31837',
-    color: 'white',
-    padding: '10px',
-    textAlign: 'left',
-    fontWeight: 'bold',
-  };
-
-  const tdStyle = {
-    padding: '8px 10px',
-    borderBottom: '1px solid #ddd',
-  };
-
-  // ========== VALIDAR LINHA ==========
-  function validarLinha(row, lineNumber) {
-    const errosLinha = [];
-
-    // Coluna A: Área
-    if (!row[0]) {
-      errosLinha.push(`Linha ${lineNumber}: Área vazia`);
-    } else {
-      const area = String(row[0]).trim().toUpperCase();
-      if (area.length !== 1 || !/^[A-Z]$/.test(area)) {
-        errosLinha.push(`Linha ${lineNumber}: Área inválida "${row[0]}" (deve ser A-Z)`);
-      }
+    if (!ano || ano < 2000 || ano > 2100) errs.push(`Linha ${n}: ano inválido "${linha.anoBruto}"`);
+    if (!mes || mes < 1 || mes > 12) errs.push(`Linha ${n}: mês inválido "${linha.mesBruto}"`);
+    if (!endereco) errs.push(`Linha ${n}: endereço vazio`);
+    else if (!/^[A-Z0-9.\-_/]+$/i.test(endereco)) {
+      errs.push(`Linha ${n}: endereço inválido "${endereco}" (use letras, números, "-", ".", "_", "/")`);
     }
-
-    // Coluna B: Rua
-    if (!row[1]) {
-      errosLinha.push(`Linha ${lineNumber}: Rua vazia`);
-    } else {
-      const rua = String(row[1]).trim();
-      if (!/^\d+$/.test(rua)) {
-        errosLinha.push(`Linha ${lineNumber}: Rua inválida "${row[1]}" (deve ser número)`);
-      }
+    if (!curva) errs.push(`Linha ${n}: curva vazia`);
+    else if (!CURVAS_VALIDAS.includes(curva)) {
+      errs.push(`Linha ${n}: curva inválida "${curva}" (esperado A, B ou C)`);
     }
+    // Produto é opcional — só usado para futura aderência ao Layout
 
-    // Coluna C: Posição
-    if (!row[2]) {
-      errosLinha.push(`Linha ${lineNumber}: Posição vazia`);
-    } else {
-      const posicao = String(row[2]).trim();
-      if (!/^\d+$/.test(posicao)) {
-        errosLinha.push(`Linha ${lineNumber}: Posição inválida "${row[2]}" (deve ser número)`);
-      }
-    }
-
-    return errosLinha;
+    return errs;
   }
 
-  // ========== PROCESSAR ARQUIVO ==========
+  // ─── Processar arquivo ────────────────────────────────────────────────
   async function processarArquivo(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -123,62 +114,73 @@ export function ImportarLocalizacoes() {
     setDadosValidos([]);
 
     try {
-      const dados = await file.arrayBuffer();
-      const workbook = XLSX.read(dados, { type: 'array' });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 0, defval: '' });
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      // header:1 = retorna como array de arrays
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
-      if (rows.length === 0) {
-        setMessage('❌ Arquivo vazio ou sem dados');
+      if (!rows || rows.length === 0) {
+        setMessage('❌ Arquivo vazio.');
         return;
       }
+
+      // Se a primeira linha parece cabeçalho (não-numérico em A), descarta
+      const primeira = rows[0];
+      const cabecalho = primeira && String(primeira[0] || '').match(/[a-zA-Zçã]/);
+      const linhasUteis = cabecalho ? rows.slice(1) : rows;
 
       const errosValidacao = [];
       const dadosProcessados = [];
 
-      // Validar cada linha
-      rows.forEach((row, idx) => {
-        const lineNumber = idx + 2; // +1 para cabeçalho, +1 para 1-indexed
-        const area = String(row['Área'] || row['Area'] || row[0] || '').trim().toUpperCase();
-        const rua = String(row['Rua'] || row[1] || '').trim();
-        const posicao = String(row['Posição'] || row['Posicao'] || row[2] || '').trim();
+      linhasUteis.forEach((row, idx) => {
+        // Ignora linhas totalmente vazias
+        if (!row || row.every(c => c === '' || c == null)) return;
 
-        const errosLinha = validarLinha([area, rua, posicao], lineNumber);
+        const lineNumber = (cabecalho ? idx + 2 : idx + 1);
+        const linha = {
+          anoBruto:      row[0],
+          mesBruto:      row[1],
+          ano:           parseInt(row[0], 10),
+          mes:           parseMes(row[1]),
+          endereco:      String(row[2] || '').trim().toUpperCase(),
+          curva:         String(row[3] || '').trim().toUpperCase(),
+          produtoCodigo: row[4] != null && String(row[4]).trim() !== '' ? String(row[4]).trim() : null,
+          produtoNome:   row[5] != null && String(row[5]).trim() !== '' ? String(row[5]).trim() : null,
+        };
 
-        if (errosLinha.length > 0) {
-          errosValidacao.push(...errosLinha);
-        } else {
-          // Gerar ID automaticamente
-          const id = `${area}-${parseInt(rua)}-${parseInt(posicao)}`;
-
-          dadosProcessados.push({
-            id,
-            area,
-            street: parseInt(rua),
-            palettePosition: parseInt(posicao),
-            createdAt: new Date(),
-            isActive: true,
-          });
+        const errsLinha = validarLinha(linha, lineNumber);
+        if (errsLinha.length > 0) {
+          errosValidacao.push(...errsLinha);
+          return;
         }
+
+        dadosProcessados.push(linha);
       });
 
       if (errosValidacao.length > 0) {
         setErros(errosValidacao);
-        setMessage(`❌ ${errosValidacao.length} erro(s) encontrado(s). Corrija antes de importar.`);
+        setMessage(`❌ ${errosValidacao.length} erro(s) encontrado(s). Corrija o arquivo e tente de novo.`);
         return;
       }
 
-      // Mostrar preview (primeiras 5 linhas)
-      setPreview(dadosProcessados.slice(0, 5));
+      if (dadosProcessados.length === 0) {
+        setMessage('❌ Nenhuma linha válida encontrada.');
+        return;
+      }
+
+      setPreview(dadosProcessados.slice(0, 8));
       setDadosValidos(dadosProcessados);
-      setMessage(`✅ ${dadosProcessados.length} localização(ões) validada(s) com sucesso!`);
+      const meses = new Set(dadosProcessados.map(d => monthKey(d.ano, d.mes)));
+      const enderecos = new Set(dadosProcessados.map(d => d.endereco));
+      setMessage(`✅ ${dadosProcessados.length} linha(s) válida(s) · ${enderecos.size} endereço(s) único(s) · ${meses.size} mês(es)`);
     } catch (error) {
       setMessage(`❌ Erro ao ler arquivo: ${error.message}`);
       console.error(error);
     }
   }
 
-  // ========== IMPORTAR NO FIREBASE ==========
+  // ─── Importar no Firebase ─────────────────────────────────────────────
   async function importarDados() {
     if (dadosValidos.length === 0) {
       setMessage('❌ Nenhum dado para importar');
@@ -189,35 +191,60 @@ export function ImportarLocalizacoes() {
     setMessage('⏳ Importando...');
 
     try {
-      let sucessoCount = 0;
-      const CHUNK_SIZE = 450; // Limite do Firestore
+      // Para cada linha, gravamos em DUAS coleções:
+      //  - locations/{endereco}                    (idempotente)
+      //  - locations_mensal/{YYYY-MM_endereco}     (overwrite por mês)
+      // Cada doc novo conta como 1 operação no batch; juntando os 2,
+      // o limite efetivo do batch fica em 225 linhas (450/2).
+      const CHUNK_SIZE = 200;
+      let total = 0;
+      const enderecosVistos = new Set();
 
       for (let i = 0; i < dadosValidos.length; i += CHUNK_SIZE) {
-        const batch = writeBatch(db);
         const chunk = dadosValidos.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
 
-        chunk.forEach((localizacao) => {
-          batch.set(docRef('locations', localizacao.id), {
-            area: localizacao.area,
-            street: localizacao.street,
-            palettePosition: localizacao.palettePosition,
-            createdAt: localizacao.createdAt,
-            isActive: localizacao.isActive,
+        chunk.forEach((linha) => {
+          const chave = monthKey(linha.ano, linha.mes);
+          const mensalId = `${chave}_${linha.endereco}`;
+
+          // Doc base (location) — cria se não existir; merge mantém info anterior
+          if (!enderecosVistos.has(linha.endereco)) {
+            batch.set(docRef('locations', linha.endereco), {
+              endereco: linha.endereco,
+              isActive: true,
+              ultimoMes: chave,
+              atualizadoEm: serverTimestamp(),
+              ...stamp(),
+            }, { merge: true });
+            enderecosVistos.add(linha.endereco);
+          }
+
+          // Doc do mês — overwrite (verdade do mês)
+          batch.set(docRef('locations_mensal', mensalId), {
+            ano: linha.ano,
+            mes: linha.mes,
+            chaveMes: chave,
+            endereco: linha.endereco,
+            curva: linha.curva,
+            produtoCodigo: linha.produtoCodigo,
+            produtoNome: linha.produtoNome,
+            origem: 'importacao',
+            atualizadoEm: serverTimestamp(),
+            ...stamp(),
           });
         });
 
         await batch.commit();
-        sucessoCount += chunk.length;
+        total += chunk.length;
       }
 
-      setMessage(`✅ ${sucessoCount} localização(ões) importada(s) com sucesso!`);
+      setMessage(`✅ ${total} linha(s) importada(s) · ${enderecosVistos.size} endereço(s) atualizado(s).`);
       setDadosValidos([]);
       setPreview([]);
       setArquivo(null);
       setErros([]);
-
-      // Limpar após 3 segundos
-      setTimeout(() => setMessage(''), 3000);
+      setTimeout(() => setMessage(''), 5000);
     } catch (error) {
       setMessage(`❌ Erro ao importar: ${error.message}`);
       console.error(error);
@@ -226,7 +253,6 @@ export function ImportarLocalizacoes() {
     }
   }
 
-  // ========== LIMPAR ==========
   function limpar() {
     setArquivo(null);
     setPreview([]);
@@ -237,50 +263,31 @@ export function ImportarLocalizacoes() {
 
   return (
     <div style={containerStyle}>
-      <h2 style={{ color: '#E31837', marginBottom: '20px' }}>📥 Importar Localizações em Lote</h2>
+      <h2 style={{ color: '#E31837', marginBottom: '6px' }}>📥 Importar Endereços (CSV/Excel)</h2>
+      <p style={{ fontSize: '12px', color: '#666', marginBottom: '20px' }}>
+        Cada linha cria ou atualiza um endereço para um mês específico.
+        A combinação <strong>ano × mês × endereço</strong> é a chave única.
+      </p>
 
       {message && (
-        <div
-          style={{
-            padding: '12px',
-            marginBottom: '15px',
-            borderRadius: '4px',
-            backgroundColor: message.includes('✅')
-              ? '#dcfce7'
-              : message.includes('⏳')
-              ? '#dbeafe'
-              : '#fee2e2',
-            color: message.includes('✅')
-              ? '#166534'
-              : message.includes('⏳')
-              ? '#0369a1'
-              : '#991b1b',
-            borderLeft: `4px solid ${
-              message.includes('✅')
-                ? '#22c55e'
-                : message.includes('⏳')
-                ? '#0ea5e9'
-                : '#ef4444'
-            }`,
-          }}
-        >
+        <div style={{
+          padding: '12px', marginBottom: '15px', borderRadius: '4px',
+          backgroundColor: message.includes('✅') ? '#dcfce7' : message.includes('⏳') ? '#dbeafe' : '#fee2e2',
+          color: message.includes('✅') ? '#166534' : message.includes('⏳') ? '#0369a1' : '#991b1b',
+          borderLeft: `4px solid ${
+            message.includes('✅') ? '#22c55e' : message.includes('⏳') ? '#0ea5e9' : '#ef4444'
+          }`,
+        }}>
           {message}
         </div>
       )}
 
-      {/* ERROS DETALHADOS */}
       {erros.length > 0 && (
-        <div
-          style={{
-            padding: '12px',
-            marginBottom: '15px',
-            borderRadius: '4px',
-            backgroundColor: '#fee2e2',
-            border: '1px solid #fca5a5',
-            maxHeight: '200px',
-            overflowY: 'auto',
-          }}
-        >
+        <div style={{
+          padding: '12px', marginBottom: '15px', borderRadius: '4px',
+          backgroundColor: '#fee2e2', border: '1px solid #fca5a5',
+          maxHeight: '220px', overflowY: 'auto',
+        }}>
           <h4 style={{ color: '#991b1b', marginTop: 0, marginBottom: '10px' }}>⚠️ Erros encontrados:</h4>
           {erros.map((erro, idx) => (
             <div key={idx} style={{ color: '#991b1b', fontSize: '12px', marginBottom: '4px' }}>
@@ -290,7 +297,6 @@ export function ImportarLocalizacoes() {
         </div>
       )}
 
-      {/* INPUT DE ARQUIVO */}
       <label style={fileInputStyle}>
         <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#E31837', marginBottom: '8px' }}>
           📂 Selecione um arquivo (CSV ou Excel)
@@ -303,7 +309,7 @@ export function ImportarLocalizacoes() {
           style={{ display: 'none' }}
         />
         <div style={{ fontSize: '12px', color: '#666' }}>
-          Clique aqui ou arraste um arquivo • Formato esperado: Área | Rua | Posição
+          Colunas: <strong>A=Ano · B=Mês · C=Endereço · D=Curva · E=Produto (cód.) · F=Produto (descrição, opcional)</strong>
         </div>
       </label>
 
@@ -313,55 +319,55 @@ export function ImportarLocalizacoes() {
         </div>
       )}
 
-      {/* PREVIEW */}
       {preview.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <h3 style={{ color: '#333', marginBottom: '10px', fontSize: '14px' }}>
-            Preview (primeiras {preview.length} linhas):
+            Preview (primeiras {preview.length} linha(s)):
           </h3>
           <div style={{ overflowX: 'auto' }}>
             <table style={tableStyle}>
               <thead>
                 <tr>
-                  <th style={thStyle}>ID</th>
-                  <th style={thStyle}>Área</th>
-                  <th style={thStyle}>Rua</th>
-                  <th style={thStyle}>Posição</th>
+                  <th style={thStyle}>Mês</th>
+                  <th style={thStyle}>Endereço</th>
+                  <th style={thStyle}>Curva</th>
+                  <th style={thStyle}>Cód. Produto</th>
+                  <th style={thStyle}>Produto</th>
                 </tr>
               </thead>
               <tbody>
-                {preview.map((loc, idx) => (
+                {preview.map((l, idx) => (
                   <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#fff' : '#f9f9f9' }}>
+                    <td style={tdStyle}>{monthKey(l.ano, l.mes)}</td>
+                    <td style={tdStyle}><strong>{l.endereco}</strong></td>
                     <td style={tdStyle}>
-                      <strong>{loc.id}</strong>
+                      <span style={{
+                        display: 'inline-block', padding: '2px 8px', borderRadius: '10px',
+                        backgroundColor: l.curva === 'A' ? '#dcfce7' : l.curva === 'B' ? '#fef3c7' : '#fee2e2',
+                        color: l.curva === 'A' ? '#166534' : l.curva === 'B' ? '#92400e' : '#991b1b',
+                        fontWeight: 'bold',
+                      }}>{l.curva}</span>
                     </td>
-                    <td style={tdStyle}>{loc.area}</td>
-                    <td style={tdStyle}>{loc.street}</td>
-                    <td style={tdStyle}>{loc.palettePosition}</td>
+                    <td style={tdStyle}>{l.produtoCodigo || '—'}</td>
+                    <td style={tdStyle}>{l.produtoNome || '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-
           {dadosValidos.length > preview.length && (
             <div style={{ fontSize: '12px', color: '#666', marginTop: '10px' }}>
-              ... e mais {dadosValidos.length - preview.length} localização(ões)
+              ... e mais {dadosValidos.length - preview.length} linha(s).
             </div>
           )}
         </div>
       )}
 
-      {/* BOTÕES */}
       <div style={{ marginTop: '20px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
         {dadosValidos.length > 0 && (
           <>
-            <button
-              style={buttonStyle}
-              onClick={importarDados}
-              disabled={loading || dadosValidos.length === 0}
-            >
-              {loading ? '⏳ Importando...' : `✅ Importar ${dadosValidos.length} localização(ões)`}
+            <button style={buttonStyle} onClick={importarDados} disabled={loading}>
+              {loading ? '⏳ Importando...' : `✅ Importar ${dadosValidos.length} linha(s)`}
             </button>
             <button style={buttonCancelStyle} onClick={limpar} disabled={loading}>
               ❌ Cancelar
@@ -370,48 +376,31 @@ export function ImportarLocalizacoes() {
         )}
       </div>
 
-      {/* INFO */}
-      <div
-        style={{
-          marginTop: '30px',
-          padding: '15px',
-          backgroundColor: '#f0f9ff',
-          borderLeft: '4px solid #1D5A9E',
-          borderRadius: '4px',
-          fontSize: '12px',
-          color: '#0369a1',
-        }}
-      >
-        <h4 style={{ marginTop: 0, marginBottom: '8px' }}>ℹ️ Formato esperado do arquivo:</h4>
-        <table style={{ width: '100%', fontSize: '11px', marginBottom: '10px' }}>
+      <div style={{
+        marginTop: '30px', padding: '15px',
+        backgroundColor: '#f0f9ff', borderLeft: '4px solid #1D5A9E',
+        borderRadius: '4px', fontSize: '12px', color: '#0369a1',
+      }}>
+        <h4 style={{ marginTop: 0, marginBottom: '8px' }}>ℹ️ Formato do arquivo</h4>
+        <table style={{ width: '100%', fontSize: '11px', marginBottom: '8px' }}>
           <thead>
             <tr style={{ backgroundColor: '#1D5A9E', color: 'white' }}>
               <th style={{ padding: '6px', textAlign: 'left' }}>Coluna</th>
               <th style={{ padding: '6px', textAlign: 'left' }}>Campo</th>
               <th style={{ padding: '6px', textAlign: 'left' }}>Exemplo</th>
+              <th style={{ padding: '6px', textAlign: 'left' }}>Obrigatório?</th>
             </tr>
           </thead>
           <tbody>
-            <tr style={{ backgroundColor: 'white' }}>
-              <td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>A</td>
-              <td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Área</td>
-              <td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>A, B, C, U...</td>
-            </tr>
-            <tr style={{ backgroundColor: '#f9f9f9' }}>
-              <td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>B</td>
-              <td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Rua</td>
-              <td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>1, 2, 35, 100...</td>
-            </tr>
-            <tr style={{ backgroundColor: 'white' }}>
-              <td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>C</td>
-              <td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Posição</td>
-              <td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>1, 2, 209, 500...</td>
-            </tr>
+            <tr style={{ backgroundColor: 'white' }}><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>A</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Ano</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>2026</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Sim</td></tr>
+            <tr style={{ backgroundColor: '#f9f9f9' }}><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>B</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Mês</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>5, "05", "Maio" ou "Mai"</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Sim</td></tr>
+            <tr style={{ backgroundColor: 'white' }}><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>C</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Endereço</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>A-1-007</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Sim</td></tr>
+            <tr style={{ backgroundColor: '#f9f9f9' }}><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>D</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Curva</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>A, B ou C</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Sim</td></tr>
+            <tr style={{ backgroundColor: 'white' }}><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>E</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Cód. produto previsto</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>1695</td><td style={{ padding: '6px', borderBottom: '1px solid #ddd' }}>Opcional</td></tr>
+            <tr style={{ backgroundColor: '#f9f9f9' }}><td style={{ padding: '6px' }}>F</td><td style={{ padding: '6px' }}>Descrição (opcional)</td><td style={{ padding: '6px' }}>SKOL LATA 350ML</td><td style={{ padding: '6px' }}>Opcional</td></tr>
           </tbody>
         </table>
-
-        <strong>🔄 Substituição de duplicatas:</strong> Se uma localização já existe com o mesmo ID
-        (ÁREA-RUA-POSIÇÃO), será automaticamente substituída pela nova entrada.
+        <strong>🔄 Duplicatas:</strong> Se já existir registro para o mesmo endereço naquele mês, ele é substituído pelo novo.
       </div>
     </div>
   );

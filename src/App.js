@@ -26,6 +26,7 @@ import DashboardPage from './pages/gerenciamento-estoque/DashboardPage';
 import GerenciarLocalizacoesPage from './pages/gerenciamento-estoque/GerenciarLocalizacoesPage';
 import EndereçamentoPage from './pages/gerenciamento-estoque/EndereçamentoPage';
 import ColetasValidadePage from './pages/gerenciamento-estoque/ColetasValidadePage';
+import AderenciaABCPage from './pages/gerenciamento-estoque/AderenciaABCPage';
 import LayoutArmazem from './pages/LayoutArmazem';
 import ImportarRelatoriosPrejuizo from './pages/gestao-prejuizo/ImportarRelatoriosPrejuizo';
 import WQIPage from './pages/gestao-prejuizo/WQIPage';
@@ -45,6 +46,15 @@ import EFCPage from './pages/gestao-mpd/EFCPage';
 import EFDPage from './pages/gestao-mpd/EFDPage';
 import TIPage from './pages/gestao-mpd/TIPage';
 import HistogramaPage from './pages/gestao-mpd/HistogramaPage';
+import GestaoFEFOPage from './pages/gestao-idade/GestaoFEFOPage';
+import StockAgeIndexPage from './pages/gestao-idade/StockAgeIndexPage';
+import EstoquePickingPage from './pages/gestao-idade/EstoquePickingPage';
+import EstoqueEstoquePage from './pages/gestao-idade/EstoqueEstoquePage';
+import ImportarPZVPage from './pages/gestao-idade/ImportarPZVPage';
+import PortariaPage from './pages/portaria/PortariaPage';
+import DashboardPortaria from './pages/portaria/DashboardPortaria';
+import RegistrosPortaria from './pages/portaria/RegistrosPortaria';
+import CadastrosPortaria from './pages/portaria/CadastrosPortaria';
 import EmpresasPage from './pages/admin/EmpresasPage';
 import ConfigurarEmpresaPage, { NIVEIS_SUPERVISOR } from './pages/admin/ConfigurarEmpresaPage';
 import UsuariosGlobalPage from './pages/admin/UsuariosGlobalPage';
@@ -136,6 +146,7 @@ function AppInner() {
 
             {/* Gerenciamento de Estoque */}
             <Route path="/estoque/dashboard"              element={<DashboardPage />} />
+            <Route path="/estoque/aderencia-abc"          element={<AderenciaABCPage />} />
             <Route path="/estoque/contar"                 element={<CountingPage />} />
             <Route path="/estoque/gerenciar-localizacoes" element={guardaSup ? <Navigate to={guardaSup} /> : <GerenciarLocalizacoesPage />} />
             <Route path="/estoque/enderecamento"          element={<EndereçamentoPage />} />
@@ -162,6 +173,20 @@ function AppInner() {
             {/* Conciliação de Estoque */}
             <Route path="/conciliacao-estoque/diaria"   element={<ConciliacaoDiariaPage />} />
             <Route path="/conciliacao-estoque/importar" element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarConciliacaoPage />} />
+
+            {/* Gestão de Idade */}
+            <Route path="/gestao-idade"                    element={<Navigate to="/gestao-idade/fefo" replace />} />
+            <Route path="/gestao-idade/fefo"               element={<GestaoFEFOPage />} />
+            <Route path="/gestao-idade/stock-age"          element={<StockAgeIndexPage />} />
+            <Route path="/gestao-idade/estoque-picking"    element={<EstoquePickingPage />} />
+            <Route path="/gestao-idade/estoque-estoque"    element={<EstoqueEstoquePage />} />
+            <Route path="/gestao-idade/importar-pzv"       element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarPZVPage />} />
+
+            {/* Portaria */}
+            <Route path="/portaria"             element={<PortariaPage />} />
+            <Route path="/portaria/dashboard"   element={<DashboardPortaria />} />
+            <Route path="/portaria/registros"   element={<RegistrosPortaria />} />
+            <Route path="/portaria/cadastros"   element={guardaSup ? <Navigate to={guardaSup} /> : <CadastrosPortaria />} />
 
             {/* Gestão MDP */}
             <Route path="/gestao-mpd/efc"          element={<EFCPage />} />
