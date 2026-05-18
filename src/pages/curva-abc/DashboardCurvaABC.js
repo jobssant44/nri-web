@@ -72,6 +72,10 @@ export default function DashboardCurvaABC() {
   // Prefixo descoberto dinamicamente em curva_abc_meta — usado para montar
   // os IDs dos docs em curva_abc_mensal. Fallback: `rid || 'global'`.
   const [prefixoMeta, setPrefixoMeta] = useState(null);
+  // Mapa de qual prefixo guarda cada mês: { '2026-01': 'rev_xxx', '2025-12': 'global', ... }
+  // Útil quando dados foram importados em sessões com `rid` diferentes (alguns
+  // sob 'global', outros sob a revenda) — daí cada mês pode viver num doc diferente.
+  const [prefixoPorMes, setPrefixoPorMes] = useState({});
   const [anoSel, setAnoSel]         = useSessionFilter('dabc:ano', '');
   const [mesSel, setMesSel]         = useSessionFilter('dabc:mes', '');
   const [dadosM0, setDadosM0]       = useState(null);
@@ -135,32 +139,48 @@ export default function DashboardCurvaABC() {
 
   async function carregarIndices() {
     const docIdPreferido = rid || 'global';
-    let snap = await getDoc(docRef('curva_abc_meta', docIdPreferido));
 
-    // Auto-discovery: se o doc esperado não existe (porque os dados foram
-    // importados sob outro `rid`, ou a revenda foi removida da empresa),
-    // varre a coleção e usa o doc encontrado. Quando há vários, escolhe o
-    // que tem MAIS meses (assume que é o "principal").
-    if (!snap.exists()) {
-      const snapAll = await getDocs(col('curva_abc_meta'));
-      if (!snapAll.empty) {
-        let melhor = null;
-        snapAll.docs.forEach(d => {
-          const data = d.data();
-          const qtMeses = Array.isArray(data?.meses) ? data.meses.length : 0;
-          if (!melhor || qtMeses > melhor.qtMeses) melhor = { ref: d, data, qtMeses, id: d.id };
-        });
-        if (melhor) {
-          snap = melhor.ref;
-          console.info(`[Curva ABC] Auto-discovery: doc esperado "${docIdPreferido}" não encontrado, usando "${melhor.id}" (${melhor.qtMeses} meses).`);
-        }
-      }
+    // Estratégia: mesclar TODOS os docs de curva_abc_meta da empresa.
+    // Dados podem estar espalhados entre prefixos diferentes ('global' e
+    // 'rev_xxx') se imports foram feitos com revenda diferente. Pra não
+    // perder nenhum mês, listamos todos os docs e fazemos union dos meses,
+    // mantendo o mapa de qual prefixo guarda cada mês.
+    const snapAll = await getDocs(col('curva_abc_meta'));
+    if (snapAll.empty) return;
+
+    const docsMeta = snapAll.docs.map(d => ({
+      id: d.id,
+      meses: Array.isArray(d.data()?.meses) ? d.data().meses : [],
+    }));
+
+    // Monta o mapa mês → prefixo. Quando o mesmo mês existe em vários docs,
+    // prioriza o doc preferido (rid atual), depois o que tem mais meses.
+    docsMeta.sort((a, b) => {
+      if (a.id === docIdPreferido) return -1;
+      if (b.id === docIdPreferido) return 1;
+      return b.meses.length - a.meses.length;
+    });
+
+    const mapaMesPrefixo = {};
+    const todosMeses = new Set();
+    docsMeta.forEach(d => {
+      d.meses.forEach(m => {
+        todosMeses.add(m);
+        if (!mapaMesPrefixo[m]) mapaMesPrefixo[m] = d.id;
+      });
+    });
+
+    if (docsMeta.length > 1) {
+      console.info(
+        `[Curva ABC] ${docsMeta.length} docs de meta detectados — `
+        + `mesclando ${todosMeses.size} meses únicos. `
+        + `Prefixos: ${docsMeta.map(d => `${d.id} (${d.meses.length})`).join(', ')}`
+      );
     }
 
-    if (!snap.exists()) return;
-    // Guarda o prefixo descoberto para usar nas chamadas seguintes (carregarDados)
-    setPrefixoMeta(snap.id);
-    const lista = (snap.data().meses || []).sort();
+    setPrefixoMeta(docIdPreferido);
+    setPrefixoPorMes(mapaMesPrefixo);
+    const lista = [...todosMeses].sort();
     setIndices(lista);
     const anosUnicos = [...new Set(lista.map(k => k.split('-')[0]))].sort((a,b)=>b-a);
     setAnos(anosUnicos);
@@ -194,11 +214,19 @@ export default function DashboardCurvaABC() {
     setCarregando(true); setPagina(1);
     const m1 = prevMonth(ano, mes, 1);
     const m2 = prevMonth(ano, mes, 2);
-    const prefixo = prefixoMeta || rid || 'global';
+    const fallback = prefixoMeta || rid || 'global';
+    // Resolve qual prefixo guarda cada mês (mapa montado em carregarIndices),
+    // caindo para o fallback se aquele mês não estiver mapeado.
+    const k0 = monthKey(ano, mes);
+    const k1 = monthKey(m1.ano, m1.mes);
+    const k2 = monthKey(m2.ano, m2.mes);
+    const p0 = prefixoPorMes[k0] || fallback;
+    const p1 = prefixoPorMes[k1] || fallback;
+    const p2 = prefixoPorMes[k2] || fallback;
     const [s0, s1, s2] = await Promise.all([
-      getDoc(docRef('curva_abc_mensal', `${prefixo}_${monthKey(ano, mes)}`)),
-      getDoc(docRef('curva_abc_mensal', `${prefixo}_${monthKey(m1.ano, m1.mes)}`)),
-      getDoc(docRef('curva_abc_mensal', `${prefixo}_${monthKey(m2.ano, m2.mes)}`)),
+      getDoc(docRef('curva_abc_mensal', `${p0}_${k0}`)),
+      getDoc(docRef('curva_abc_mensal', `${p1}_${k1}`)),
+      getDoc(docRef('curva_abc_mensal', `${p2}_${k2}`)),
     ]);
     setDadosM0(s0.exists() ? s0.data() : null);
     setDadosM1(s1.exists() ? s1.data() : null);
