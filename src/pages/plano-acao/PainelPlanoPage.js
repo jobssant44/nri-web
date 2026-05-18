@@ -270,6 +270,11 @@ function AcaoLinha({ acao, idx, planoId, onChange, salvando, obsTemp, setObsTemp
   const obsKey = `${planoId}_${idx}`;
   const obsValor = obsTemp[obsKey] !== undefined ? obsTemp[obsKey] : (acao.observacao || '');
 
+  // Detecta formato:
+  //  - novo (consolidado): tem array `itens` com todos os produtos
+  //  - antigo (por produto): tem campos diretos (produtoCodigo, ruaAtual...)
+  const ehConsolidada = Array.isArray(acao.itens);
+
   return (
     <div style={{
       padding: '14px 20px', borderBottom: `1px solid ${D.borderLight}`,
@@ -283,32 +288,35 @@ function AcaoLinha({ acao, idx, planoId, onChange, salvando, obsTemp, setObsTemp
           fontSize: 11, fontWeight: 800, fontFamily: D.mono,
         }}>{idx + 1}</div>
 
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, color: D.text, lineHeight: 1.55, marginBottom: 6 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, color: D.text, lineHeight: 1.55, marginBottom: 8, fontWeight: 600 }}>
             {acao.texto}
           </div>
 
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 11, color: D.textMuted, flexWrap: 'wrap' }}>
-            <span><strong style={{ color: D.textSec }}>Cód:</strong> <span style={{ fontFamily: D.mono }}>{acao.produtoCodigo}</span></span>
-            <span>•</span>
-            <span><strong style={{ color: D.textSec }}>Rua:</strong> <span style={{ fontFamily: D.mono }}>{acao.ruaAtual}</span></span>
-            <span>•</span>
-            <span><strong style={{ color: D.textSec }}>C.End:</strong> {acao.curvaEnderecoAtual}</span>
-            <span>→</span>
-            <span><strong style={{ color: D.textSec }}>C.Prod:</strong> {acao.curvaProduto}</span>
-            {acao.executadoEm && (
-              <>
-                <span>•</span>
-                <span style={{ color: cor }}>
-                  {acao.status === 'concluida' ? '✓ Concluída' : '✗ Ineficaz'} {fmtDataHora(acao.executadoEm)}
-                  {acao.executadoPor?.nome ? ` por ${acao.executadoPor.nome}` : ''}
-                </span>
-              </>
-            )}
-          </div>
+          {ehConsolidada ? (
+            <ListaItensConsolidados itens={acao.itens} />
+          ) : (
+            /* Retrocompatibilidade: planos antigos (1 ação por produto) */
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 11, color: D.textMuted, flexWrap: 'wrap' }}>
+              <span><strong style={{ color: D.textSec }}>Cód:</strong> <span style={{ fontFamily: D.mono }}>{acao.produtoCodigo}</span></span>
+              <span>•</span>
+              <span><strong style={{ color: D.textSec }}>Rua:</strong> <span style={{ fontFamily: D.mono }}>{acao.ruaAtual}</span></span>
+              <span>•</span>
+              <span><strong style={{ color: D.textSec }}>C.End:</strong> {acao.curvaEnderecoAtual}</span>
+              <span>→</span>
+              <span><strong style={{ color: D.textSec }}>C.Prod:</strong> {acao.curvaProduto}</span>
+            </div>
+          )}
 
-          {/* Botões de ação */}
-          <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          {acao.executadoEm && (
+            <div style={{ fontSize: 11, color: cor, marginTop: 8 }}>
+              {acao.status === 'concluida' ? '✓ Concluída' : '✗ Ineficaz'} em {fmtDataHora(acao.executadoEm)}
+              {acao.executadoPor?.nome ? ` por ${acao.executadoPor.nome}` : ''}
+            </div>
+          )}
+
+          {/* Botões de status + observação */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             <BtnStatus
               ativo={acao.status === 'concluida'}
               cor={D.green}
@@ -360,6 +368,74 @@ function MiniBadge({ label, valor, cor }) {
       <span style={{ fontSize: 10, fontWeight: 600 }}>{label}:</span>
       <span style={{ fontSize: 12, fontWeight: 800 }}>{valor}</span>
     </div>
+  );
+}
+
+function ListaItensConsolidados({ itens }) {
+  const [expandido, setExpandido] = useState(false);
+  const mostrarLimite = 5;
+  const mostrar = expandido ? itens : itens.slice(0, mostrarLimite);
+  const restante = itens.length - mostrar.length;
+
+  return (
+    <div style={{
+      background: '#fff', border: `1px solid ${D.borderLight}`,
+      borderRadius: 8, overflow: 'hidden', marginTop: 4,
+    }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, fontFamily: D.font }}>
+        <thead>
+          <tr style={{ background: D.bg }}>
+            <th style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 700, color: D.textMuted, fontSize: 10, letterSpacing: 0.5 }}>CÓDIGO</th>
+            <th style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 700, color: D.textMuted, fontSize: 10, letterSpacing: 0.5 }}>DESCRIÇÃO</th>
+            <th style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 700, color: D.textMuted, fontSize: 10, letterSpacing: 0.5 }}>RUA ATUAL</th>
+            <th style={{ padding: '6px 10px', textAlign: 'center', fontWeight: 700, color: D.textMuted, fontSize: 10, letterSpacing: 0.5 }}>DE</th>
+            <th style={{ padding: '6px 10px', textAlign: 'center', fontWeight: 700, color: D.textMuted, fontSize: 10, letterSpacing: 0.5 }}>PARA</th>
+          </tr>
+        </thead>
+        <tbody>
+          {mostrar.map((it, i) => (
+            <tr key={i} style={{ borderTop: `1px solid ${D.borderLight}` }}>
+              <td style={{ padding: '6px 10px', fontFamily: D.mono, fontWeight: 700, color: D.text }}>{it.produtoCodigo}</td>
+              <td style={{ padding: '6px 10px', color: D.textSec, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.produtoNome}>
+                {it.produtoNome || <span style={{ color: D.textMuted }}>—</span>}
+              </td>
+              <td style={{ padding: '6px 10px', fontFamily: D.mono, color: D.textSec }}>{it.ruaAtual}</td>
+              <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                <MiniCurva curva={it.curvaEnderecoAtual} />
+              </td>
+              <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                <MiniCurva curva={it.curvaProduto} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {itens.length > mostrarLimite && (
+        <button
+          onClick={() => setExpandido(!expandido)}
+          style={{
+            width: '100%', padding: '8px', background: D.bg, border: 'none',
+            borderTop: `1px solid ${D.borderLight}`,
+            fontSize: 11, color: D.red, fontWeight: 600, cursor: 'pointer',
+          }}
+        >
+          {expandido ? '▲ Mostrar menos' : `▼ Ver mais ${restante} produto(s)`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function MiniCurva({ curva }) {
+  if (!curva) return <span style={{ color: D.textMuted, fontSize: 11 }}>—</span>;
+  const cor = curva === 'A' ? D.green : curva === 'B' ? D.amber : D.red;
+  const bg  = curva === 'A' ? D.greenSoft : curva === 'B' ? D.amberSoft : D.redSoft;
+  return (
+    <span style={{
+      display: 'inline-block', minWidth: 22,
+      padding: '1px 6px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+      backgroundColor: bg, color: cor,
+    }}>{curva}</span>
   );
 }
 

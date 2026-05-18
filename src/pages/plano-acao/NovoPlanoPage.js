@@ -189,7 +189,7 @@ export default function NovoPlanoPage() {
             <CardKpi label="⚠️ PNC/Indet."     valor={resumo.pnc + resumo.indet} cor={D.amber} sub="ignorados no plano" />
           </div>
 
-          {/* Preview de ações */}
+          {/* Preview da ação consolidada */}
           {acoesPrevistas.length === 0 ? (
             <div style={{
               padding: 40, textAlign: 'center', background: D.greenSoft,
@@ -210,7 +210,7 @@ export default function NovoPlanoPage() {
                       Preview do plano
                     </div>
                     <div style={{ fontSize: 18, fontWeight: 800, color: D.text, marginTop: 4 }}>
-                      {acoesPrevistas.length} ação(ões) serão criadas
+                      1 ação consolidada · {acoesPrevistas[0].totalItens} produto(s) a movimentar
                     </div>
                   </div>
                   <button
@@ -227,36 +227,56 @@ export default function NovoPlanoPage() {
                 </div>
               </div>
 
+              {/* Card de ação consolidada */}
+              <div style={{
+                background: D.surface, border: `1px solid ${D.border}`,
+                borderLeft: `4px solid ${D.red}`, borderRadius: D.radius,
+                padding: '18px 22px', marginBottom: 14, boxShadow: D.shadow,
+              }}>
+                <div style={{ fontSize: 11, color: D.textMuted, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase' }}>
+                  Texto da ação
+                </div>
+                <div style={{ fontSize: 14, color: D.text, lineHeight: 1.5, fontWeight: 600, marginTop: 6 }}>
+                  {acoesPrevistas[0].texto}
+                </div>
+              </div>
+
               <div style={{
                 background: D.surface, border: `1px solid ${D.border}`,
                 borderRadius: D.radius, boxShadow: D.shadow, overflow: 'hidden',
               }}>
-                <div style={{ overflowX: 'auto', maxHeight: 520, overflowY: 'auto' }}>
+                <div style={{
+                  padding: '10px 14px', borderBottom: `1px solid ${D.borderLight}`,
+                  fontSize: 11, fontWeight: 700, color: D.textMuted, letterSpacing: 1.5, textTransform: 'uppercase',
+                }}>
+                  Detalhe dos {acoesPrevistas[0].totalItens} produtos
+                </div>
+                <div style={{ overflowX: 'auto', maxHeight: 460, overflowY: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: D.font }}>
                     <thead style={{ position: 'sticky', top: 0 }}>
                       <tr>
                         <th style={th}>#</th>
                         <th style={th}>Código</th>
+                        <th style={th}>Descrição</th>
                         <th style={th}>Rua atual</th>
                         <th style={th}>C.End</th>
                         <th style={th}>C.Prod</th>
-                        <th style={th}>Ação</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {acoesPrevistas.map((a, i) => (
-                        <tr key={a.id} style={{ background: i % 2 ? D.bg : '#fff' }}>
+                      {acoesPrevistas[0].itens.map((it, i) => (
+                        <tr key={i} style={{ background: i % 2 ? D.bg : '#fff' }}>
                           <td style={{ ...tdStyle, fontFamily: D.mono, fontWeight: 700, color: D.textMuted }}>{i + 1}</td>
-                          <td style={{ ...tdStyle, fontFamily: D.mono, fontWeight: 700 }}>{a.produtoCodigo}</td>
-                          <td style={{ ...tdStyle, fontFamily: D.mono }}>{a.ruaAtual}</td>
+                          <td style={{ ...tdStyle, fontFamily: D.mono, fontWeight: 700 }}>{it.produtoCodigo}</td>
+                          <td style={{ ...tdStyle, fontSize: 12, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.produtoNome}>
+                            {it.produtoNome || <span style={{ color: D.textMuted }}>—</span>}
+                          </td>
+                          <td style={{ ...tdStyle, fontFamily: D.mono }}>{it.ruaAtual}</td>
                           <td style={tdStyle}>
-                            <CurvaBadge curva={a.curvaEnderecoAtual} />
+                            <CurvaBadge curva={it.curvaEnderecoAtual} />
                           </td>
                           <td style={tdStyle}>
-                            <CurvaBadge curva={a.curvaProduto} />
-                          </td>
-                          <td style={{ ...tdStyle, fontSize: 12, color: D.textSec, lineHeight: 1.5, maxWidth: 460 }}>
-                            {a.texto}
+                            <CurvaBadge curva={it.curvaProduto} />
                           </td>
                         </tr>
                       ))}
