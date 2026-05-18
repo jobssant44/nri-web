@@ -46,6 +46,8 @@ import EFCPage from './pages/gestao-mpd/EFCPage';
 import EFDPage from './pages/gestao-mpd/EFDPage';
 import TIPage from './pages/gestao-mpd/TIPage';
 import HistogramaPage from './pages/gestao-mpd/HistogramaPage';
+import PainelPlanoPage from './pages/plano-acao/PainelPlanoPage';
+import NovoPlanoPage from './pages/plano-acao/NovoPlanoPage';
 import GestaoFEFOPage from './pages/gestao-idade/GestaoFEFOPage';
 import StockAgeIndexPage from './pages/gestao-idade/StockAgeIndexPage';
 import EstoquePickingPage from './pages/gestao-idade/EstoquePickingPage';
@@ -173,6 +175,11 @@ function AppInner() {
             {/* Conciliação de Estoque */}
             <Route path="/conciliacao-estoque/diaria"   element={<ConciliacaoDiariaPage />} />
             <Route path="/conciliacao-estoque/importar" element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarConciliacaoPage />} />
+
+            {/* Plano de Ação */}
+            <Route path="/plano-acao"          element={<Navigate to="/plano-acao/painel" replace />} />
+            <Route path="/plano-acao/painel"   element={<PainelPlanoPage />} />
+            <Route path="/plano-acao/novo"     element={<NovoPlanoPage />} />
 
             {/* Gestão de Idade */}
             <Route path="/gestao-idade"                    element={<Navigate to="/gestao-idade/fefo" replace />} />

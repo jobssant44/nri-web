@@ -4,7 +4,7 @@ import { signOut } from 'firebase/auth';
 import {
   Package, RefreshCw, TrendingUp, Warehouse, Map,
   Clock, TrendingDown, ClipboardList, Scale, Truck, Timer,
-  DoorOpen,
+  DoorOpen, ListChecks,
   LogOut, Pin, PinOff, Building2, Settings, ChevronDown,
 } from 'lucide-react';
 import { auth } from '../firebaseConfig';
@@ -118,6 +118,15 @@ const TODOS_GRUPOS = [
       { path: '/gestao-mpd/histograma', label: 'Histograma',          todos: true },
       { path: '/gestao-mpd/importar',   label: 'Importar relatórios', supervisor: true },
       { path: '/gestao-mpd/metas',      label: 'Metas',               supervisor: true },
+    ],
+  },
+  {
+    label: 'Plano de Ação',
+    Icon: ListChecks,
+    moduloSlug: 'plano-acao',
+    itens: [
+      { path: '/plano-acao/painel', label: 'Painel',       todos: true },
+      { path: '/plano-acao/novo',   label: 'Novo Plano',   todos: true },
     ],
   },
   {

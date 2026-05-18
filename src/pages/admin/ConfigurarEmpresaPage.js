@@ -17,6 +17,7 @@ const TODOS_MODULOS = [
   { slug: 'tma',             label: 'TMA' },
   { slug: 'conciliacao',     label: 'Conciliação de Estoque' },
   { slug: 'portaria',        label: 'Portaria' },
+  { slug: 'plano-acao',      label: 'Plano de Ação' },
 ];
 
 export const NIVEIS = [
