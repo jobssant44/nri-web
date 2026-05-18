@@ -3,14 +3,18 @@
  *
  * Fluxo:
  *   1. Usuário escolhe uma DATA de contagem do dropdown
- *   2. Preview: quantas ações vão ser geradas (não-aderentes da contagem)
+ *   2. Preview: as ações geradas (1+ por curva destino, respeitando 250 chars)
  *   3. Botão "Gerar Plano" cria o doc em planos_acao com todas as ações
+ *
+ * O texto de cada ação consolida códigos + ruas onde foram contados + faixa
+ * de ruas da curva destino (ex: "C01 a C13"). Se passar de 250 chars,
+ * quebra em ações sequenciais cobrindo todos os produtos.
  *
  * Depois disso o usuário é redirecionado pro Painel.
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getDocs, addDoc, query, where, serverTimestamp } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
 import { useUser } from '../../context/UserContext';
 import {
@@ -21,6 +25,7 @@ import {
   gerarAcoesDaContagem, isPNC, curvaEfetiva,
   calcularStatusPlano, fmtData,
 } from '../../modules/plano-acao/planoAcaoHelpers';
+import { monthKey } from '../../modules/gerenciamento-estoque/shared/curvaLookup';
 
 function tsToDate(ts) {
   if (!ts) return null;
@@ -40,6 +45,10 @@ export default function NovoPlanoPage() {
   const [dataSel, setDataSel]         = useState('');
   const [salvando, setSalvando]       = useState(false);
   const [aviso, setAviso]             = useState('');
+  // docs brutos de locations_mensal do mês selecionado — usado pra calcular
+  // ruas vazias por (curva, área).
+  const [locationsMensalDoMes, setLocationsMensalDoMes] = useState([]);
+  const [loadingRuas, setLoadingRuas] = useState(false);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { carregar(); }, []);
@@ -85,6 +94,35 @@ export default function NovoPlanoPage() {
     });
   }, [logs, dataSel]);
 
+  // Carrega locations_mensal do mês da contagem selecionada.
+  // IMPORTANTE: NÃO incluir `col` nas dependências — `col` é uma função recriada
+  // a cada render pelo `useDb()`, então incluí-la causa loop infinito de fetch
+  // (re-render → novo `col` → useEffect dispara → re-render → ...).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!dataSel) {
+      setLocationsMensalDoMes([]);
+      return;
+    }
+    const [y, m] = dataSel.split('-');
+    const chave = monthKey(parseInt(y, 10), parseInt(m, 10));
+    let cancelado = false;
+    (async () => {
+      setLoadingRuas(true);
+      try {
+        const snap = await getDocs(query(col('locations_mensal'), where('chaveMes', '==', chave)));
+        const docs = snap.docs.map(d => d.data());
+        if (!cancelado) setLocationsMensalDoMes(docs);
+      } catch (e) {
+        console.error('Falha ao carregar locations_mensal:', e);
+        if (!cancelado) setLocationsMensalDoMes([]);
+      } finally {
+        if (!cancelado) setLoadingRuas(false);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [dataSel]);
+
   // Resumo
   const resumo = useMemo(() => {
     let total = 0, naoAderentes = 0, pnc = 0, indet = 0, aderentes = 0;
@@ -101,8 +139,13 @@ export default function NovoPlanoPage() {
   }, [logsDaData]);
 
   const acoesPrevistas = useMemo(
-    () => dataSel ? gerarAcoesDaContagem(logsDaData, produtosMap) : [],
-    [dataSel, logsDaData, produtosMap]
+    () => dataSel ? gerarAcoesDaContagem(logsDaData, produtosMap, locationsMensalDoMes) : [],
+    [dataSel, logsDaData, produtosMap, locationsMensalDoMes]
+  );
+
+  const totalItensPrevistos = useMemo(
+    () => acoesPrevistas.reduce((acc, a) => acc + a.totalItens, 0),
+    [acoesPrevistas]
   );
 
   async function gerarPlano() {
@@ -179,6 +222,10 @@ export default function NovoPlanoPage() {
         }}>
           👆 Selecione uma data de contagem acima para ver o preview do plano.
         </div>
+      ) : loadingRuas ? (
+        <div style={{ padding: 60, textAlign: 'center', color: D.textMuted }}>
+          Carregando layout do mês...
+        </div>
       ) : (
         <>
           {/* Resumo */}
@@ -189,7 +236,18 @@ export default function NovoPlanoPage() {
             <CardKpi label="⚠️ PNC/Indet."     valor={resumo.pnc + resumo.indet} cor={D.amber} sub="ignorados no plano" />
           </div>
 
-          {/* Preview da ação consolidada */}
+          {/* Aviso se não temos layout do mês */}
+          {locationsMensalDoMes.length === 0 && (
+            <div style={{
+              padding: '10px 14px', marginBottom: 14, borderRadius: 8,
+              backgroundColor: D.amberSoft, border: `1px solid ${D.amberBorder}`,
+              color: D.amber, fontSize: 13,
+            }}>
+              ⚠️ Nenhum layout encontrado em <code>locations_mensal</code> para esse mês. As recomendações de ruas destino não vão aparecer. Importe o layout do mês em <strong>Estoque → Importar Layout</strong>.
+            </div>
+          )}
+
+          {/* Preview do plano */}
           {acoesPrevistas.length === 0 ? (
             <div style={{
               padding: 40, textAlign: 'center', background: D.greenSoft,
@@ -210,7 +268,10 @@ export default function NovoPlanoPage() {
                       Preview do plano
                     </div>
                     <div style={{ fontSize: 18, fontWeight: 800, color: D.text, marginTop: 4 }}>
-                      1 ação consolidada · {acoesPrevistas[0].totalItens} produto(s) a movimentar
+                      {acoesPrevistas.length} ação(ões) · {totalItensPrevistos} produto(s) a movimentar
+                    </div>
+                    <div style={{ fontSize: 11, color: D.textMuted, marginTop: 4 }}>
+                      Limite de 250 caracteres por ação — quebra automática quando necessário.
                     </div>
                   </div>
                   <button
@@ -227,68 +288,81 @@ export default function NovoPlanoPage() {
                 </div>
               </div>
 
-              {/* Card de ação consolidada */}
-              <div style={{
-                background: D.surface, border: `1px solid ${D.border}`,
-                borderLeft: `4px solid ${D.red}`, borderRadius: D.radius,
-                padding: '18px 22px', marginBottom: 14, boxShadow: D.shadow,
-              }}>
-                <div style={{ fontSize: 11, color: D.textMuted, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase' }}>
-                  Texto da ação
-                </div>
-                <div style={{ fontSize: 14, color: D.text, lineHeight: 1.5, fontWeight: 600, marginTop: 6 }}>
-                  {acoesPrevistas[0].texto}
-                </div>
-              </div>
-
-              <div style={{
-                background: D.surface, border: `1px solid ${D.border}`,
-                borderRadius: D.radius, boxShadow: D.shadow, overflow: 'hidden',
-              }}>
-                <div style={{
-                  padding: '10px 14px', borderBottom: `1px solid ${D.borderLight}`,
-                  fontSize: 11, fontWeight: 700, color: D.textMuted, letterSpacing: 1.5, textTransform: 'uppercase',
-                }}>
-                  Detalhe dos {acoesPrevistas[0].totalItens} produtos
-                </div>
-                <div style={{ overflowX: 'auto', maxHeight: 460, overflowY: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: D.font }}>
-                    <thead style={{ position: 'sticky', top: 0 }}>
-                      <tr>
-                        <th style={th}>#</th>
-                        <th style={th}>Código</th>
-                        <th style={th}>Descrição</th>
-                        <th style={th}>Rua atual</th>
-                        <th style={th}>C.End</th>
-                        <th style={th}>C.Prod</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {acoesPrevistas[0].itens.map((it, i) => (
-                        <tr key={i} style={{ background: i % 2 ? D.bg : '#fff' }}>
-                          <td style={{ ...tdStyle, fontFamily: D.mono, fontWeight: 700, color: D.textMuted }}>{i + 1}</td>
-                          <td style={{ ...tdStyle, fontFamily: D.mono, fontWeight: 700 }}>{it.produtoCodigo}</td>
-                          <td style={{ ...tdStyle, fontSize: 12, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.produtoNome}>
-                            {it.produtoNome || <span style={{ color: D.textMuted }}>—</span>}
-                          </td>
-                          <td style={{ ...tdStyle, fontFamily: D.mono }}>{it.ruaAtual}</td>
-                          <td style={tdStyle}>
-                            <CurvaBadge curva={it.curvaEnderecoAtual} />
-                          </td>
-                          <td style={tdStyle}>
-                            <CurvaBadge curva={it.curvaProduto} />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              {/* Lista de ações */}
+              {acoesPrevistas.map((acao, idx) => (
+                <AcaoPreviewCard key={acao.id} acao={acao} idx={idx} />
+              ))}
             </>
           )}
         </>
       )}
     </PageContainer>
+  );
+}
+
+function AcaoPreviewCard({ acao, idx }) {
+  const areaLabel = acao.areaDestino === 'P' ? 'Picking' : 'Estoque';
+  const codigosUnicos = new Set(acao.itens.map(i => i.produtoCodigo)).size;
+  return (
+    <div style={{
+      background: D.surface, border: `1px solid ${D.border}`,
+      borderLeft: `4px solid ${D.red}`, borderRadius: D.radius,
+      padding: '18px 22px', marginBottom: 14, boxShadow: D.shadow,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: 10, flexWrap: 'wrap', marginBottom: 8,
+      }}>
+        <div style={{ fontSize: 11, color: D.textMuted, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase' }}>
+          Ação #{idx + 1} · destino: {areaLabel} curva {acao.curvaDestino} · {codigosUnicos} código(s){codigosUnicos !== acao.totalItens ? ` em ${acao.totalItens} ocorrência(s)` : ''}
+          {acao.totalRuasDisponiveis != null && ` · ${acao.totalRuasDisponiveis} rua(s) destino`}
+        </div>
+        <div style={{
+          fontSize: 11, fontFamily: D.mono, fontWeight: 700,
+          color: acao.texto.length > 250 ? D.red : D.textSec,
+          background: D.bg, padding: '3px 8px', borderRadius: 4,
+        }}>
+          {acao.texto.length} / 250 chars
+        </div>
+      </div>
+
+      <div style={{ fontSize: 14, color: D.text, lineHeight: 1.5, fontWeight: 600, marginBottom: 12 }}>
+        {acao.texto}
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: D.font }}>
+          <thead>
+            <tr>
+              <th style={th}>#</th>
+              <th style={th}>Código</th>
+              <th style={th}>Descrição</th>
+              <th style={th}>Rua atual</th>
+              <th style={th}>C.End</th>
+              <th style={th}>C.Prod</th>
+            </tr>
+          </thead>
+          <tbody>
+            {acao.itens.map((it, i) => (
+              <tr key={i} style={{ background: i % 2 ? D.bg : '#fff' }}>
+                <td style={{ ...tdStyle, fontFamily: D.mono, fontWeight: 700, color: D.textMuted }}>{i + 1}</td>
+                <td style={{ ...tdStyle, fontFamily: D.mono, fontWeight: 700 }}>{it.produtoCodigo}</td>
+                <td style={{ ...tdStyle, fontSize: 12, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.produtoNome}>
+                  {it.produtoNome || <span style={{ color: D.textMuted }}>—</span>}
+                </td>
+                <td style={{ ...tdStyle, fontFamily: D.mono }}>{it.ruaAtual}</td>
+                <td style={tdStyle}>
+                  <CurvaBadge curva={it.curvaEnderecoAtual} />
+                </td>
+                <td style={tdStyle}>
+                  <CurvaBadge curva={it.curvaProduto} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
