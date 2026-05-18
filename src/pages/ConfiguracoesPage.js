@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { doc, writeBatch, getDocs } from 'firebase/firestore';
+import { doc, writeBatch, getDocs, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 
 // Colunas usadas do relatório 01.11
@@ -273,6 +273,235 @@ export default function ConfiguracoesPage() {
             </div>
           </div>
         )}
+      </div>
+
+      <div style={{ height: 20 }} />
+      <SecaoMarketplace />
+    </div>
+  );
+}
+
+// ─── Seção Marketplace ────────────────────────────────────────────────────────
+// Lista de SKUs considerados "Marketplace" — usados pelo filtro "Tipo de produto"
+// no Dashboard Curva ABC. Armazenada em:
+//   empresas/{eid}/config/marketplace  →  { codigos: [...], atualizadoEm }
+//
+// UI: textarea pra colar/digitar códigos (1 por linha ou separados por vírgula)
+//     + botão "Importar CSV" (1 coluna, 1 código por linha)
+//     + lista de SKUs salvos com remover individual
+//     + botão "Salvar".
+function SecaoMarketplace() {
+  const { docRef } = useDb();
+  const csvInputRef = useRef();
+
+  const [codigosSalvos, setCodigosSalvos] = useState([]); // string[] — fonte da verdade do Firestore
+  const [rascunho, setRascunho]           = useState(''); // textarea controlada
+  const [carregando, setCarregando]       = useState(true);
+  const [salvando, setSalvando]           = useState(false);
+  const [erro, setErro]                   = useState('');
+  const [okMsg, setOkMsg]                 = useState('');
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { carregar(); }, []);
+
+  async function carregar() {
+    setCarregando(true);
+    setErro('');
+    try {
+      const snap = await getDoc(docRef('config', 'marketplace'));
+      const dados = snap.exists() ? snap.data() : {};
+      const codigos = Array.isArray(dados.codigos)
+        ? dados.codigos.map(c => String(c).trim()).filter(Boolean)
+        : [];
+      setCodigosSalvos(codigos);
+    } catch (e) {
+      setErro('Erro ao carregar lista: ' + e.message);
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  // Normaliza códigos (trim, dedup, exclui vazios). Mantém ordem de inserção.
+  function normalizar(codigos) {
+    const set = new Set();
+    const out = [];
+    codigos.forEach(c => {
+      const s = String(c).trim();
+      if (!s) return;
+      if (set.has(s)) return;
+      set.add(s);
+      out.push(s);
+    });
+    return out;
+  }
+
+  // Parseia o textarea: aceita códigos 1 por linha, separados por vírgula ou ponto-e-vírgula.
+  function parsearRascunho(texto) {
+    return normalizar(String(texto || '').split(/[\s,;]+/));
+  }
+
+  function adicionarDoRascunho() {
+    const novos = parsearRascunho(rascunho);
+    if (novos.length === 0) {
+      setErro('Cole ou digite ao menos 1 código.');
+      return;
+    }
+    const combinado = normalizar([...codigosSalvos, ...novos]);
+    setCodigosSalvos(combinado);
+    setRascunho('');
+    setErro('');
+    setOkMsg(`+${combinado.length - codigosSalvos.length} código(s) adicionados ao rascunho. Clique em "Salvar" pra gravar.`);
+  }
+
+  async function handleCSV(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setErro('');
+    setOkMsg('');
+    try {
+      const texto = await file.text();
+      // CSV simples: 1 coluna, 1 código por linha. Aceita ; , e tab como separador
+      // pra tolerar arquivos com mais de uma coluna (pega só a primeira).
+      const novos = normalizar(
+        texto.split(/\r?\n/).map(l => l.split(/[;,\t]/)[0])
+      );
+      if (novos.length === 0) {
+        setErro('CSV vazio ou sem códigos válidos na primeira coluna.');
+        return;
+      }
+      const combinado = normalizar([...codigosSalvos, ...novos]);
+      const adicionados = combinado.length - codigosSalvos.length;
+      setCodigosSalvos(combinado);
+      setOkMsg(`+${adicionados} código(s) adicionados do CSV (${file.name}). Clique em "Salvar" pra gravar.`);
+    } catch (err) {
+      setErro('Erro ao ler CSV: ' + err.message);
+    }
+    e.target.value = '';
+  }
+
+  function removerCodigo(codigo) {
+    setCodigosSalvos(prev => prev.filter(c => c !== codigo));
+    setOkMsg('');
+  }
+
+  function limparTudo() {
+    if (!window.confirm('Remover TODOS os códigos da lista Marketplace? (Só vale após clicar em "Salvar".)')) return;
+    setCodigosSalvos([]);
+    setOkMsg('Lista limpa no rascunho. Clique em "Salvar" pra gravar.');
+  }
+
+  async function salvar() {
+    setSalvando(true);
+    setErro('');
+    setOkMsg('');
+    try {
+      await setDoc(docRef('config', 'marketplace'), {
+        codigos: codigosSalvos,
+        atualizadoEm: serverTimestamp(),
+      });
+      setOkMsg(`✓ Lista salva (${codigosSalvos.length} código(s)).`);
+    } catch (e) {
+      setErro('Erro ao salvar: ' + e.message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div style={secao}>
+      <h3 style={secaoTitulo}>Marketplace — Lista de SKUs</h3>
+      <p style={{ fontSize: 13, color: '#888', marginTop: 0, marginBottom: 20 }}>
+        Códigos cadastrados aqui aparecem como <strong>Marketplace</strong> no filtro
+        "Tipo de produto" do Dashboard Curva ABC. Os demais SKUs ficam classificados
+        como <strong>Ambev</strong>. A curva é recalculada dentro de cada grupo.
+      </p>
+
+      <input ref={csvInputRef} type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display: 'none' }} />
+
+      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        {/* Rascunho — adicionar códigos */}
+        <div style={{ flex: '1 1 320px', minWidth: 280 }}>
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 6 }}>
+            Adicionar códigos (1 por linha, vírgula ou ponto-e-vírgula)
+          </label>
+          <textarea
+            value={rascunho}
+            onChange={(e) => setRascunho(e.target.value)}
+            placeholder={'123456\n789012\n345678\n... ou: 123456, 789012, 345678'}
+            rows={6}
+            style={{
+              width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #ddd',
+              fontFamily: 'monospace', fontSize: 13, boxSizing: 'border-box', resize: 'vertical',
+            }}
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            <button onClick={adicionarDoRascunho} style={btnPrimario}>
+              + Adicionar ao rascunho
+            </button>
+            <button onClick={() => csvInputRef.current?.click()} style={btnSec}>
+              📥 Importar CSV
+            </button>
+          </div>
+        </div>
+
+        {/* Lista atual */}
+        <div style={{ flex: '1 1 320px', minWidth: 280 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>
+              Lista atual ({codigosSalvos.length} código(s))
+            </span>
+            {codigosSalvos.length > 0 && (
+              <button onClick={limparTudo}
+                style={{ ...btnSec, padding: '4px 10px', fontSize: 11, color: '#E31837', borderColor: '#fca5a5' }}>
+                Limpar tudo
+              </button>
+            )}
+          </div>
+          <div style={{
+            maxHeight: 220, overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: 8,
+            background: '#fafafa',
+          }}>
+            {carregando ? (
+              <div style={{ padding: 20, textAlign: 'center', color: '#aaa', fontSize: 12 }}>Carregando...</div>
+            ) : codigosSalvos.length === 0 ? (
+              <div style={{ padding: 20, textAlign: 'center', color: '#aaa', fontSize: 12 }}>
+                Nenhum código cadastrado.
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <tbody>
+                  {codigosSalvos.map((c, i) => (
+                    <tr key={c} style={{ borderBottom: '1px solid #e5e7eb', background: i % 2 ? '#fff' : 'transparent' }}>
+                      <td style={{ padding: '6px 10px', fontFamily: 'monospace', color: '#333' }}>{c}</td>
+                      <td style={{ padding: '6px 10px', textAlign: 'right', width: 60 }}>
+                        <button onClick={() => removerCodigo(c)}
+                          title="Remover"
+                          style={{
+                            padding: '2px 8px', background: 'transparent', border: '1px solid #fca5a5',
+                            color: '#E31837', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                          }}>
+                          ✕
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Status */}
+      {erro   && <div style={erroBox}>{erro}</div>}
+      {okMsg  && <div style={okBox}>{okMsg}</div>}
+
+      {/* Salvar */}
+      <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+        <button onClick={salvar} disabled={salvando || carregando}
+          style={{ ...btnPrimario, opacity: salvando || carregando ? 0.6 : 1 }}>
+          {salvando ? 'Salvando...' : `💾 Salvar lista (${codigosSalvos.length})`}
+        </button>
       </div>
     </div>
   );

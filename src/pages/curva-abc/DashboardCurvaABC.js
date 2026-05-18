@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { getDoc, getDocs } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
 import { calcularABC } from './ImportarRelatorio';
@@ -89,13 +89,21 @@ export default function DashboardCurvaABC() {
   const [metrica, setMetrica] = useSessionFilter('dabc:metrica', 'cx');
   const [tipo, setTipo]       = useSessionFilter('dabc:tipo', 'armazem');
 
+  // Filtro "Tipo de produto" — Todos | Ambev | Marketplace.
+  //  - Todos       → roda Pareto sobre 100% dos SKUs
+  //  - Marketplace → roda Pareto APENAS sobre SKUs presentes na lista marketplace
+  //  - Ambev       → roda Pareto sobre TODOS exceto os da lista marketplace
+  // A curva é relativa ao subconjunto: um SKU C em "Todos" pode virar A em "Marketplace".
+  const [tipoProduto, setTipoProduto] = useSessionFilter('dabc:tipoProd', 'todos');
+  const [marketplaceSet, setMarketplaceSet] = useState(null); // Set<string> dos códigos cadastrados ou null se ainda carregando
+
   // Filtros de tabela
   const [filtroCurva, setFiltroCurva] = useSessionFilter('dabc:curva', '');
   const [busca, setBusca]             = useSessionFilter('dabc:busca', '');
   const [pagina, setPagina]           = useSessionFilter('dabc:pag', 1);
 
   // ── Carregamento ──
-  useEffect(() => { carregarIndices(); carregarFatores(); }, []);
+  useEffect(() => { carregarIndices(); carregarFatores(); carregarMarketplace(); }, []);
 
   useEffect(() => {
     if (!anoSel || !indices.length) return;
@@ -210,6 +218,21 @@ export default function DashboardCurvaABC() {
     } catch (_) {}
   }
 
+  // Lê empresas/{eid}/config/marketplace e popula `marketplaceSet`.
+  // Em caso de falha (doc não existe, sem permissão) usa Set vazio — daí
+  // o filtro "Marketplace" mostra zero SKUs, comportamento esperado pra
+  // empresa que ainda não cadastrou a lista.
+  async function carregarMarketplace() {
+    try {
+      const snap = await getDoc(docRef('config', 'marketplace'));
+      const dados = snap.exists() ? snap.data() : {};
+      const codigos = Array.isArray(dados.codigos) ? dados.codigos : [];
+      setMarketplaceSet(new Set(codigos.map(c => String(c).trim()).filter(Boolean)));
+    } catch (_) {
+      setMarketplaceSet(new Set());
+    }
+  }
+
   async function carregarDados(ano, mes) {
     setCarregando(true); setPagina(1);
     const m1 = prevMonth(ano, mes, 1);
@@ -244,30 +267,42 @@ export default function DashboardCurvaABC() {
   const temPlt     = temFatores;
   const metricaDisponivel = metrica === 'cx' || (metrica === 'plt' && temPlt);
 
+  // Aplica o filtro "Tipo de produto" ANTES de calcularABC, pra que o Pareto
+  // seja calculado dentro do subconjunto (um SKU C em "Todos" pode virar A em
+  // "Marketplace" porque concentra parte grande das vendas do grupo).
+  // Quando a lista marketplace ainda não carregou, devolve a lista intacta
+  // (evita esconder dados durante o load).
+  const filtrarPorTipoProduto = useCallback((produtos) => {
+    if (tipoProduto === 'todos' || !marketplaceSet) return produtos;
+    if (tipoProduto === 'marketplace') {
+      return produtos.filter(p => marketplaceSet.has(String(p.codigo)));
+    }
+    if (tipoProduto === 'ambev') {
+      return produtos.filter(p => !marketplaceSet.has(String(p.codigo)));
+    }
+    return produtos;
+  }, [tipoProduto, marketplaceSet]);
+
   const produtosM0 = useMemo(() => {
     if (!dadosM0?.produtos) return [];
     const raw = dadosM0.produtos.map(p => ({
       ...p,
       [campo]: getValorFinal(p, campo, metrica, fatores),
     }));
-    return calcularABC(raw, campo);
-  }, [dadosM0, campo, metrica, fatores]);
+    return calcularABC(filtrarPorTipoProduto(raw), campo);
+  }, [dadosM0, campo, metrica, fatores, filtrarPorTipoProduto]);
 
   const produtosM1 = useMemo(() => {
     if (!dadosM1?.produtos) return [];
-    return calcularABC(
-      dadosM1.produtos.map(p => ({ ...p, [campo]: getValorFinal(p, campo, metrica, fatores) })),
-      campo,
-    );
-  }, [dadosM1, campo, metrica, fatores]);
+    const raw = dadosM1.produtos.map(p => ({ ...p, [campo]: getValorFinal(p, campo, metrica, fatores) }));
+    return calcularABC(filtrarPorTipoProduto(raw), campo);
+  }, [dadosM1, campo, metrica, fatores, filtrarPorTipoProduto]);
 
   const produtosM2 = useMemo(() => {
     if (!dadosM2?.produtos) return [];
-    return calcularABC(
-      dadosM2.produtos.map(p => ({ ...p, [campo]: getValorFinal(p, campo, metrica, fatores) })),
-      campo,
-    );
-  }, [dadosM2, campo, metrica, fatores]);
+    const raw = dadosM2.produtos.map(p => ({ ...p, [campo]: getValorFinal(p, campo, metrica, fatores) }));
+    return calcularABC(filtrarPorTipoProduto(raw), campo);
+  }, [dadosM2, campo, metrica, fatores, filtrarPorTipoProduto]);
 
   const mapaM1 = useMemo(() => Object.fromEntries(produtosM1.map(p => [p.codigo, p._curva])), [produtosM1]);
   const mapaM2 = useMemo(() => Object.fromEntries(produtosM2.map(p => [p.codigo, p._curva])), [produtosM2]);
@@ -383,6 +418,25 @@ export default function DashboardCurvaABC() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Tipo de produto — Todos | Ambev | Marketplace */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 13, color: '#555', fontWeight: '600' }}>Tipo de produto:</span>
+          <select
+            value={tipoProduto}
+            onChange={(e) => { setTipoProduto(e.target.value); setPagina(1); }}
+            style={sel}
+            title={
+              marketplaceSet && marketplaceSet.size === 0
+                ? 'Nenhum SKU cadastrado em Configurações → Marketplace'
+                : ''
+            }
+          >
+            <option value="todos">Todos</option>
+            <option value="ambev">Ambev</option>
+            <option value="marketplace">Marketplace</option>
+          </select>
         </div>
 
       </div>
