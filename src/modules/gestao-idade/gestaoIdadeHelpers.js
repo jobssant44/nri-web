@@ -11,6 +11,7 @@
  */
 
 import { getDocs } from 'firebase/firestore';
+import { isLogExcluido } from '../gerenciamento-estoque/shared/inventoryLogsFilter';
 
 export const THRESHOLD_SEGREGAR_PCT  = 60;      // % shelf life — usado no Stock Age Index
 export const THRESHOLD_SEGREGAR_DIAS = 30;      // ≤ 30 dias até vencer → Segregar
@@ -212,6 +213,7 @@ export async function carregarLogsContagem({ col, dataInicio, dataFim }) {
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(l => {
+      if (isLogExcluido(l)) return false; // soft delete
       const ts = tsToDate(l.timestamp);
       if (!ts) return false;
       if (dataInicio && ts < dataInicio) return false;

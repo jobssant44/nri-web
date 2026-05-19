@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 import { collection, getDocs } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
+import { filtrarLogsAtivos } from '../../modules/gerenciamento-estoque/shared/inventoryLogsFilter';
 import * as XLSX from 'xlsx';
 
 export default function ColetasValidadePage() {
@@ -176,7 +177,8 @@ export default function ColetasValidadePage() {
 
     try {
       const snap = await getDocs(colRevenda('inventory_logs'));
-      let resultadosFiltrados = snap.docs.map(doc => doc.data());
+      // Soft delete: descarta linhas excluídas antes de qualquer filtro.
+      let resultadosFiltrados = filtrarLogsAtivos(snap.docs.map(doc => doc.data()));
 
       // ========== FILTRO 1: BUSCA TEXTUAL ==========
       if (temBuscaTexto) {

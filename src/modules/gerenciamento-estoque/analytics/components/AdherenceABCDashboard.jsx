@@ -11,7 +11,9 @@
  * gravado no momento da contagem.
  */
 import React, { useState, useEffect, useMemo } from 'react';
-import { getDocs } from 'firebase/firestore';
+import { getDocs, writeBatch, serverTimestamp, query, where, updateDoc } from 'firebase/firestore';
+import { useUser } from '../../../../context/UserContext';
+import { NIVEIS_SUPERVISOR } from '../../../../pages/admin/ConfigurarEmpresaPage';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LabelList, Legend,
@@ -19,6 +21,7 @@ import {
 import { useDb } from '../../../../utils/db';
 import { useSessionFilter } from '../../../../hooks/useSessionFilter';
 import { monthKey, calcularAderenteABC, CURVA_PRODUTO_PADRAO } from '../../shared/curvaLookup';
+import { filtrarLogsAtivos } from '../../shared/inventoryLogsFilter';
 
 // Resolve a curva efetiva do produto: usa a do snapshot do log, ou
 // CURVA_PRODUTO_PADRAO ('C') quando produto não está cadastrado.
@@ -57,6 +60,17 @@ function ymLabel(key) {
   return `${meses[parseInt(m, 10) - 1]}/${y}`;
 }
 
+// ─── Estilos compartilhados ─────────────────────────────────────────────────
+// Extraídos pro escopo do módulo pra que subcomponentes (DetalheContagens)
+// possam acessá-los sem precisar receber via props.
+const cardStyle       = { backgroundColor: '#fff', borderRadius: '8px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', marginBottom: '20px' };
+const tableStyle      = { width: '100%', borderCollapse: 'collapse', marginTop: '15px', fontSize: '12px' };
+const thStyle         = { backgroundColor: '#E31837', color: 'white', padding: '10px', textAlign: 'left', fontWeight: 'bold' };
+const tdStyle         = { padding: '8px 10px', borderBottom: '1px solid #ddd' };
+const badgeAderente   = { display: 'inline-block', padding: '3px 10px', backgroundColor: '#dcfce7', color: '#166534', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' };
+const badgeNaoAderente = { display: 'inline-block', padding: '3px 10px', backgroundColor: '#fee2e2', color: '#991b1b', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' };
+const badgeIndet      = { display: 'inline-block', padding: '3px 10px', backgroundColor: '#fef3c7', color: '#92400e', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' };
+
 export function AdherenceABCDashboard() {
   const { col } = useDb();
   const [logs, setLogs] = useState([]);
@@ -70,20 +84,24 @@ export function AdherenceABCDashboard() {
   // null = mostra tudo.
   const [curvaSelecionada, setCurvaSelecionada] = useSessionFilter('aderABC:curva', null);
 
-  // ─── Estilos ──────────────────────────────────────────────────────────
+  // Filtros da tabela "Detalhe das contagens"
+  // Busca aplicada em código, descrição ou endereço (case-insensitive).
+  const [buscaTabela, setBuscaTabela] = useSessionFilter('aderABC:buscaTab', '');
+  // Ordenação: { col: 'data'|'endereco'|'codigo'|..., dir: 'asc'|'desc' } ou null
+  const [ordTabela, setOrdTabela] = useSessionFilter('aderABC:ordTab', null);
+
+  // Layout do mês selecionado — usado pra validar endereço e buscar a curva
+  // nova na edição de uma linha. Carregado lazy: só quando muda dataSel/mesSel.
+  // Mapa { 'A12': 'A', 'C03': 'C', ... } (endereço UPPERCASE → curva)
+  const [layoutMes, setLayoutMes] = useState({});
+
+  // ─── Estilos locais (cardStyle/tableStyle/etc. estão no escopo do módulo) ──
   const containerStyle = { maxWidth: '1200px', margin: '20px auto', padding: '20px', backgroundColor: '#f5f5f5', fontFamily: 'Arial, sans-serif' };
-  const cardStyle = { backgroundColor: '#fff', borderRadius: '8px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', marginBottom: '20px' };
   const gridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' };
   const kpiCardStyle = { backgroundColor: '#fff', borderRadius: '8px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', textAlign: 'center' };
   const kpiTitulo = { fontSize: '11px', color: '#666', marginBottom: '10px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px' };
   const kpiValor = { fontSize: '34px', fontWeight: 'bold', marginBottom: '5px', fontFamily: 'monospace' };
-  const tableStyle = { width: '100%', borderCollapse: 'collapse', marginTop: '15px', fontSize: '12px' };
-  const thStyle = { backgroundColor: '#E31837', color: 'white', padding: '10px', textAlign: 'left', fontWeight: 'bold' };
-  const tdStyle = { padding: '8px 10px', borderBottom: '1px solid #ddd' };
   const inputStyle = { padding: '8px 10px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px', minWidth: '180px' };
-  const badgeAderente = { display: 'inline-block', padding: '3px 10px', backgroundColor: '#dcfce7', color: '#166534', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' };
-  const badgeNaoAderente = { display: 'inline-block', padding: '3px 10px', backgroundColor: '#fee2e2', color: '#991b1b', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' };
-  const badgeIndet = { display: 'inline-block', padding: '3px 10px', backgroundColor: '#fef3c7', color: '#92400e', borderRadius: '10px', fontSize: '11px', fontWeight: 'bold' };
   const tabBtn = (active) => ({
     padding: '8px 16px',
     backgroundColor: active ? '#E31837' : '#fff',
@@ -106,7 +124,8 @@ export function AdherenceABCDashboard() {
         getDocs(col('inventory_logs')),
         getDocs(col('produtos')),
       ]);
-      setLogs(snapLogs.docs.map(d => ({ id: d.id, ...d.data() })));
+      // Soft delete: linhas com `excluido: true` somem de toda a UI.
+      setLogs(filtrarLogsAtivos(snapLogs.docs.map(d => ({ id: d.id, ...d.data() }))));
       const map = {};
       snapProd.docs.forEach(d => {
         const x = d.data();
@@ -120,6 +139,38 @@ export function AdherenceABCDashboard() {
       setLoading(false);
     }
   }
+
+  // ─── Layout do mês selecionado (pra validar edição de endereço) ───────
+  // Carrega `locations_mensal` filtrado pelo mês relevante (derivado do filtro
+  // atual). 1 query única — fica em cache local pelo IndexedDB Persistence.
+  // NÃO incluir `col` nas deps (recriado a cada render do useDb).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const chave = modo === 'data'
+      ? (dataSel ? dataSel.slice(0, 7) : '')
+      : (mesSel || '');
+    if (!chave) { setLayoutMes({}); return; }
+
+    let cancelado = false;
+    (async () => {
+      try {
+        const snap = await getDocs(query(col('locations_mensal'), where('chaveMes', '==', chave)));
+        if (cancelado) return;
+        const mapa = {};
+        snap.docs.forEach(d => {
+          const data = d.data();
+          const end   = String(data.endereco || '').trim().toUpperCase();
+          const curva = String(data.curva || '').trim().toUpperCase();
+          if (end && curva) mapa[end] = curva;
+        });
+        setLayoutMes(mapa);
+      } catch (e) {
+        console.error('Falha ao carregar locations_mensal:', e);
+        if (!cancelado) setLayoutMes({});
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [modo, dataSel, mesSel]);
 
   // ─── Datas e meses únicos para os filtros ─────────────────────────────
   const datasUnicas = useMemo(() => {
@@ -471,85 +522,440 @@ export function AdherenceABCDashboard() {
           </div>
 
           {/* Tabela detalhada */}
-          <div style={cardStyle}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: 8 }}>
-              <h3 style={{ color: '#E31837', fontSize: '14px', margin: 0 }}>📋 Detalhe das contagens</h3>
-              {curvaSelecionada && (
-                <span style={{ fontSize: 11, color: '#666' }}>
-                  Filtrado por <strong>Curva {curvaSelecionada}</strong> ·{' '}
-                  <button onClick={() => setCurvaSelecionada(null)}
-                    style={{ background: 'none', border: 'none', color: '#E31837', cursor: 'pointer', fontSize: 11, padding: 0, textDecoration: 'underline' }}>
-                    limpar
-                  </button>
-                </span>
-              )}
-            </div>
-            <div style={{ overflowX: 'auto', maxHeight: '500px', overflowY: 'auto' }}>
-              <table style={tableStyle}>
-                <thead style={{ position: 'sticky', top: 0 }}>
-                  <tr>
-                    <th style={thStyle}>Status</th>
-                    <th style={thStyle}>Data</th>
-                    <th style={thStyle}>Endereço</th>
-                    <th style={thStyle}>C.End</th>
-                    <th style={thStyle}>Código</th>
-                    <th style={thStyle}>Produto</th>
-                    <th style={thStyle}>C.Prod</th>
-                    <th style={thStyle}>Qtde</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtrados
-                    .filter(l => !curvaSelecionada || curvaEfetiva(l) === curvaSelecionada)
-                    .slice(0, 500).map((l, idx) => {
-                    const d = tsToDate(l.timestamp);
-                    const ader = aderenciaEfetiva(l);
-                    const curvaProdEfet = curvaEfetiva(l);
-                    const curvaDefault = !l.productCurva; // foi defaultada para 'C'
-                    return (
-                      <tr key={l.id} style={{ backgroundColor: idx % 2 === 0 ? '#fff' : '#f9f9f9' }}>
-                        <td style={tdStyle}>
-                          <span style={ader === true ? badgeAderente : ader === false ? badgeNaoAderente : badgeIndet}>
-                            {ader === true ? '✅ Aderente' : ader === false ? '❌ Não' : '⚠️ Indet.'}
-                          </span>
-                        </td>
-                        <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: '11px' }}>{fmtData(d)}</td>
-                        <td style={{ ...tdStyle, fontWeight: 'bold' }}>{l.endereco || `${l.area || ''}-${l.street || ''}-${l.palettePosition || ''}`}</td>
-                        <td style={tdStyle}>{l.enderecoCurva || <span style={{ color: '#999' }}>—</span>}</td>
-                        <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{l.productCode}</td>
-                        <td style={tdStyle}>
-                          {produtosMap[String(l.productCode).trim()]
-                            || l.productName
-                            || <span style={{ color: '#999' }}>—</span>}
-                        </td>
-                        <td style={tdStyle}>
-                          {curvaProdEfet}
-                          {curvaDefault && (
-                            <span title="Produto sem curva cadastrada — assumido C"
-                              style={{ marginLeft: 4, fontSize: 10, color: '#999', fontStyle: 'italic' }}>*</span>
-                          )}
-                        </td>
-                        <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{l.quantidade ?? '—'}{l.unidade ? ` ${l.unidade}` : ''}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {(() => {
-              const totalNaTabela = filtrados.filter(l => !curvaSelecionada || curvaEfetiva(l) === curvaSelecionada).length;
-              return totalNaTabela > 500 ? (
-                <div style={{ fontSize: '11px', color: '#666', marginTop: '8px', fontStyle: 'italic' }}>
-                  ⓘ Mostrando apenas as 500 primeiras linhas (de {totalNaTabela}).
-                </div>
-              ) : null;
-            })()}
-            <div style={{ fontSize: '11px', color: '#666', marginTop: '4px', fontStyle: 'italic' }}>
-              ⓘ Produtos sem curva cadastrada são tratados como <strong>C</strong> (marcado com *).
-            </div>
-          </div>
+          <DetalheContagens
+            filtrados={filtrados}
+            curvaSelecionada={curvaSelecionada}
+            setCurvaSelecionada={setCurvaSelecionada}
+            produtosMap={produtosMap}
+            buscaTabela={buscaTabela}
+            setBuscaTabela={setBuscaTabela}
+            ordTabela={ordTabela}
+            setOrdTabela={setOrdTabela}
+            setLogs={setLogs}
+            layoutMes={layoutMes}
+          />
         </>
       )}
+    </div>
+  );
+}
+
+// ─── Detalhe das contagens (tabela com busca + sort + soft delete) ────────
+// Componente extraído pra encapsular: busca por texto (código/descrição/endereço),
+// ordenação por coluna clicável e seleção/exclusão (soft delete) por supervisor.
+//
+// Sobre a exclusão:
+//   - Faz `updateDoc(log, { excluido: true, excluidoEm, excluidoPor })` — não
+//     apaga fisicamente o doc. Linhas excluídas somem de TODA a UI por causa
+//     do `filtrarLogsAtivos` chamado nos loaders das 6 telas que leem
+//     inventory_logs (ver src/modules/gerenciamento-estoque/shared/inventoryLogsFilter.js).
+//   - Após gravar, remove as linhas do estado `logs` local (via `setLogs`)
+//     pra que KPIs/gráficos/aderência se atualizem instantaneamente sem refetch.
+//   - Pra recuperar uma linha excluída por engano, é necessário rodar um script
+//     com firebase-admin SDK que faça `updateDoc(..., { excluido: false })`.
+function DetalheContagens({
+  filtrados, curvaSelecionada, setCurvaSelecionada, produtosMap,
+  buscaTabela, setBuscaTabela, ordTabela, setOrdTabela, setLogs,
+  layoutMes,
+}) {
+  const { db, docRef } = useDb();
+  const { usuario } = useUser();
+  const isSupervisor = NIVEIS_SUPERVISOR.includes(usuario?.nivel);
+
+  // Set<string> de IDs de logs selecionados pra exclusão.
+  const [selecionadas, setSelecionadas] = useState(new Set());
+  const [excluindo, setExcluindo] = useState(false);
+
+  // Edição inline do endereço.
+  // `editandoId` = id do log em modo edit (ou null).
+  // `valorEdit`  = texto atual digitado.
+  // `salvandoEdit` = id do log sendo gravado no Firestore agora.
+  const [editandoId, setEditandoId]   = useState(null);
+  const [valorEdit, setValorEdit]     = useState('');
+  const [salvandoEdit, setSalvandoEdit] = useState(null);
+  // Helper de comparação: trata números/strings/null de forma consistente
+  function comparar(a, b, dir) {
+    const mul = dir === 'desc' ? -1 : 1;
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;          // null/undefined sempre por último
+    if (b == null) return -1;
+    if (typeof a === 'number' && typeof b === 'number') return (a - b) * mul;
+    return String(a).localeCompare(String(b), 'pt-BR', { numeric: true }) * mul;
+  }
+
+  // Valor a comparar pra cada coluna. Mantém em sync com a renderização.
+  function valorColuna(log, col) {
+    switch (col) {
+      case 'status':    return aderenciaEfetiva(log) === true ? 0 : aderenciaEfetiva(log) === false ? 1 : 2;
+      case 'data':      return tsToDate(log.timestamp)?.getTime() ?? null;
+      case 'endereco':  return log.endereco || `${log.area || ''}-${log.street || ''}-${log.palettePosition || ''}`;
+      case 'cend':      return log.enderecoCurva || null;
+      case 'codigo':    return log.productCode || null;
+      case 'produto':   return produtosMap[String(log.productCode).trim()] || log.productName || '';
+      case 'cprod':     return curvaEfetiva(log);
+      case 'qtde':      return Number(log.quantidade) || 0;
+      default:          return null;
+    }
+  }
+
+  // Click no cabeçalho: 1ª vez asc → 2ª desc → 3ª limpa (volta à ordem original)
+  function toggleSort(col) {
+    if (!ordTabela || ordTabela.col !== col) { setOrdTabela({ col, dir: 'asc' }); return; }
+    if (ordTabela.dir === 'asc') { setOrdTabela({ col, dir: 'desc' }); return; }
+    setOrdTabela(null);
+  }
+
+  function setaSort(col) {
+    if (!ordTabela || ordTabela.col !== col) return <span style={{ color: '#ccc', marginLeft: 4 }}>⇅</span>;
+    return <span style={{ color: '#E31837', marginLeft: 4 }}>{ordTabela.dir === 'asc' ? '▲' : '▼'}</span>;
+  }
+
+  // Pipeline: curva selecionada → busca por texto → sort (sem mutar array original)
+  const linhasProcessadas = useMemo(() => {
+    let arr = filtrados;
+    if (curvaSelecionada) arr = arr.filter(l => curvaEfetiva(l) === curvaSelecionada);
+    if (buscaTabela && buscaTabela.trim()) {
+      const q = buscaTabela.trim().toLowerCase();
+      arr = arr.filter(l => {
+        const codigo  = String(l.productCode || '').toLowerCase();
+        const nome    = String(produtosMap[String(l.productCode).trim()] || l.productName || '').toLowerCase();
+        const end     = String(l.endereco || '').toLowerCase();
+        return codigo.includes(q) || nome.includes(q) || end.includes(q);
+      });
+    }
+    if (ordTabela?.col) {
+      arr = arr.slice().sort((a, b) =>
+        comparar(valorColuna(a, ordTabela.col), valorColuna(b, ordTabela.col), ordTabela.dir)
+      );
+    }
+    return arr;
+  }, [filtrados, curvaSelecionada, buscaTabela, ordTabela, produtosMap]);
+
+  const totalProcessadas = linhasProcessadas.length;
+  const linhas = linhasProcessadas.slice(0, 500);
+
+  // Helpers de seleção
+  const idsVisiveis = useMemo(() => linhas.map(l => l.id).filter(Boolean), [linhas]);
+  const todasVisiveisMarcadas = idsVisiveis.length > 0 && idsVisiveis.every(id => selecionadas.has(id));
+
+  function toggleLinha(id) {
+    setSelecionadas(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleTodasVisiveis() {
+    setSelecionadas(prev => {
+      const next = new Set(prev);
+      if (todasVisiveisMarcadas) {
+        idsVisiveis.forEach(id => next.delete(id));
+      } else {
+        idsVisiveis.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  }
+
+  // Soft delete em lote. Mostra confirmação dupla; >10 exige digitar "EXCLUIR".
+  async function excluirSelecionadas() {
+    const ids = Array.from(selecionadas);
+    if (ids.length === 0) return;
+    if (!isSupervisor) return; // proteção redundante — UI já esconde o botão
+
+    if (ids.length <= 10) {
+      if (!window.confirm(
+        `Excluir ${ids.length} contagem(ns)?\n\n`
+        + `Esta ação não pode ser desfeita pela interface — apenas via suporte técnico.`
+      )) return;
+    } else {
+      const palavra = window.prompt(
+        `⚠️ Você vai excluir ${ids.length} contagens.\n\n`
+        + `Digite a palavra EXCLUIR (em caixa alta) para confirmar:`
+      );
+      if (palavra !== 'EXCLUIR') {
+        alert('Confirmação inválida. Nenhuma linha foi excluída.');
+        return;
+      }
+    }
+
+    setExcluindo(true);
+    try {
+      const CHUNK = 450; // limite de writeBatch (500) com folga
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const slice = ids.slice(i, i + CHUNK);
+        const batch = writeBatch(db);
+        slice.forEach(id => {
+          batch.update(docRef('inventory_logs', id), {
+            excluido: true,
+            excluidoEm: serverTimestamp(),
+            excluidoPor: { uid: usuario?.uid || null, nome: usuario?.nome || '' },
+          });
+        });
+        await batch.commit();
+      }
+      // Remove do estado local pra que KPIs/gráficos/aderência se atualizem agora.
+      setLogs(prev => prev.filter(l => !selecionadas.has(l.id)));
+      setSelecionadas(new Set());
+    } catch (e) {
+      alert('Erro ao excluir: ' + e.message);
+    } finally {
+      setExcluindo(false);
+    }
+  }
+
+  // ── Edição inline do endereço ───────────────────────────────────────────
+  function iniciarEdicao(log) {
+    setEditandoId(log.id);
+    setValorEdit(String(log.endereco || ''));
+  }
+  function cancelarEdicao() {
+    setEditandoId(null);
+    setValorEdit('');
+  }
+
+  // Salva o novo endereço + recalcula a curva e a aderência.
+  // 1 read (já em cache: o `layoutMes` foi carregado uma vez por mês selecionado).
+  // 1 write (updateDoc do log).
+  // KPIs/gráficos/% se atualizam automaticamente porque rodam em useMemo
+  // sobre o array `logs` — basta atualizar o estado local.
+  async function salvarEdicao(log) {
+    const novoEnd = String(valorEdit || '').trim().toUpperCase();
+    if (!novoEnd) {
+      alert('Informe um endereço.');
+      return;
+    }
+    if (novoEnd === String(log.endereco || '').trim().toUpperCase()) {
+      cancelarEdicao();
+      return;
+    }
+    // Validação bloqueante: endereço precisa existir no layout do mês.
+    const novaCurva = layoutMes[novoEnd];
+    if (!novaCurva) {
+      alert(`Endereço "${novoEnd}" não está cadastrado no layout deste mês.\n\n`
+        + 'Cadastre em Estoque → Importar Layout antes de editar.');
+      return;
+    }
+
+    setSalvandoEdit(log.id);
+    try {
+      const novaAderencia = calcularAderenteABC(curvaEfetiva(log), novaCurva);
+      await updateDoc(docRef('inventory_logs', log.id), {
+        endereco: novoEnd,
+        enderecoCurva: novaCurva,
+        aderenteABC: novaAderencia,
+      });
+      // Atualiza estado local pra refletir nos KPIs / gráficos / status.
+      setLogs(prev => prev.map(l => l.id === log.id
+        ? { ...l, endereco: novoEnd, enderecoCurva: novaCurva, aderenteABC: novaAderencia }
+        : l
+      ));
+      cancelarEdicao();
+    } catch (e) {
+      alert('Erro ao salvar: ' + e.message);
+    } finally {
+      setSalvandoEdit(null);
+    }
+  }
+
+  // Lista de endereços do layout do mês — usada pelo <datalist> de autocomplete.
+  const enderecosLayout = useMemo(() => Object.keys(layoutMes || {}).sort(), [layoutMes]);
+
+  return (
+    <div style={cardStyle}>
+      {/* Datalist global — alimenta o autocomplete da edição inline. */}
+      <datalist id="layout-mes-enderecos">
+        {enderecosLayout.map(e => <option key={e} value={e} />)}
+      </datalist>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: 8 }}>
+        <h3 style={{ color: '#E31837', fontSize: '14px', margin: 0 }}>📋 Detalhe das contagens</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          {curvaSelecionada && (
+            <span style={{ fontSize: 11, color: '#666' }}>
+              Filtrado por <strong>Curva {curvaSelecionada}</strong> ·{' '}
+              <button onClick={() => setCurvaSelecionada(null)}
+                style={{ background: 'none', border: 'none', color: '#E31837', cursor: 'pointer', fontSize: 11, padding: 0, textDecoration: 'underline' }}>
+                limpar
+              </button>
+            </span>
+          )}
+          <input
+            type="text"
+            placeholder="Buscar código, descrição ou endereço..."
+            value={buscaTabela}
+            onChange={(e) => setBuscaTabela(e.target.value)}
+            style={{
+              padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd',
+              fontSize: 12, minWidth: 240, outline: 'none',
+            }}
+          />
+          {buscaTabela && (
+            <button onClick={() => setBuscaTabela('')}
+              style={{ background: 'none', border: 'none', color: '#E31837', cursor: 'pointer', fontSize: 11, padding: 0, textDecoration: 'underline' }}>
+              limpar busca
+            </button>
+          )}
+          {isSupervisor && selecionadas.size > 0 && (
+            <button
+              onClick={excluirSelecionadas}
+              disabled={excluindo}
+              style={{
+                padding: '6px 14px', backgroundColor: '#E31837', color: '#fff',
+                border: 'none', borderRadius: 6, cursor: excluindo ? 'not-allowed' : 'pointer',
+                fontSize: 12, fontWeight: 700, opacity: excluindo ? 0.6 : 1,
+              }}
+            >
+              {excluindo ? 'Excluindo...' : `🗑️ Excluir ${selecionadas.size} selecionada(s)`}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ overflowX: 'auto', maxHeight: '500px', overflowY: 'auto' }}>
+        <table style={tableStyle}>
+          <thead style={{ position: 'sticky', top: 0 }}>
+            <tr>
+              {[
+                ['status', 'Status'], ['data', 'Data'], ['endereco', 'Endereço'],
+                ['cend', 'C.End'], ['codigo', 'Código'], ['produto', 'Produto'],
+                ['cprod', 'C.Prod'], ['qtde', 'Qtde'],
+              ].map(([col, label]) => (
+                <th key={col}
+                  onClick={() => toggleSort(col)}
+                  style={{ ...thStyle, cursor: 'pointer', userSelect: 'none' }}
+                  title="Clique para ordenar"
+                >
+                  {label}{setaSort(col)}
+                </th>
+              ))}
+              {isSupervisor && (
+                <th style={{ ...thStyle, textAlign: 'center', width: 44 }} title="Selecionar para excluir">
+                  <input
+                    type="checkbox"
+                    checked={todasVisiveisMarcadas}
+                    onChange={toggleTodasVisiveis}
+                    style={{ cursor: 'pointer', accentColor: '#fff' }}
+                    title={todasVisiveisMarcadas ? 'Desmarcar todas visíveis' : 'Marcar todas visíveis'}
+                  />
+                </th>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.map((l, idx) => {
+              const d = tsToDate(l.timestamp);
+              const ader = aderenciaEfetiva(l);
+              const curvaProdEfet = curvaEfetiva(l);
+              const curvaDefault = !l.productCurva;
+              return (
+                <tr key={l.id} style={{ backgroundColor: idx % 2 === 0 ? '#fff' : '#f9f9f9' }}>
+                  <td style={tdStyle}>
+                    <span style={ader === true ? badgeAderente : ader === false ? badgeNaoAderente : badgeIndet}>
+                      {ader === true ? '✅ Aderente' : ader === false ? '❌ Não' : '⚠️ Indet.'}
+                    </span>
+                  </td>
+                  <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: '11px' }}>{fmtData(d)}</td>
+                  <td style={{ ...tdStyle, fontWeight: 'bold' }}>
+                    {editandoId === l.id ? (
+                      // Modo edição inline (supervisor)
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <input
+                          type="text"
+                          value={valorEdit}
+                          autoFocus
+                          onChange={(e) => setValorEdit(e.target.value.toUpperCase())}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') salvarEdicao(l);
+                            else if (e.key === 'Escape') cancelarEdicao();
+                          }}
+                          list="layout-mes-enderecos"
+                          disabled={salvandoEdit === l.id}
+                          style={{
+                            width: 90, padding: '3px 6px', fontFamily: 'monospace',
+                            fontSize: 12, border: '1px solid #E31837', borderRadius: 4,
+                            textTransform: 'uppercase',
+                          }}
+                        />
+                        <button
+                          onClick={() => salvarEdicao(l)}
+                          disabled={salvandoEdit === l.id}
+                          title="Salvar (Enter)"
+                          style={{
+                            background: salvandoEdit === l.id ? '#ccc' : '#16a34a',
+                            color: '#fff', border: 'none', borderRadius: 4, padding: '3px 7px',
+                            cursor: salvandoEdit === l.id ? 'wait' : 'pointer', fontSize: 11, fontWeight: 700,
+                          }}
+                        >{salvandoEdit === l.id ? '…' : '✓'}</button>
+                        <button
+                          onClick={cancelarEdicao}
+                          disabled={salvandoEdit === l.id}
+                          title="Cancelar (Esc)"
+                          style={{
+                            background: '#fff', color: '#666', border: '1px solid #ccc',
+                            borderRadius: 4, padding: '3px 7px', cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                          }}
+                        >✕</button>
+                      </div>
+                    ) : (
+                      // Modo view — supervisor enxerga o lápis ao passar o mouse
+                      <span
+                        onClick={isSupervisor ? () => iniciarEdicao(l) : undefined}
+                        title={isSupervisor ? 'Clique pra editar o endereço (recalcula aderência)' : ''}
+                        style={isSupervisor ? { cursor: 'pointer', borderBottom: '1px dashed #ccc' } : {}}
+                      >
+                        {l.endereco || `${l.area || ''}-${l.street || ''}-${l.palettePosition || ''}`}
+                        {isSupervisor && <span style={{ marginLeft: 4, color: '#999', fontSize: 10 }}>✏️</span>}
+                      </span>
+                    )}
+                  </td>
+                  <td style={tdStyle}>{l.enderecoCurva || <span style={{ color: '#999' }}>—</span>}</td>
+                  <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{l.productCode}</td>
+                  <td style={tdStyle}>
+                    {produtosMap[String(l.productCode).trim()]
+                      || l.productName
+                      || <span style={{ color: '#999' }}>—</span>}
+                  </td>
+                  <td style={tdStyle}>
+                    {curvaProdEfet}
+                    {curvaDefault && (
+                      <span title="Produto sem curva cadastrada — assumido C"
+                        style={{ marginLeft: 4, fontSize: 10, color: '#999', fontStyle: 'italic' }}>*</span>
+                    )}
+                  </td>
+                  <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{l.quantidade ?? '—'}{l.unidade ? ` ${l.unidade}` : ''}</td>
+                  {isSupervisor && (
+                    <td style={{ ...tdStyle, textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={selecionadas.has(l.id)}
+                        onChange={() => toggleLinha(l.id)}
+                        style={{ cursor: 'pointer', accentColor: '#E31837' }}
+                      />
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+            {linhas.length === 0 && (
+              <tr>
+                <td colSpan={isSupervisor ? 9 : 8} style={{ ...tdStyle, textAlign: 'center', color: '#999', padding: 24 }}>
+                  Nenhuma contagem encontrada com esses filtros.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {totalProcessadas > 500 && (
+        <div style={{ fontSize: '11px', color: '#666', marginTop: '8px', fontStyle: 'italic' }}>
+          ⓘ Mostrando apenas as 500 primeiras linhas (de {totalProcessadas}).
+        </div>
+      )}
+      <div style={{ fontSize: '11px', color: '#666', marginTop: '4px', fontStyle: 'italic' }}>
+        ⓘ Produtos sem curva cadastrada são tratados como <strong>C</strong> (marcado com *).
+      </div>
     </div>
   );
 }

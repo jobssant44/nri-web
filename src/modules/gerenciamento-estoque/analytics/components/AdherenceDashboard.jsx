@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useSessionFilter } from '../../../../hooks/useSessionFilter';
 import { getDocs } from 'firebase/firestore';
 import { useDb } from '../../../../utils/db';
+import { isLogExcluido } from '../../shared/inventoryLogsFilter';
 
 export function AdherenceDashboard() {
   const { col, colRevenda } = useDb();
@@ -88,6 +89,7 @@ export function AdherenceDashboard() {
       const logsFiltrados = inventorySnap.docs
         .map(d => d.data())
         .filter(log => {
+          if (isLogExcluido(log)) return false; // soft delete
           const dataLog = resolverData(log.createdAt || log.timestamp);
           if (!dataLog) return false;
           const dLog = somenteData(dataLog);

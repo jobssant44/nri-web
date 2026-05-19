@@ -26,6 +26,7 @@ import {
   calcularStatusPlano, fmtData,
 } from '../../modules/plano-acao/planoAcaoHelpers';
 import { monthKey } from '../../modules/gerenciamento-estoque/shared/curvaLookup';
+import { filtrarLogsAtivos } from '../../modules/gerenciamento-estoque/shared/inventoryLogsFilter';
 
 function tsToDate(ts) {
   if (!ts) return null;
@@ -60,7 +61,8 @@ export default function NovoPlanoPage() {
         getDocs(col('inventory_logs')),
         getDocs(col('produtos')),
       ]);
-      setLogs(snapLogs.docs.map(d => ({ id: d.id, ...d.data() })));
+      // Soft delete: linhas com `excluido: true` são ignoradas em planos novos.
+      setLogs(filtrarLogsAtivos(snapLogs.docs.map(d => ({ id: d.id, ...d.data() }))));
       const map = {};
       snapProd.docs.forEach(d => {
         const x = d.data();
