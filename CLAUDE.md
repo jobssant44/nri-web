@@ -40,6 +40,38 @@ const { col, docRef, db } = useDb();
 
 **Number parsing:** Brazilian format (dot = thousands, comma = decimal). Use the `num()` helper exported from `ImportarRelatorio.js` for all numeric cell parsing.
 
+## Firestore Read Optimization — minimize quota usage
+
+The Firestore Spark plan caps at **50k reads/day**. The app is read-heavy and easily hits this ceiling without care. **Every new page or feature must follow these rules**:
+
+### Cache is on (since 2026-05-19)
+`firebaseConfig.js` initializes Firestore with `persistentLocalCache({ tabManager: persistentMultipleTabManager(), cacheSizeBytes: CACHE_SIZE_UNLIMITED })`. The SDK serves unchanged docs from IndexedDB automatically. You don't need to manage cache manually — but you **do** need to write queries the SDK can cache effectively.
+
+### Rules of thumb
+
+1. **NEVER put `col`, `docRef`, or any function from `useDb()` in a useEffect dep array.** They're recreated every render → infinite fetch loop. Use empty deps + `// eslint-disable-next-line react-hooks/exhaustive-deps`, or wrap in `useCallback`/`useRef`. The Plano de Ação loop bug (May 2026) cost 390k reads in a few hours.
+
+2. **Filter on the server when possible.** Use `query(col('foo'), where('campo', '==', valor))` instead of `getDocs(col('foo'))` + `.filter()` on the client. Each unread doc is a saved read.
+
+3. **Use `limit()` and pagination for large collections** (`inventory_logs`, `vendas_relatorio`, `abastecimentos`). The page may show only 500 rows but `getDocs(col('inventory_logs'))` downloads ALL of them.
+
+4. **Cache cold data in a Context** if used in multiple pages. `produtos`, `locations`, `marketplace` rarely change — load once in a `DataContext` and share, instead of each page fetching independently.
+
+5. **Prefer `getDoc(docRef('x', 'id'))` over `getDocs(query(col, where(__name__, '==', id)))`.** Direct doc reads are cheaper and cacheable.
+
+6. **Use `useMemo` for client-side transformations** (filter, sort, aggregate) so changing filters doesn't re-fetch. Re-fetch only when the underlying dataset changes.
+
+7. **Use `Promise.all` for parallel fetches** that don't depend on each other. Sequential awaits multiply latency, not reads, but parallel feels faster and lets the SDK batch where possible.
+
+8. **Soft delete = filter at read time**, not at the data layer. `inventory_logs` uses `excluido: true` + a shared `filtrarLogsAtivos()` helper. Every screen that reads logs must apply it.
+
+9. **Bulk operations use `writeBatch` in chunks of 450.** Limit is 500; 450 leaves headroom. Same for deletes (`HistoricoImportacoes`).
+
+10. **When unsure, check the Firebase Console → Usage**. If reads spike on a new feature, audit before shipping. The Console graph shows daily reads per day; a single ramp-up day usually points to a loop.
+
+### Local backup
+`backup-firestore.js` (Node + firebase-admin) downloads every doc as JSON locally. Idempotent — rerun to resume if it fails. Requires `service-account-key.json` in project root (in `.gitignore`).
+
 ## Design System (WJS UI) — `src/design/`
 
 **Reference implementation:** `src/pages/gestao-prejuizo/WQIPage.js` — every new page MUST match this visual language and use components from `src/design/`. Don't recreate cards, KPIs, filters, or tables from scratch.

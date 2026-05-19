@@ -6,12 +6,14 @@
  *   2. Rode:  node backup-firestore.js
  *   3. A pasta `backup-YYYY-MM-DD/` será criada com todos os dados.
  *
- * O script:
- *   - Percorre TODAS as collections raiz e suas subcollections recursivamente
- *     (essencial pro multi-tenant /empresas/{id}/...).
+ * Características:
+ *   - IDEMPOTENTE: rode quantas vezes quiser. Docs já salvos são pulados.
+ *     Se cair no meio, basta rodar de novo e ele completa.
+ *   - PAGINAÇÃO: usa limit(200) + startAfter() pra não baixar collections
+ *     enormes de uma vez (evita timeout do gRPC em collections grandes).
+ *   - RETRY: cada chamada de rede tenta até 3 vezes com backoff exponencial.
+ *   - RECURSÃO: percorre subcollections automaticamente (multi-tenant).
  *   - Converte Timestamps do Firestore pra string ISO (legível e re-importável).
- *   - Mostra progresso por collection.
- *   - Falha de forma clara se a quota estourar (RESOURCE_EXHAUSTED).
  *
  * NUNCA commite o `service-account-key.json` — já está no .gitignore.
  */
@@ -31,15 +33,17 @@ if (!fs.existsSync(KEY_PATH)) {
 const serviceAccount = require(KEY_PATH);
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
+// Aumenta limite de cliente HTTP/gRPC pra collections maiores
 const db = admin.firestore();
+db.settings({ ignoreUndefinedProperties: true });
 
 // ─── Diretório de saída ────────────────────────────────────────────────────
 const hoje = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 const BACKUP_DIR = path.join(__dirname, `backup-${hoje}`);
 
-if (fs.existsSync(BACKUP_DIR)) {
-  console.warn(`⚠️  Pasta ${BACKUP_DIR} já existe. Será sobrescrita.`);
-}
+const PAGINA_TAM      = 200;   // docs por requisição
+const MAX_RETRIES     = 3;
+const RETRY_BASE_MS   = 1500;  // backoff exponencial: 1.5s, 3s, 6s
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -64,43 +68,97 @@ function serializarValor(valor) {
   return valor;
 }
 
+/** Caminho de arquivo pra um doc dentro do backup. */
+function pathDoArquivo(dirPath, docId) {
+  return path.join(dirPath, `${docId}.json`);
+}
+
 /** Salva um documento como JSON, criando os diretórios necessários. */
 function salvarDoc(dirPath, docId, dados) {
   fs.mkdirSync(dirPath, { recursive: true });
-  const filePath = path.join(dirPath, `${docId}.json`);
+  const filePath = pathDoArquivo(dirPath, docId);
   fs.writeFileSync(filePath, JSON.stringify(serializarValor(dados), null, 2), 'utf8');
 }
 
-/** Backup recursivo de uma collection e todas as suas subcollections. */
+/** Retry com backoff exponencial em torno de uma operação async. */
+async function tentar(operacao, descricao) {
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    try {
+      return await operacao();
+    } catch (e) {
+      const ehUltimo = i === MAX_RETRIES - 1;
+      const ehQuota = e.code === 8 || /RESOURCE_EXHAUSTED|Quota exceeded/i.test(e.message || '');
+      if (ehQuota) {
+        console.error(`\n❌ Quota de leitura do Firestore estourada.`);
+        console.error(`   Espere o reset (~4h da manhã horário de Brasília) e rode novamente.`);
+        console.error(`   Os dados já salvos estão em: ${BACKUP_DIR}`);
+        process.exit(2);
+      }
+      if (ehUltimo) throw e;
+      const espera = RETRY_BASE_MS * Math.pow(2, i);
+      console.warn(`   ⚠ ${descricao} falhou (${e.message.slice(0, 80)}…). Retry em ${espera}ms (${i + 1}/${MAX_RETRIES})`);
+      await new Promise(r => setTimeout(r, espera));
+    }
+  }
+}
+
+/**
+ * Backup paginado e idempotente de uma collection (recursivo em subcollections).
+ */
 async function backupCollection(collectionRef, dirPath, indent = '') {
-  let snap;
-  try {
-    snap = await collectionRef.get();
-  } catch (e) {
-    if (e.code === 8 || /RESOURCE_EXHAUSTED|Quota exceeded/i.test(e.message || '')) {
-      console.error(`\n❌ Quota de leitura do Firestore estourada.`);
-      console.error(`   Espere o reset (00h Pacific Time = ~4h da manhã horário de Brasília) e rode novamente.`);
-      console.error(`   Os dados que já foram salvos estão em: ${BACKUP_DIR}`);
-      process.exit(2);
+  fs.mkdirSync(dirPath, { recursive: true });
+
+  let pulados   = 0;
+  let novos     = 0;
+  let last      = null;
+  let primeiraPagina = true;
+
+  while (true) {
+    const snap = await tentar(async () => {
+      let q = collectionRef.orderBy('__name__').limit(PAGINA_TAM);
+      if (last) q = q.startAfter(last);
+      return await q.get();
+    }, `Leitura de ${collectionRef.path}`);
+
+    if (snap.empty && primeiraPagina) {
+      console.log(`${indent}📂 ${collectionRef.path}: 0 doc(s)`);
+      return;
     }
-    throw e;
-  }
+    if (snap.empty) break;
+    primeiraPagina = false;
 
-  console.log(`${indent}📁 ${collectionRef.path}: ${snap.size} doc(s)`);
+    for (const doc of snap.docs) {
+      const arq = pathDoArquivo(dirPath, doc.id);
 
-  for (const doc of snap.docs) {
-    salvarDoc(dirPath, doc.id, doc.data());
+      // Idempotência: pula se já existe
+      if (fs.existsSync(arq)) {
+        pulados++;
+      } else {
+        salvarDoc(dirPath, doc.id, doc.data());
+        novos++;
+      }
 
-    // Recurse nas subcollections
-    const subcols = await doc.ref.listCollections();
-    for (const subcol of subcols) {
-      await backupCollection(
-        subcol,
-        path.join(dirPath, doc.id, subcol.id),
-        indent + '  '
+      // Recursa em subcollections (sempre — pode ter sub nova)
+      const subcols = await tentar(
+        async () => await doc.ref.listCollections(),
+        `listCollections de ${doc.ref.path}`
       );
+      for (const subcol of subcols) {
+        await backupCollection(
+          subcol,
+          path.join(dirPath, doc.id, subcol.id),
+          indent + '  '
+        );
+      }
     }
+
+    last = snap.docs[snap.docs.length - 1];
+    if (snap.size < PAGINA_TAM) break;
   }
+
+  const total = pulados + novos;
+  const tagSkip = pulados > 0 ? ` (${pulados} já em cache)` : '';
+  console.log(`${indent}📂 ${collectionRef.path}: ${total} doc(s)${tagSkip}`);
 }
 
 // ─── Run ───────────────────────────────────────────────────────────────────
@@ -111,15 +169,17 @@ async function backupCollection(collectionRef, dirPath, indent = '') {
 
   const inicio = Date.now();
   try {
-    const rootCollections = await db.listCollections();
+    const rootCollections = await tentar(
+      async () => await db.listCollections(),
+      'listCollections raiz'
+    );
     if (rootCollections.length === 0) {
       console.warn('⚠️  Nenhuma collection encontrada no Firestore.');
       process.exit(0);
     }
 
-    console.log(`Encontradas ${rootCollections.length} collection(s) raiz:`);
-    rootCollections.forEach(c => console.log(`  - ${c.id}`));
-    console.log('');
+    console.log(`Encontradas ${rootCollections.length} collection(s) raiz.`);
+    console.log(`Iniciando backup (idempotente — rode de novo se cair)...\n`);
 
     for (const col of rootCollections) {
       await backupCollection(col, path.join(BACKUP_DIR, col.id));
@@ -132,6 +192,7 @@ async function backupCollection(collectionRef, dirPath, indent = '') {
     process.exit(0);
   } catch (e) {
     console.error(`\n❌ Erro durante o backup: ${e.message}`);
+    console.error(`   Rode o script de novo — ele vai continuar do ponto onde parou.`);
     console.error(`   Os dados que já foram salvos estão em: ${BACKUP_DIR}`);
     process.exit(1);
   }
