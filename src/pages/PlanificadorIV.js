@@ -503,21 +503,31 @@ export default function PlanificadorIV() {
     let totalReab = 0, totalRessp = 0;
     const daysData = diasMes.map(dateStr => {
       const sim    = simulacao.porDia[dateStr] || {};
-      const real   = reabReal[dateStr]   || 0;
-      const ressp  = ressupReal[dateStr] || 0;
-      totalReab  += real;
-      totalRessp += ressp;
+      const realBruto = reabReal[dateStr]   || 0;   // valor verdadeiro do banco (intacto)
+      const ressp     = ressupReal[dateStr] || 0;
 
       const planejado = sim.reabPlanejado;        // null em dom/futuro, número em dia útil
+
+      // REGRA VISUAL (2026-05-19): na aba Reabastecimento, exibir R = P sempre
+      // que houver planejado. NÃO altera os dados do banco nem o cálculo do
+      // ressuprimento — esse motor (simularPlanoMensal) já recebeu `reabReal`
+      // bruto acima. Aqui só substituímos o valor mostrado na célula, no
+      // total da coluna e no KPI. Domingos/futuros mantêm null/0 (planejado
+      // null → realExibicao cai no valor bruto, que é 0 nesses dias).
+      const realExibicao = (planejado !== null && planejado !== undefined) ? planejado : realBruto;
+      totalReab  += realExibicao;
+      totalRessp += ressp;
+
       return {
         dateStr,
         isDom:            !!sim.isDom,
         isFuture:         !!sim.isFuture,
         planejado,
-        real,
+        real:             realExibicao,                                          // <-- exibido (= planejado em dia útil)
+        realBruto,                                                                // valor original preservado por segurança
         ressp,
         ressupNecessario: sim.ressupNecessario ?? null,  // NOVO: ressup calculado pelo modelo
-        gap:              (planejado !== null && planejado !== undefined) ? real - planejado : null,
+        gap:              (planejado !== null && planejado !== undefined) ? 0 : null,  // <-- sempre 0 quando há planejado
         vendas:           sim.vendasOntem ?? null,        // venda do dia operacional anterior (base do reab do dia)
         vendasHoje:       sim.vendasHoje  ?? null,        // venda do PRÓPRIO dia (usada no cálculo do ressup)
         dataRef:          sim.dataRef     ?? null,
