@@ -63,7 +63,9 @@ const TODOS_GRUPOS = [
       { path: '/estoque/aderencia-abc',          label: 'Aderência Curva ABC',       todos: true },
       { path: '/estoque/contar',                 label: 'Registrar Contagem',        todos: true },
       { path: '/estoque/gerenciar-localizacoes', label: 'Gerenciar Localizações',    supervisor: true },
-      { path: '/estoque/coletas-validade',       label: 'Coletas de Validade',       todos: true },
+      // Coletas de Validade — oculto a pedido em 2026-05-19. Pra reativar,
+      // descomente a linha abaixo e a Route correspondente em App.js.
+      // { path: '/estoque/coletas-validade',       label: 'Coletas de Validade',       todos: true },
     ],
   },
   {

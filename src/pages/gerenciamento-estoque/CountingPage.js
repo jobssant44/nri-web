@@ -5,9 +5,17 @@ import { HistoricoImportacoes } from '../../modules/gerenciamento-estoque/invent
 import { useUser } from '../../context/UserContext';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 
+// Switch único pra reativar as abas "Importar retroativa" e "Importações"
+// (ocultadas a pedido em 2026-05-19). Trocar pra true exibe novamente os
+// botões + conteúdo. Lógica das duas abas continua intacta no projeto.
+const MOSTRAR_IMPORTACOES = false;
+
 export default function CountingPage() {
   const { usuario } = useUser();
-  const [aba, setAba] = useSessionFilter('count:aba', 'manual');
+  const [abaRaw, setAba] = useSessionFilter('count:aba', 'manual');
+  // Se a aba salva na sessão for uma das ocultadas, cai pra 'manual'
+  // pra não deixar a tela em branco.
+  const aba = !MOSTRAR_IMPORTACOES && abaRaw !== 'manual' ? 'manual' : abaRaw;
 
   const containerStyle = { maxWidth: '1100px', margin: '0 auto' };
   const tabContainer = {
@@ -40,18 +48,22 @@ export default function CountingPage() {
         <button style={tabStyle(aba === 'manual')} onClick={() => setAba('manual')}>
           Registrar manual
         </button>
-        <button style={tabStyle(aba === 'retroativa')} onClick={() => setAba('retroativa')}>
-          Importar retroativa
-        </button>
-        <button style={tabStyle(aba === 'historico')} onClick={() => setAba('historico')}>
-          Importações
-        </button>
+        {MOSTRAR_IMPORTACOES && (
+          <button style={tabStyle(aba === 'retroativa')} onClick={() => setAba('retroativa')}>
+            Importar retroativa
+          </button>
+        )}
+        {MOSTRAR_IMPORTACOES && (
+          <button style={tabStyle(aba === 'historico')} onClick={() => setAba('historico')}>
+            Importações
+          </button>
+        )}
       </div>
 
       <div style={conteudo}>
         {aba === 'manual' && <CountingForm conferente={usuario?.nome} />}
-        {aba === 'retroativa' && <ImportarContagemRetroativa />}
-        {aba === 'historico' && <HistoricoImportacoes />}
+        {MOSTRAR_IMPORTACOES && aba === 'retroativa' && <ImportarContagemRetroativa />}
+        {MOSTRAR_IMPORTACOES && aba === 'historico' && <HistoricoImportacoes />}
       </div>
     </div>
   );

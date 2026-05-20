@@ -395,7 +395,9 @@ export default function RegistroAbastecimentoPage() {
                   <th style={th}>Tipo</th>
                   <th style={{ ...th, textAlign: 'center' }}>Qtd Paletes</th>
                   <th style={th}>Conferente</th>
-                  {isSupervisor && <th style={{ ...th, textAlign: 'center' }}>Ações</th>}
+                  {/* Coluna "Ações" ocultada — único botão era "✏️ Data" (Editar Data),
+                      removido a pedido. Pra reativar, restaure este <th> e o <td>
+                      correspondente abaixo. */}
                 </tr>
               </thead>
               <tbody>
@@ -429,27 +431,9 @@ export default function RegistroAbastecimentoPage() {
                       </td>
                       <td style={{ ...td, textAlign: 'center', fontWeight: 'bold' }}>{r.qtdPaletes}</td>
                       <td style={{ ...td, color: '#666', fontSize: 12 }}>{r.conferente}</td>
-                      {isSupervisor && (
-                        <td style={{ ...td, textAlign: 'center' }}>
-                          {estaEditando ? (
-                            <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                              <button onClick={() => salvarEdicao(r._id)} disabled={salvando} style={{ ...btnPrimario, padding: '5px 12px', fontSize: 12 }}>
-                                ✓ Salvar
-                              </button>
-                              <button onClick={() => setEditandoId(null)} style={{ ...btnSec, padding: '5px 10px', fontSize: 12 }}>
-                                ✕
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => { setEditandoId(r._id); setEditandoData(r.dataOperacional || ''); }}
-                              style={{ ...btnSec, padding: '5px 10px', fontSize: 12 }}
-                            >
-                              ✏️ Data
-                            </button>
-                          )}
-                        </td>
-                      )}
+                      {/* Coluna "Ações" ocultada — botão "✏️ Data" removido a pedido.
+                          O modo edição (estaEditando/salvarEdicao) continua no código
+                          em caso de reativação futura. */}
                     </tr>
                   );
                 })}

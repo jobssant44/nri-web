@@ -852,16 +852,15 @@ export default function DashboardIV() {
             </div>
           </div>
 
-          {/* Callout final */}
-          <div style={{ marginTop:16, padding:'12px 16px', backgroundColor: saldo >= 0 ? '#f0fdf4' : '#fff8f8', borderRadius:8, borderLeft:`4px solid ${saldo >= 0 ? '#16a34a' : '#E31837'}`, fontSize:12, color: saldo >= 0 ? '#166534' : '#991b1b' }}>
-            {saldo >= 0
-              ? <>✅ <strong>Rebalanceamento possível sem novos espaços físicos.</strong> O superávit de {totalSurplus} espaço{totalSurplus!==1?'s':''} cobre o déficit de {totalDeficit} espaço{totalDeficit!==1?'s':''}. Redistribuindo, eliminaria{' '}
-                  <strong>{subdimensionados.reduce((s,p) => s+p.resspDias, 0)} viagem{subdimensionados.reduce((s,p) => s+p.resspDias, 0)!==1?'s':''} de ressuprimento</strong> neste mês.
-                  {saldo > 0 && <> Sobram ainda {saldo} espaço{saldo>1?'s':''} livres para outros ajustes.</>}
-                </>
-              : <>⚠️ <strong>Rebalanceamento parcial.</strong> O superávit disponível ({totalSurplus} espaço{totalSurplus!==1?'s':''}) não cobre o déficit total ({totalDeficit} espaços). Faltam <strong>{Math.abs(saldo)} espaço{Math.abs(saldo)!==1?'s':''} físicos</strong> para eliminar todos os ressuprimentos. Priorize os produtos com mais dias de ressuprimento.</>
-            }
-          </div>
+          {/* Callout final — só aparece no cenário positivo (rebalanceamento viável).
+              O alerta vermelho de "rebalanceamento parcial" foi removido a pedido. */}
+          {saldo >= 0 && (
+            <div style={{ marginTop:16, padding:'12px 16px', backgroundColor:'#f0fdf4', borderRadius:8, borderLeft:'4px solid #16a34a', fontSize:12, color:'#166534' }}>
+              ✅ <strong>Rebalanceamento possível sem novos espaços físicos.</strong> O superávit de {totalSurplus} espaço{totalSurplus!==1?'s':''} cobre o déficit de {totalDeficit} espaço{totalDeficit!==1?'s':''}. Redistribuindo, eliminaria{' '}
+              <strong>{subdimensionados.reduce((s,p) => s+p.resspDias, 0)} viagem{subdimensionados.reduce((s,p) => s+p.resspDias, 0)!==1?'s':''} de ressuprimento</strong> neste mês.
+              {saldo > 0 && <> Sobram ainda {saldo} espaço{saldo>1?'s':''} livres para outros ajustes.</>}
+            </div>
+          )}
         </div>
       )}
 
@@ -899,13 +898,16 @@ export default function DashboardIV() {
               min={5} max={100} sufixo="%"
               hint="Soma máx. de caixas no palete misto (mesma embalagem)"
             />
-            <RegrasField
+            {/* Campo "Teto Diverso" ocultado da UI a pedido — a regra continua
+                ativa no cálculo (tetoDiversoPct usado em _tetoDiversoFrac mais
+                acima). Pra reativar o input, descomente este bloco. */}
+            {/* <RegrasField
               label="Teto Diverso"
               valor={regras.tetoDiversoPct}
               onChange={v => setRegras({ ...regras, tetoDiversoPct: v })}
               min={5} max={30} sufixo="%"
               hint="Qtd base por SKU no palete diverso (embalagens diferentes)"
-            />
+            /> */}
             {/* Campo "Cobertura Sinergia" ocultado — pra reativar, troque `false &&` por nada */}
             {false && (
             <RegrasField
@@ -919,26 +921,38 @@ export default function DashboardIV() {
           </div>
 
           <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
-            <button
-              onClick={salvarRegras}
-              disabled={salvandoRegras || !regrasMudaram}
-              style={{
-                padding:'8px 18px',
-                backgroundColor: salvandoRegras || !regrasMudaram ? '#e5e7eb' : '#4338ca',
-                color: salvandoRegras || !regrasMudaram ? '#9ca3af' : '#fff',
-                border:'none', borderRadius:8, fontWeight:'bold', fontSize:13,
-                cursor: salvandoRegras || !regrasMudaram ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {salvandoRegras ? '⏳ Salvando...' : '💾 Salvar regras'}
-            </button>
-            <button
-              onClick={restaurarPadroes}
-              disabled={salvandoRegras}
-              style={{ ...btn, padding:'8px 16px', fontSize:13 }}
-            >
-              ↩️ Restaurar padrões
-            </button>
+            {/* Botões de edição das regras só ficam visíveis pro mês vigente —
+                meses passados ou futuros são leitura-somente (consulta histórica). */}
+            {(() => {
+              const hoje = new Date();
+              const ehMesVigente = parseInt(mesNumSelecionado) === (hoje.getMonth() + 1)
+                                && parseInt(anoSelecionado)    === hoje.getFullYear();
+              if (!ehMesVigente) return null;
+              return (
+                <>
+                  <button
+                    onClick={salvarRegras}
+                    disabled={salvandoRegras || !regrasMudaram}
+                    style={{
+                      padding:'8px 18px',
+                      backgroundColor: salvandoRegras || !regrasMudaram ? '#e5e7eb' : '#4338ca',
+                      color: salvandoRegras || !regrasMudaram ? '#9ca3af' : '#fff',
+                      border:'none', borderRadius:8, fontWeight:'bold', fontSize:13,
+                      cursor: salvandoRegras || !regrasMudaram ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {salvandoRegras ? '⏳ Salvando...' : '💾 Salvar regras'}
+                  </button>
+                  <button
+                    onClick={restaurarPadroes}
+                    disabled={salvandoRegras}
+                    style={{ ...btn, padding:'8px 16px', fontSize:13 }}
+                  >
+                    ↩️ Restaurar padrões
+                  </button>
+                </>
+              );
+            })()}
             <span style={{ fontSize:11, color:'#888', marginLeft:'auto' }}>
               Atualmente: <b style={{ color:'#4338ca' }}>{candidatosMisto.length}</b> candidato(s) · <b style={{ color:'#166534' }}>{totalEspacosMisto}</b> espaço(s) liberados · <b style={{ color:'#7c3aed' }}>{gruposMisto.length}</b> palete(s) misto(s)
             </span>

@@ -25,7 +25,9 @@ import CountingPage from './pages/gerenciamento-estoque/CountingPage';
 import DashboardPage from './pages/gerenciamento-estoque/DashboardPage';
 import GerenciarLocalizacoesPage from './pages/gerenciamento-estoque/GerenciarLocalizacoesPage';
 import EndereçamentoPage from './pages/gerenciamento-estoque/EndereçamentoPage';
-import ColetasValidadePage from './pages/gerenciamento-estoque/ColetasValidadePage';
+// Coletas de Validade — página oculta a pedido em 2026-05-19. Descomente
+// este import e a <Route> correspondente abaixo pra reativar.
+// import ColetasValidadePage from './pages/gerenciamento-estoque/ColetasValidadePage';
 import AderenciaABCPage from './pages/gerenciamento-estoque/AderenciaABCPage';
 import LayoutArmazem from './pages/LayoutArmazem';
 import ImportarRelatoriosPrejuizo from './pages/gestao-prejuizo/ImportarRelatoriosPrejuizo';
@@ -152,7 +154,7 @@ function AppInner() {
             <Route path="/estoque/contar"                 element={<CountingPage />} />
             <Route path="/estoque/gerenciar-localizacoes" element={guardaSup ? <Navigate to={guardaSup} /> : <GerenciarLocalizacoesPage />} />
             <Route path="/estoque/enderecamento"          element={<EndereçamentoPage />} />
-            <Route path="/estoque/coletas-validade"       element={<ColetasValidadePage />} />
+            {/* <Route path="/estoque/coletas-validade"       element={<ColetasValidadePage />} /> */}
 
             {/* Mapa do Armazém */}
             <Route path="/armazem/layout"          element={<LayoutArmazem />} />

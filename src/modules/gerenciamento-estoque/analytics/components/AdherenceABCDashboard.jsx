@@ -16,7 +16,7 @@ import { useUser } from '../../../../context/UserContext';
 import { NIVEIS_SUPERVISOR } from '../../../../pages/admin/ConfigurarEmpresaPage';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LabelList, Legend,
+  LabelList, Legend, LineChart, Line, ReferenceDot, ReferenceLine,
 } from 'recharts';
 import { useDb } from '../../../../utils/db';
 import { useSessionFilter } from '../../../../hooks/useSessionFilter';
@@ -94,6 +94,9 @@ export function AdherenceABCDashboard() {
   // nova na edição de uma linha. Carregado lazy: só quando muda dataSel/mesSel.
   // Mapa { 'A12': 'A', 'C03': 'C', ... } (endereço UPPERCASE → curva)
   const [layoutMes, setLayoutMes] = useState({});
+
+  // Janela de tempo do gráfico de tendência: '3m' | '6m' | '12m' | 'tudo'
+  const [periodoGrafico, setPeriodoGrafico] = useSessionFilter('aderABC:periodoGrafico', '6m');
 
   // ─── Estilos locais (cardStyle/tableStyle/etc. estão no escopo do módulo) ──
   const containerStyle = { maxWidth: '1200px', margin: '20px auto', padding: '20px', backgroundColor: '#f5f5f5', fontFamily: 'Arial, sans-serif' };
@@ -216,6 +219,51 @@ export function AdherenceABCDashboard() {
   // Para o cálculo de aderência ABC, paletes em PNC são EXCLUÍDOS
   // (não fazem sentido neste KPI). Os logs continuam disponíveis para outras telas.
   const filtrados = useMemo(() => filtradosBruto.filter(l => !isPNC(l)), [filtradosBruto]);
+
+  // ─── Série mensal para o gráfico de tendência ─────────────────────────
+  // Agrupa TODOS os logs (não os filtrados — o gráfico mostra evolução)
+  // por chaveMes, calcula % aderência e aplica a janela escolhida.
+  // Respeita o filtro de curvaSelecionada se houver: nesse caso mostra
+  // a evolução só daquela curva. Tudo client-side em memória, zero reads.
+  const tendenciaMensal = useMemo(() => {
+    const porMes = {}; // { '2026-05': { aderentes: N, naoAderentes: N } }
+    logs.forEach(l => {
+      if (isPNC(l)) return;
+      // Se há filtro de curva, considera só logs daquela curva de produto
+      if (curvaSelecionada && curvaEfetiva(l) !== curvaSelecionada) return;
+      const ader = aderenciaEfetiva(l);
+      if (ader == null) return; // indeterminado — sem enderecoCurva
+      const cm = l.chaveMes || (() => {
+        const d = tsToDate(l.timestamp);
+        return d ? monthKey(d.getFullYear(), d.getMonth() + 1) : null;
+      })();
+      if (!cm) return;
+      if (!porMes[cm]) porMes[cm] = { aderentes: 0, naoAderentes: 0 };
+      if (ader) porMes[cm].aderentes++; else porMes[cm].naoAderentes++;
+    });
+    // Ordena cronologicamente e calcula % por mês
+    const serie = Object.keys(porMes).sort().map(cm => {
+      const { aderentes, naoAderentes } = porMes[cm];
+      const total = aderentes + naoAderentes;
+      return {
+        chaveMes: cm,
+        label: ymLabel(cm),
+        perc: total > 0 ? Math.round((aderentes / total) * 1000) / 10 : null,
+        contagem: total,
+      };
+    });
+    // Aplica janela de tempo (3m / 6m / 12m / tudo)
+    if (periodoGrafico === 'tudo') return serie;
+    const n = parseInt(periodoGrafico, 10) || 6;
+    return serie.slice(-n);
+  }, [logs, curvaSelecionada, periodoGrafico]);
+
+  // Mês atualmente em foco (pra destacar no gráfico)
+  const mesEmFoco = useMemo(() => {
+    if (modo === 'data' && dataSel) return dataSel.slice(0, 7);
+    if (modo === 'mes' && mesSel)   return mesSel;
+    return null;
+  }, [modo, dataSel, mesSel]);
 
   // ─── Métricas ─────────────────────────────────────────────────────────
   // Recalcula on-the-fly aplicando a regra "produto sem curva = C".
@@ -356,6 +404,106 @@ export function AdherenceABCDashboard() {
                   metricas.percentual >= 80 ? '✅ Bom' : metricas.percentual >= 60 ? '⚠️ Aceitável' : '❌ Baixo'}
               </div>
             </div>
+          </div>
+
+          {/* Evolução mensal — tendência da aderência ao longo do tempo */}
+          <div style={cardStyle}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: 8 }}>
+              <h3 style={{ color: '#E31837', fontSize: '14px', margin: 0 }}>
+                📈 Evolução mensal — % Aderência
+                {curvaSelecionada && (
+                  <span style={{ fontSize: 11, color: '#666', fontWeight: 400, marginLeft: 8 }}>
+                    · só Curva {curvaSelecionada}
+                  </span>
+                )}
+              </h3>
+              {/* Toggle de período: 3m / 6m / 12m / Tudo */}
+              <div style={{ display: 'flex', gap: 4, background: '#f1f5f9', borderRadius: 6, padding: 3 }}>
+                {[['3m', '3m'], ['6m', '6m'], ['12m', '12m'], ['tudo', 'Tudo']].map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setPeriodoGrafico(val)}
+                    style={{
+                      padding: '4px 10px', borderRadius: 4, border: 'none', cursor: 'pointer',
+                      fontSize: 11, fontWeight: 600,
+                      background: periodoGrafico === val ? '#E31837' : 'transparent',
+                      color: periodoGrafico === val ? '#fff' : '#555',
+                    }}
+                  >{label}</button>
+                ))}
+              </div>
+            </div>
+
+            {tendenciaMensal.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 40, color: '#999', fontSize: 12 }}>
+                Sem dados suficientes para gerar a tendência.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={tendenciaMensal} margin={{ top: 16, right: 24, left: 0, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 11, fill: '#94a3b8' }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    domain={[70, 100]}
+                    ticks={[70, 75, 80, 85, 90, 95, 100]}
+                    tickFormatter={v => `${v}%`}
+                    tick={{ fontSize: 11, fill: '#94a3b8' }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    formatter={(v, name) => name === 'perc' ? [`${v}%`, '% Aderência'] : [v, name]}
+                    labelStyle={{ color: '#0f172a', fontWeight: 700, fontSize: 12 }}
+                    contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12 }}
+                  />
+                  {/* Linha tracejada da meta (95%) */}
+                  <ReferenceLine
+                    y={95}
+                    stroke="#16a34a"
+                    strokeDasharray="5 4"
+                    strokeWidth={1.5}
+                    label={{
+                      value: 'Meta 95%',
+                      position: 'insideTopRight',
+                      fill: '#16a34a',
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="perc"
+                    stroke="#E31837"
+                    strokeWidth={2.5}
+                    dot={{ r: 4, fill: '#E31837', strokeWidth: 0 }}
+                    activeDot={{ r: 6 }}
+                    isAnimationActive={false}
+                  />
+                  {/* Destaca o mês em foco com um ponto maior azul */}
+                  {mesEmFoco && tendenciaMensal.find(p => p.chaveMes === mesEmFoco) && (
+                    <ReferenceDot
+                      x={tendenciaMensal.find(p => p.chaveMes === mesEmFoco).label}
+                      y={tendenciaMensal.find(p => p.chaveMes === mesEmFoco).perc}
+                      r={8}
+                      fill="#1D5A9E"
+                      stroke="#fff"
+                      strokeWidth={2}
+                      isFront
+                    />
+                  )}
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+            {mesEmFoco && tendenciaMensal.find(p => p.chaveMes === mesEmFoco) && (
+              <div style={{ fontSize: 10.5, color: '#94a3b8', textAlign: 'center', marginTop: -6, fontStyle: 'italic' }}>
+                Ponto azul = mês atualmente em foco no filtro acima.
+              </div>
+            )}
           </div>
 
           {/* Quebra por curva — gráfico interativo + cards clicáveis */}
@@ -561,6 +709,11 @@ function DetalheContagens({
   const { db, docRef } = useDb();
   const { usuario } = useUser();
   const isSupervisor = NIVEIS_SUPERVISOR.includes(usuario?.nivel);
+
+  // Switch único pra ligar/desligar ações de edição da tabela (edição inline
+  // de endereço + checkboxes de exclusão). Mantenho a lógica abaixo intacta —
+  // mudar pra true reativa tudo de uma vez. (Ocultado a pedido em 2026-05-19.)
+  const MOSTRAR_ACOES_EDICAO = false;
 
   // Set<string> de IDs de logs selecionados pra exclusão.
   const [selecionadas, setSelecionadas] = useState(new Set());
@@ -796,7 +949,7 @@ function DetalheContagens({
               limpar busca
             </button>
           )}
-          {isSupervisor && selecionadas.size > 0 && (
+          {MOSTRAR_ACOES_EDICAO && isSupervisor && selecionadas.size > 0 && (
             <button
               onClick={excluirSelecionadas}
               disabled={excluindo}
@@ -829,7 +982,7 @@ function DetalheContagens({
                   {label}{setaSort(col)}
                 </th>
               ))}
-              {isSupervisor && (
+              {MOSTRAR_ACOES_EDICAO && isSupervisor && (
                 <th style={{ ...thStyle, textAlign: 'center', width: 44 }} title="Selecionar para excluir">
                   <input
                     type="checkbox"
@@ -857,7 +1010,7 @@ function DetalheContagens({
                   </td>
                   <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: '11px' }}>{fmtData(d)}</td>
                   <td style={{ ...tdStyle, fontWeight: 'bold' }}>
-                    {editandoId === l.id ? (
+                    {editandoId === l.id && MOSTRAR_ACOES_EDICAO ? (
                       // Modo edição inline (supervisor)
                       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                         <input
@@ -898,14 +1051,14 @@ function DetalheContagens({
                         >✕</button>
                       </div>
                     ) : (
-                      // Modo view — supervisor enxerga o lápis ao passar o mouse
+                      // Modo view — supervisor enxerga o lápis ao passar o mouse (se ações de edição estiverem ligadas)
                       <span
-                        onClick={isSupervisor ? () => iniciarEdicao(l) : undefined}
-                        title={isSupervisor ? 'Clique pra editar o endereço (recalcula aderência)' : ''}
-                        style={isSupervisor ? { cursor: 'pointer', borderBottom: '1px dashed #ccc' } : {}}
+                        onClick={MOSTRAR_ACOES_EDICAO && isSupervisor ? () => iniciarEdicao(l) : undefined}
+                        title={MOSTRAR_ACOES_EDICAO && isSupervisor ? 'Clique pra editar o endereço (recalcula aderência)' : ''}
+                        style={MOSTRAR_ACOES_EDICAO && isSupervisor ? { cursor: 'pointer', borderBottom: '1px dashed #ccc' } : {}}
                       >
                         {l.endereco || `${l.area || ''}-${l.street || ''}-${l.palettePosition || ''}`}
-                        {isSupervisor && <span style={{ marginLeft: 4, color: '#999', fontSize: 10 }}>✏️</span>}
+                        {MOSTRAR_ACOES_EDICAO && isSupervisor && <span style={{ marginLeft: 4, color: '#999', fontSize: 10 }}>✏️</span>}
                       </span>
                     )}
                   </td>
@@ -924,7 +1077,7 @@ function DetalheContagens({
                     )}
                   </td>
                   <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{l.quantidade ?? '—'}{l.unidade ? ` ${l.unidade}` : ''}</td>
-                  {isSupervisor && (
+                  {MOSTRAR_ACOES_EDICAO && isSupervisor && (
                     <td style={{ ...tdStyle, textAlign: 'center' }}>
                       <input
                         type="checkbox"
@@ -939,7 +1092,7 @@ function DetalheContagens({
             })}
             {linhas.length === 0 && (
               <tr>
-                <td colSpan={isSupervisor ? 9 : 8} style={{ ...tdStyle, textAlign: 'center', color: '#999', padding: 24 }}>
+                <td colSpan={MOSTRAR_ACOES_EDICAO && isSupervisor ? 9 : 8} style={{ ...tdStyle, textAlign: 'center', color: '#999', padding: 24 }}>
                   Nenhuma contagem encontrada com esses filtros.
                 </td>
               </tr>

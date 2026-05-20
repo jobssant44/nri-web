@@ -1258,7 +1258,7 @@ export default function PlanificadorIV() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
         {[
           { id: 'reabastecimento', label: '🌅 Reabastecimento', total: totalPltReab,  sub: `${prodsComReab} produtos`,                        cor: '#1D5A9E' },
-          { id: 'ressuprimento',   label: '🌙 Ressuprimento',   total: totalPltRessp, sub: `${prodsComRessp} produtos · ${ocorrRessp} ocorr.`, cor: '#E31837' },
+          { id: 'ressuprimento',   label: '🌙 Ressuprimento',   total: totalPltRessp, sub: `${prodsComRessp} produtos`, cor: '#E31837' },
         ].map(w => {
           const ativo = modo === w.id;
           return (
@@ -1295,11 +1295,7 @@ export default function PlanificadorIV() {
         </div>
       ) : (
         <div style={card}>
-          <div style={{ marginBottom: 10, fontSize: 11, color: '#888' }}>
-            {linhasOrdenadas.length} produto(s){busca ? ` — filtro: "${busca}"` : ` de ${linhas.length}`}
-            &nbsp;·&nbsp;{diasMes.length} dia(s) · domingos = sem operação
-            &nbsp;·&nbsp;<span style={{ color: '#92400e' }}>P = acumulado de depleção (paletes completos)</span>
-          </div>
+          {/* Legenda do cabeçalho da tabela removida a pedido. */}
 
           {/* Barra de rolagem superior + tabela com setas laterais */}
           <div style={{ position: 'relative' }}>
@@ -1475,6 +1471,8 @@ export default function PlanificadorIV() {
           </div>{/* fim wrapper setas */}
 
           {/* Legenda */}
+          {/* Rodapé com legendas detalhadas (P/R/G, modelo de saldo, etc.) removido a pedido. */}
+          {false && (
           <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 10, color: '#999', flexWrap: 'wrap', borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
             {modo === 'reabastecimento' ? (
               <>
@@ -1491,6 +1489,7 @@ export default function PlanificadorIV() {
               </>
             )}
           </div>
+          )}
         </div>
       )}
 
