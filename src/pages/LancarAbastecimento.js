@@ -42,6 +42,12 @@ export default function LancarAbastecimento() {
     setLancamentosHoje(lista);
   }
 
+  // Compat: produtos podem vir com `nome` (formato antigo) ou `descricao`
+  // (formato novo, importado via 01.11). Sempre pegar o que existir.
+  function nomeDoProduto(p) {
+    return p?.nome || p?.descricao || '';
+  }
+
   function buscarProduto(texto, campo) {
     if (campo === 'codigo') {
       setCodProduto(texto.replace(/[^0-9]/g, ''));
@@ -50,13 +56,13 @@ export default function LancarAbastecimento() {
     } else {
       setNomeProduto(texto.toUpperCase());
       setCodProduto('');
-      setSugestoes(texto.length >= 2 ? baseProdutos.filter(p => p.nome?.toLowerCase().includes(texto.toLowerCase())).slice(0,5) : []);
+      setSugestoes(texto.length >= 2 ? baseProdutos.filter(p => nomeDoProduto(p).toLowerCase().includes(texto.toLowerCase())).slice(0,5) : []);
     }
   }
 
   function selecionarProduto(p) {
     setCodProduto(p.codigo);
-    setNomeProduto(p.nome);
+    setNomeProduto(nomeDoProduto(p));
     setSugestoes([]);
   }
 
@@ -117,7 +123,7 @@ export default function LancarAbastecimento() {
                 {sugestoes.map((p, i) => (
                   <div key={i} onClick={() => selecionarProduto(p)} style={dropdownItem}>
                     <span style={{ fontWeight: 'bold', color: '#E31837', marginRight: 10 }}>{p.codigo}</span>
-                    <span>{p.nome}</span>
+                    <span>{nomeDoProduto(p)}</span>
                   </div>
                 ))}
               </div>
