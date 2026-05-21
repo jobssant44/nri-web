@@ -98,7 +98,10 @@ export default function LancarAbastecimento() {
         <span style={{ fontSize: 13, color: '#999' }}>Dia operacional: <b>{diaOperacional()}</b></span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
+      {/* Card "Lançamentos de Hoje" ocultado a pedido em 2026-05-21.
+          Pra reativar: trocar MOSTRAR_LANCAMENTOS_HOJE pra true e voltar
+          gridTemplateColumns pra '1fr 1fr'. */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 24, marginBottom: 24, maxWidth: 600 }}>
         <div style={secao}>
           <h3 style={secaoTitulo}>Produto</h3>
 
@@ -158,6 +161,8 @@ export default function LancarAbastecimento() {
           </button>
         </div>
 
+        {/* Card "Lançamentos de Hoje" ocultado a pedido em 2026-05-21.
+            Conteúdo abaixo preservado pra reativação rápida.
         <div style={secao}>
           <h3 style={secaoTitulo}>Lançamentos de Hoje</h3>
           {lancamentosHoje.length === 0 && (
@@ -178,6 +183,7 @@ export default function LancarAbastecimento() {
             ))}
           </div>
         </div>
+        */}
       </div>
     </div>
   );
