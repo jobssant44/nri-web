@@ -332,7 +332,9 @@ export default function RegistroAbastecimentoPage() {
           >
             ✕ Limpar
           </button>
-          {isSupervisor && filtrados.length > 0 && (busca || filtroTipo !== 'todos' || dataInicio || dataFim) && (
+          {/* Botão "Excluir filtrados" ocultado a pedido em 2026-05-21.
+              A função excluirFiltrados() segue no código pra reativação rápida. */}
+          {false && isSupervisor && filtrados.length > 0 && (busca || filtroTipo !== 'todos' || dataInicio || dataFim) && (
             <button
               onClick={() => excluirFiltrados(filtrados)}
               disabled={excluindoFiltrados}

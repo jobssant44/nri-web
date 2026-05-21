@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { collection, getDocs, query, orderBy, getDoc, doc, addDoc, writeBatch } from 'firebase/firestore';
 import { useDb } from '../utils/db';
+import { useUser } from '../context/UserContext';
 import { useSessionFilter } from '../hooks/useSessionFilter';
 import { lerCache, salvarCache, invalidarCache } from '../utils/cache';
 
@@ -315,6 +316,10 @@ function obterSaldoInicialMes({ codProduto, ano, mes, cxPorPlt, espacosPalete, v
 
 export default function PlanificadorIV() {
   const { col, docRef, db } = useDb();
+  const { empresa } = useUser();
+  // Nome exibido na OS impressa. Cai num default neutro se a empresa não
+  // estiver carregada ainda (improvável, mas evita string vazia).
+  const nomeEmpresa = empresa?.nome || 'Empresa';
   const [anoSelecionado, setAnoSelecionado]       = useSessionFilter('planiv:ano', '');
   const [mesNumSelecionado, setMesNumSelecionado]   = useSessionFilter('planiv:mes', '');
   const [mesesDisponiveis, setMesesDisponiveis]     = useState([]);
@@ -1090,9 +1095,9 @@ export default function PlanificadorIV() {
 <div class="page">
   <div class="header">
     <div class="logo-block">
-      <img src="${logoUrl}" class="logo" onerror="this.style.display='none'" alt="CBM" />
+      <img src="${logoUrl}" class="logo" onerror="this.style.display='none'" alt="${nomeEmpresa}" />
       <div>
-        <div class="company-name">CBM Carpina</div>
+        <div class="company-name">${nomeEmpresa}</div>
       </div>
     </div>
     <div class="title-block">
@@ -1136,7 +1141,7 @@ export default function PlanificadorIV() {
   </div>
 
   <div class="footer">
-    <span>CBM Carpina · Sistema de Gestão de Reabastecimento</span>
+    <span>${nomeEmpresa} · Sistema de Gestão de Reabastecimento</span>
     <span>OS — ${dataFormatada}</span>
   </div>
 </div>
