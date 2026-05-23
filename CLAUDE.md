@@ -42,32 +42,98 @@ const { col, docRef, db } = useDb();
 
 ## Firestore Read Optimization — minimize quota usage
 
-The Firestore Spark plan caps at **50k reads/day**. The app is read-heavy and easily hits this ceiling without care. **Every new page or feature must follow these rules**:
+The Firestore Spark plan caps at **50k reads/day**. The app is read-heavy and easily hits this ceiling without care. **Every new page or feature MUST follow these rules.**
 
-### Cache is on (since 2026-05-19)
-`firebaseConfig.js` initializes Firestore with `persistentLocalCache({ tabManager: persistentMultipleTabManager(), cacheSizeBytes: CACHE_SIZE_UNLIMITED })`. The SDK serves unchanged docs from IndexedDB automatically. You don't need to manage cache manually — but you **do** need to write queries the SDK can cache effectively.
+This section was rebuilt on 2026-05-23 after the optimization sprint that reduced daily reads by an estimated 60-80%. The rules below reflect what's actually working in production — they're not aspirational, they're battle-tested.
 
-### Rules of thumb
+### Three layers of caching active in production
 
-1. **NEVER put `col`, `docRef`, or any function from `useDb()` in a useEffect dep array.** They're recreated every render → infinite fetch loop. Use empty deps + `// eslint-disable-next-line react-hooks/exhaustive-deps`, or wrap in `useCallback`/`useRef`. The Plano de Ação loop bug (May 2026) cost 390k reads in a few hours.
+1. **IndexedDB Persistence (SDK level)** — `firebaseConfig.js` initializes Firestore with `persistentLocalCache({ tabManager: persistentMultipleTabManager(), cacheSizeBytes: CACHE_SIZE_UNLIMITED })`. The SDK serves unchanged docs from IndexedDB across sessions automatically.
 
-2. **Filter on the server when possible.** Use `query(col('foo'), where('campo', '==', valor))` instead of `getDocs(col('foo'))` + `.filter()` on the client. Each unread doc is a saved read.
+2. **CatalogosContext (memory level)** — `src/context/CatalogosContext.js` caches `produtos`, `locations`, `picking_config` and `locations_mensal` (keyed by chaveMes) in React memory for the whole session. Use `useCatalogos()` instead of `getDocs(col('produtos'))`.
 
-3. **Use `limit()` and pagination for large collections** (`inventory_logs`, `vendas_relatorio`, `abastecimentos`). The page may show only 500 rows but `getDocs(col('inventory_logs'))` downloads ALL of them.
+3. **Server-side filtering (query level)** — collections that grow (`abastecimentos`, `inventory_logs`, `vendas_relatorio`) are queried with `where('criadoEm', '>=', N months ago)` to avoid downloading historical garbage.
 
-4. **Cache cold data in a Context** if used in multiple pages. `produtos`, `locations`, `marketplace` rarely change — load once in a `DataContext` and share, instead of each page fetching independently.
+### MANDATORY rules for every new page/feature
 
-5. **Prefer `getDoc(docRef('x', 'id'))` over `getDocs(query(col, where(__name__, '==', id)))`.** Direct doc reads are cheaper and cacheable.
+#### 1. NEVER fetch `produtos`, `locations`, `picking_config`, `locations_mensal` directly.
+Use `useCatalogos()`:
 
-6. **Use `useMemo` for client-side transformations** (filter, sort, aggregate) so changing filters doesn't re-fetch. Re-fetch only when the underlying dataset changes.
+```js
+import { useCatalogos } from '../../context/CatalogosContext';
 
-7. **Use `Promise.all` for parallel fetches** that don't depend on each other. Sequential awaits multiply latency, not reads, but parallel feels faster and lets the SDK batch where possible.
+function MinhaPagina() {
+  // produtos eager (carregado quando user loga): use direto
+  const { produtos, produtosMap, cxPorPltMap, locations } = useCatalogos();
 
-8. **Soft delete = filter at read time**, not at the data layer. `inventory_logs` uses `excluido: true` + a shared `filtrarLogsAtivos()` helper. Every screen that reads logs must apply it.
+  // picking_config / locations_mensal lazy: chame o loader
+  const { obterPickingConfig, obterLocationsMensal } = useCatalogos();
+  const pcfg = await obterPickingConfig();
+  const lmensal = await obterLocationsMensal('2026-05');
+}
+```
 
-9. **Bulk operations use `writeBatch` in chunks of 450.** Limit is 500; 450 leaves headroom. Same for deletes (`HistoricoImportacoes`).
+**After importing/editing produtos** (e.g., `ConfiguracoesPage` after 01.11 import), call `invalidarProdutos()` so other pages reload fresh on next mount:
 
-10. **When unsure, check the Firebase Console → Usage**. If reads spike on a new feature, audit before shipping. The Console graph shows daily reads per day; a single ramp-up day usually points to a loop.
+```js
+const { invalidarProdutos } = useCatalogos();
+// ... após setDoc/batch:
+invalidarProdutos();
+```
+
+Same for `invalidarLocations()`, `invalidarPickingConfig()`, `invalidarLocationsMensal(chaveMes)`.
+
+#### 2. NEVER put `col`, `docRef`, or any function from `useDb()` in a useEffect dep array.
+They're recreated every render → **infinite fetch loop**. Use empty deps + `// eslint-disable-next-line react-hooks/exhaustive-deps`, or wrap in `useCallback`/`useRef`.
+
+> The Plano de Ação loop bug (May 2026) cost 390k reads in a few hours because of this.
+
+#### 3. Growing collections MUST be filtered by period on the server.
+For `abastecimentos`, `inventory_logs`, `vendas_relatorio`, **never** do `getDocs(col('abastecimentos'))`. Always:
+
+```js
+const corte = new Date();
+corte.setMonth(corte.getMonth() - 6);  // 6 months covers most use cases
+const snap = await getDocs(query(
+  col('abastecimentos'),
+  where('criadoEm', '>=', corte.toISOString()),
+  orderBy('criadoEm', 'desc'),
+  limit(2000),  // safety cap
+));
+```
+
+Pages already using this pattern: `DashboardIV`, `PlanificadorIV`, `RegistroAbastecimentoPage`, `ResultadoIV`. Copy the pattern when reading these collections in new pages.
+
+#### 4. Soft-deleted logs must be filtered at read time.
+`inventory_logs` uses `excluido: true` field. EVERY screen reading logs MUST apply `filtrarLogsAtivos()` from `src/modules/gerenciamento-estoque/shared/inventoryLogsFilter.js`.
+
+#### 5. Direct doc reads are cheaper than equality queries.
+Prefer `getDoc(docRef('x', 'id'))` over `getDocs(query(col, where('__name__', '==', id)))`.
+
+#### 6. useMemo for derived data.
+After fetching, all client-side filtering/sorting/aggregating should be `useMemo`-ed. Changing filters MUST NOT refetch — filter the in-memory dataset.
+
+#### 7. Parallel fetches when independent.
+`Promise.all([getDocs(a), getDocs(b)])` — never sequential awaits for independent reads.
+
+#### 8. Bulk operations use `writeBatch` in chunks of 450.
+Limit is 500; 450 leaves headroom. Same for deletes (`HistoricoImportacoes`).
+
+#### 9. Don't add real-time listeners (`onSnapshot`) without explicit reason.
+Each `onSnapshot` keeps a connection open and bills as reads whenever the data changes. For a CRUD admin app like this, manual refetch on user action is cheaper.
+
+#### 10. When unsure, audit before shipping.
+Open DevTools → Network → filter `firestore`. If you see large transfers (>1 MB) on a fresh load, something is wrong. If you see repeated identical fetches across pages, something needs caching. Then check Firebase Console → Firestore → Usage 24h after deploy to confirm.
+
+### Pages already optimized (reference patterns)
+
+| Pattern | Reference page |
+|---|---|
+| useCatalogos for produtos | `src/pages/LancarAbastecimento.js` |
+| useCatalogos for produtos + locations + locations_mensal | `src/modules/gerenciamento-estoque/inventory/components/CountingForm.jsx` |
+| useCatalogos + filter by period | `src/pages/DashboardIV.js` |
+| Invalidação após import | `src/pages/ConfiguracoesPage.js` (chama `invalidarProdutos()` após salvar) |
+| Soft delete filter | `src/modules/gerenciamento-estoque/analytics/components/AdherenceABCDashboard.jsx` |
 
 ### Local backup
 `backup-firestore.js` (Node + firebase-admin) downloads every doc as JSON locally. Idempotent — rerun to resume if it fails. Requires `service-account-key.json` in project root (in `.gitignore`).
