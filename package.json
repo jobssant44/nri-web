@@ -19,9 +19,14 @@
   },
   "scripts": {
     "start": "react-scripts start",
+    "start:dev": "cross-env REACT_APP_USE_EMULATOR=true react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "emulators": "firebase emulators:start --import=./emulator-data --export-on-exit=./emulator-data",
+    "emulators:fresh": "firebase emulators:start --export-on-exit=./emulator-data",
+    "seed": "node scripts/seed-emulator.js",
+    "reduzir-base": "node scripts/reduzir-base-emulator.js"
   },
   "eslintConfig": {
     "extends": [
@@ -42,7 +47,9 @@
     ]
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "firebase-admin": "^13.10.0",
+    "firebase-tools": "^13.29.1",
     "pdfkit": "^0.18.0"
   }
 }

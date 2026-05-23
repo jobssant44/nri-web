@@ -5,10 +5,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm start        # Dev server on http://localhost:3000
+npm start        # Dev server on http://localhost:3000 (aponta pro Firestore real)
 npm run build    # Production build to /build
 npm test         # Jest in interactive watch mode
+
+# Dev local com Firebase Emulator (não consome quota)
+npm run emulators     # Inicia Firestore+Auth emulators (porta 8080/9099/UI:4000)
+npm run start:dev     # Dev server apontando pro emulator
+npm run seed          # Popula emulator com dados mínimos de teste
 ```
+
+## Firebase Emulator (dev local)
+
+Pra desenvolver features novas sem queimar a quota Spark (50k reads/dia) e sem
+poluir os dados reais do app-nri-e0598, use o Emulator Suite.
+
+### Setup inicial (uma vez só)
+```bash
+npm install     # instala firebase-tools e cross-env adicionados em devDependencies
+```
+
+### Fluxo diário
+Abra dois terminais:
+
+**Terminal 1** — emulator:
+```bash
+npm run emulators       # mantém os dados em ./emulator-data/ entre runs
+# (alternativa: npm run emulators:fresh — começa vazio)
+```
+
+**Terminal 2** — app + seed (primeira vez):
+```bash
+npm run seed            # cria admin@dev.local / admin123 + empresa-dev
+npm run start:dev       # app aponta pro emulator
+```
+
+Depois disso é só `npm run emulators` + `npm run start:dev` — os dados persistem.
+
+### URLs
+- App:         http://localhost:3000
+- UI Emulator: http://localhost:4000 (navega/edita dados como o Console)
+- Firestore:   localhost:8080
+- Auth:        localhost:9099
+
+### Como funciona
+- `firebaseConfig.js` lê `process.env.REACT_APP_USE_EMULATOR`. Se `'true'`, chama
+  `connectFirestoreEmulator()` e `connectAuthEmulator()`. Senão, conecta no projeto
+  real. **Zero mudança no código de feature** — `getDocs`, `addDoc`, tudo igual.
+- Cache persistente do IndexedDB é **desligado** no modo emulator (pra evitar
+  ver dados antigos depois de editar via UI do emulator).
+- Dados ficam em `./emulator-data/` (commit ou ignore via `.gitignore` à vontade).
+
+### Importar dados de produção pro emulator
+Pra testar com dataset realista (sem mexer em produção):
+```bash
+firebase firestore:export ./prod-snapshot --project app-nri-e0598
+firebase emulators:start --import=./prod-snapshot --export-on-exit=./emulator-data
+```
+O export conta como reads (1 por doc), então faça uma vez só e reutilize.
+
+### Subindo a feature pra produção
+Não precisa mudar nada — só rodar `npm start` (sem o `:dev`) ou `npm run build`,
+que ignoram a env var. O código continua o mesmo.
 
 ## Architecture
 

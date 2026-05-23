@@ -14,7 +14,7 @@
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getDocs, addDoc, query, where, serverTimestamp } from 'firebase/firestore';
+import { getDocs, addDoc, query, where, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
 import { useUser } from '../../context/UserContext';
 import {
@@ -59,8 +59,16 @@ export default function NovoPlanoPage() {
   async function carregar() {
     setLoading(true);
     try {
-      // produtosMap já vem do Context, só fetcha inventory_logs aqui
-      const snapLogs = await getDocs(col('inventory_logs'));
+      // Filtra server-side: só os últimos 6 meses de contagens. Sem filtro, o
+      // fetch baixava a coleção inteira (já passou de 60k reads num único load).
+      const corte = new Date();
+      corte.setMonth(corte.getMonth() - 6);
+      const snapLogs = await getDocs(query(
+        col('inventory_logs'),
+        where('timestamp', '>=', corte),
+        orderBy('timestamp', 'desc'),
+        limit(5000),
+      ));
       // Soft delete: linhas com `excluido: true` são ignoradas em planos novos.
       setLogs(filtrarLogsAtivos(snapLogs.docs.map(d => ({ id: d.id, ...d.data() }))));
     } finally {

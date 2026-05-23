@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { collection, getDocs, query, orderBy, where, getDoc, doc, addDoc, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, where, limit, getDoc, doc, addDoc, writeBatch } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 import { useUser } from '../context/UserContext';
 import { useSessionFilter } from '../hooks/useSessionFilter';
@@ -755,7 +755,15 @@ export default function PlanificadorIV() {
       }
 
       // ── PASSO 3: recarregar abastecimentos frescos do Firebase ───────────────
-      const aSnapFresh = await getDocs(col('abastecimentos'));
+      // Filtra server-side igual ao DashboardIV: só últimos 6 meses.
+      const corteFresh = new Date();
+      corteFresh.setMonth(corteFresh.getMonth() - 6);
+      const aSnapFresh = await getDocs(query(
+        col('abastecimentos'),
+        where('criadoEm', '>=', corteFresh.toISOString()),
+        orderBy('criadoEm', 'desc'),
+        limit(5000),
+      ));
       const abastsFresh = aSnapFresh.docs.map(d => ({ _id: d.id, ...d.data() }));
 
       const reabMapF = {}, resspMapF = {};
@@ -936,7 +944,15 @@ export default function PlanificadorIV() {
       }
 
       // ── PASSO 3: recarregar abastecimentos frescos ──
-      const aSnapFresh = await getDocs(col('abastecimentos'));
+      // Filtra server-side igual ao DashboardIV: só últimos 6 meses.
+      const corteFresh = new Date();
+      corteFresh.setMonth(corteFresh.getMonth() - 6);
+      const aSnapFresh = await getDocs(query(
+        col('abastecimentos'),
+        where('criadoEm', '>=', corteFresh.toISOString()),
+        orderBy('criadoEm', 'desc'),
+        limit(5000),
+      ));
       const abastsFresh = aSnapFresh.docs.map(d => ({ _id: d.id, ...d.data() }));
       const reabMapF = {}, resspMapF = {};
       abastsFresh.forEach(a => {

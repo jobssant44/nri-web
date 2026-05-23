@@ -21,6 +21,13 @@ service-account-key.json
 # Local Firestore backups
 /backup-*/
 
+# Firebase Emulator local data + logs
+/emulator-data
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+database-debug.log
+
 # misc
 .DS_Store
 .env.local

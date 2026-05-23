@@ -1,5 +1,6 @@
 import React from 'react';
 import { CountingForm } from '../../modules/gerenciamento-estoque/inventory/components/CountingForm';
+import { ContagemEstoqueForm } from '../../modules/gerenciamento-estoque/inventory/components/ContagemEstoqueForm';
 import { ImportarContagemRetroativa } from '../../modules/gerenciamento-estoque/inventory/components/ImportarContagemRetroativa';
 import { HistoricoImportacoes } from '../../modules/gerenciamento-estoque/inventory/components/HistoricoImportacoes';
 import { useUser } from '../../context/UserContext';
@@ -13,9 +14,10 @@ const MOSTRAR_IMPORTACOES = false;
 export default function CountingPage() {
   const { usuario } = useUser();
   const [abaRaw, setAba] = useSessionFilter('count:aba', 'manual');
-  // Se a aba salva na sessão for uma das ocultadas, cai pra 'manual'
-  // pra não deixar a tela em branco.
-  const aba = !MOSTRAR_IMPORTACOES && abaRaw !== 'manual' ? 'manual' : abaRaw;
+  // Abas visíveis hoje: 'manual' (Coleta de validade) e 'estoque' (Contagem de Estoque).
+  // Se a aba salva na sessão for inválida ou uma das ocultadas, cai pra 'manual'.
+  const ABAS_VISIVEIS = ['manual', 'estoque'];
+  const aba = ABAS_VISIVEIS.includes(abaRaw) ? abaRaw : 'manual';
 
   const containerStyle = { maxWidth: '1100px', margin: '0 auto' };
   const tabContainer = {
@@ -46,7 +48,10 @@ export default function CountingPage() {
 
       <div style={tabContainer}>
         <button style={tabStyle(aba === 'manual')} onClick={() => setAba('manual')}>
-          Registrar manual
+          Coleta de validade
+        </button>
+        <button style={tabStyle(aba === 'estoque')} onClick={() => setAba('estoque')}>
+          Contagem de Estoque
         </button>
         {MOSTRAR_IMPORTACOES && (
           <button style={tabStyle(aba === 'retroativa')} onClick={() => setAba('retroativa')}>
@@ -62,6 +67,7 @@ export default function CountingPage() {
 
       <div style={conteudo}>
         {aba === 'manual' && <CountingForm conferente={usuario?.nome} />}
+        {aba === 'estoque' && <ContagemEstoqueForm conferente={usuario?.nome} />}
         {MOSTRAR_IMPORTACOES && aba === 'retroativa' && <ImportarContagemRetroativa />}
         {MOSTRAR_IMPORTACOES && aba === 'historico' && <HistoricoImportacoes />}
       </div>

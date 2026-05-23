@@ -23,6 +23,7 @@ import ConfigPicking from './pages/ConfigPicking';
 import DashboardCurvaABC from './pages/curva-abc/DashboardCurvaABC';
 import ImportarRelatorio from './pages/curva-abc/ImportarRelatorio';
 import CountingPage from './pages/gerenciamento-estoque/CountingPage';
+import ContagensEstoquePage from './pages/gerenciamento-estoque/ContagensEstoquePage';
 import DashboardPage from './pages/gerenciamento-estoque/DashboardPage';
 import GerenciarLocalizacoesPage from './pages/gerenciamento-estoque/GerenciarLocalizacoesPage';
 import EndereçamentoPage from './pages/gerenciamento-estoque/EndereçamentoPage';
@@ -155,6 +156,7 @@ function AppInner() {
             <Route path="/estoque/dashboard"              element={<DashboardPage />} />
             <Route path="/estoque/aderencia-abc"          element={<AderenciaABCPage />} />
             <Route path="/estoque/contar"                 element={<CountingPage />} />
+            <Route path="/estoque/contagens"              element={<ContagensEstoquePage />} />
             <Route path="/estoque/gerenciar-localizacoes" element={guardaSup ? <Navigate to={guardaSup} /> : <GerenciarLocalizacoesPage />} />
             <Route path="/estoque/enderecamento"          element={<EndereçamentoPage />} />
             {/* <Route path="/estoque/coletas-validade"       element={<ColetasValidadePage />} /> */}

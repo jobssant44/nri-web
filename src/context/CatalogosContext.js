@@ -23,9 +23,36 @@
  */
 
 import { createContext, useContext, useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { getDocs, query, where } from 'firebase/firestore';
+import { getDocs, query, where, orderBy, limit, startAfter } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 import { useUser } from './UserContext';
+
+// Tamanho da página pra fetches paginados de coleções grandes.
+// O Firestore Emulator local tem back-channel limitado (~10k mensagens),
+// então uma query única com 16k+ docs derruba a conexão. Paginar em batches
+// de 1000 contorna isso e funciona idêntico em produção (mesmo total de reads).
+const PAGE_SIZE = 1000;
+
+/**
+ * Lê uma coleção inteira em batches paginados de PAGE_SIZE docs.
+ * Usa orderBy('__name__') (= doc ID) + startAfter pra paginar sem precisar
+ * de campo indexado adicional.
+ */
+async function getAllDocsPaged(colRef) {
+  const out = [];
+  let lastDocSnap = null;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const q = lastDocSnap
+      ? query(colRef, orderBy('__name__'), startAfter(lastDocSnap), limit(PAGE_SIZE))
+      : query(colRef, orderBy('__name__'), limit(PAGE_SIZE));
+    const snap = await getDocs(q);
+    snap.docs.forEach(d => out.push({ id: d.id, ...d.data() }));
+    if (snap.docs.length < PAGE_SIZE) break;
+    lastDocSnap = snap.docs[snap.docs.length - 1];
+  }
+  return out;
+}
 
 const CatalogosContext = createContext(null);
 
@@ -73,18 +100,18 @@ export function CatalogosProvider({ children }) {
         if (produtos === null && !fetchingRef.current.produtos) {
           fetchingRef.current.produtos = true;
           tasks.push(
-            getDocs(col('produtos')).then(snap => {
+            getAllDocsPaged(col('produtos')).then(lista => {
               if (cancelado) return;
-              setProdutos(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+              setProdutos(lista);
             }).finally(() => { fetchingRef.current.produtos = false; })
           );
         }
         if (locations === null && !fetchingRef.current.locations) {
           fetchingRef.current.locations = true;
           tasks.push(
-            getDocs(col('locations')).then(snap => {
+            getAllDocsPaged(col('locations')).then(lista => {
               if (cancelado) return;
-              setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+              setLocations(lista);
             }).finally(() => { fetchingRef.current.locations = false; })
           );
         }
@@ -102,8 +129,7 @@ export function CatalogosProvider({ children }) {
     if (pickingConfig !== null) return pickingConfig;
     if (fetchingRef.current.pickingConfig) return fetchingRef.current.pickingConfig;
     fetchingRef.current.pickingConfig = (async () => {
-      const snap = await getDocs(col('picking_config'));
-      const lista = snap.docs.map(d => d.data());
+      const lista = await getAllDocsPaged(col('picking_config'));
       setPickingConfig(lista);
       delete fetchingRef.current.pickingConfig;
       return lista;

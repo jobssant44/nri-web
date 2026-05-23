@@ -19,20 +19,25 @@ import {
   monthKey, nowYearMonth,
   carregarMapaCurvaComFallback, calcularAderenteABC,
 } from '../../shared/curvaLookup';
+import { QuantidadeFields } from '../../shared/QuantidadeFields';
 
-const UNIDADES = [
-  { key: 'palete',  label: 'Palete'  },
-  { key: 'lastro',  label: 'Lastro'  },
-  { key: 'caixa',   label: 'Caixa'   },
-  { key: 'unidade', label: 'Unidade' },
-];
+// Total em caixas a partir do objeto { palete, lastro, caixa, unidade }
+// + paletização e lastro do produto. Espelha a fórmula do QuantidadeFields.
+function calcularTotalCaixas(quantidades, cxPorPlt, cxPorLastro) {
+  const p = parseInt(quantidades.palete,  10) || 0;
+  const l = parseInt(quantidades.lastro,  10) || 0;
+  const c = parseInt(quantidades.caixa,   10) || 0;
+  const u = parseInt(quantidades.unidade, 10) || 0;
+  return (p * (Number(cxPorPlt) || 0)) + (l * (Number(cxPorLastro) || 0)) + c + u;
+}
+
+const initialQuantidades = { palete: '', lastro: '', caixa: '', unidade: '' };
 
 const initialForm = {
   endereco: '',
   productCode: '',
   productName: '',
-  quantidade: '',
-  unidade: 'caixa',
+  quantidades: { ...initialQuantidades },
   expiryDate: '',
 };
 
@@ -110,9 +115,12 @@ export function CountingForm({ conferente, onSuccess, onError }) {
       setEnderecos(listaEnd);
       setMensaisDoMes(mapMensal);
       // Produtos do Context — campo `descricao` (formato 01.11) com fallback pra `nome`.
+      // Mantém paletização (coluna V) e lastro (coluna X) pra calcular total em caixas.
       setProdutos((produtosCtx || []).map(x => ({
         codigo: String(x.codigo || x.id || ''),
         nome: x.descricao || x.nome || '',
+        paletizacao: Number(x.paletizacao) || 0,
+        lastro:      Number(x.lastro)      || 0,
       })).filter(p => p.codigo));
 
       const { mapa, origem } = await carregarMapaCurvaComFallback({
@@ -176,17 +184,18 @@ export function CountingForm({ conferente, onSuccess, onError }) {
   function validar() {
     const e = {};
     if (!form.endereco) e.endereco = 'Selecione um endereço';
+    let prod = null;
     if (!form.productCode.trim()) {
       e.productCode = 'Código é obrigatório';
     } else {
-      const p = acharProdutoPorCodigo(form.productCode);
-      if (!p) e.productCode = 'Código não encontrado na base';
-      else if (form.productName && form.productName !== p.nome) {
+      prod = acharProdutoPorCodigo(form.productCode);
+      if (!prod) e.productCode = 'Código não encontrado na base';
+      else if (form.productName && form.productName !== prod.nome) {
         e.productName = 'Nome não corresponde ao código';
       }
     }
-    const qt = parseFloat(String(form.quantidade).replace(',', '.'));
-    if (!form.quantidade || isNaN(qt) || qt <= 0) e.quantidade = 'Quantidade deve ser maior que zero';
+    const totalCx = calcularTotalCaixas(form.quantidades, prod?.paletizacao, prod?.lastro);
+    if (totalCx <= 0) e.quantidade = 'Informe pelo menos uma quantidade (Palete, Lastro, Caixa ou Unidade)';
     if (!form.expiryDate) e.expiryDate = 'Validade é obrigatória';
     else if (!parseData(form.expiryDate)) e.expiryDate = 'Data inválida (DD/MM/AAAA)';
     setErrs(e);
@@ -201,6 +210,7 @@ export function CountingForm({ conferente, onSuccess, onError }) {
 
     const prod = acharProdutoPorCodigo(form.productCode);
     const dadosMensal = mensaisDoMes[form.endereco];
+    const totalCaixas = calcularTotalCaixas(form.quantidades, prod?.paletizacao, prod?.lastro);
 
     const item = {
       endereco: form.endereco,
@@ -210,13 +220,23 @@ export function CountingForm({ conferente, onSuccess, onError }) {
       productName: prod?.nome || form.productName.trim(),
       productCurva: curvaMap[form.productCode.trim()] || null,
       curvaOrigem,
-      quantidade: parseFloat(String(form.quantidade).replace(',', '.')),
-      unidade: form.unidade,
+      // Breakdown (palete/lastro/caixa/unidade)
+      qtdPalete:  parseInt(form.quantidades.palete,  10) || 0,
+      qtdLastro:  parseInt(form.quantidades.lastro,  10) || 0,
+      qtdCaixa:   parseInt(form.quantidades.caixa,   10) || 0,
+      qtdUnidade: parseInt(form.quantidades.unidade, 10) || 0,
+      // Snapshot dos fatores do produto na hora da contagem (para auditoria —
+      // se o catálogo mudar depois, o total fica reproduzível).
+      cxPorPlt:    Number(prod?.paletizacao) || 0,
+      cxPorLastro: Number(prod?.lastro)      || 0,
+      // Total consolidado em caixas
+      quantidade: totalCaixas,
+      unidade: 'caixa',
       expiryDate: form.expiryDate,
     };
 
     setFila(prev => [...prev, item]);
-    setMessage(`✅ ${item.productCode} (${item.quantidade} ${item.unidade}) adicionado à fila`);
+    setMessage(`✅ ${item.productCode} (${item.quantidade} cx) adicionado à fila`);
     setForm(f => ({ ...initialForm, endereco: f.endereco })); // mantém endereço
     setSugestoesNome([]); setMostrarSug(false);
     setTimeout(() => setMessage(''), 2200);
@@ -245,9 +265,16 @@ export function CountingForm({ conferente, onSuccess, onError }) {
           // Produto
           productCode: item.productCode,
           productName: item.productName,
-          // Quantidade
+          // Quantidade — total consolidado em caixas
           quantidade: item.quantidade,
           unidade: item.unidade,
+          // Breakdown digitado pelo conferente (auditoria)
+          qtdPalete:  item.qtdPalete,
+          qtdLastro:  item.qtdLastro,
+          qtdCaixa:   item.qtdCaixa,
+          qtdUnidade: item.qtdUnidade,
+          cxPorPlt:    item.cxPorPlt,
+          cxPorLastro: item.cxPorLastro,
           // Validade
           expiryDate: validade ? Timestamp.fromDate(validade) : null,
           // Snapshots para cálculo histórico
@@ -517,49 +544,21 @@ export function CountingForm({ conferente, onSuccess, onError }) {
           </div>
         )}
 
-        {/* Quantidade — toggle de unidade + número */}
+        {/* Quantidade — 4 campos (Palete/Lastro/Caixa/Unidade) com total automático */}
         <div style={group}>
           <label style={lbl}>Quantidade</label>
-          <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
-            {UNIDADES.map(u => {
-              const sel = form.unidade === u.key;
-              return (
-                <button
-                  key={u.key}
-                  type="button"
-                  onClick={() => setForm({ ...form, unidade: u.key })}
-                  disabled={submitting}
-                  style={{
-                    padding: '8px 14px',
-                    backgroundColor: sel ? '#E31837' : '#f8fafc',
-                    color: sel ? '#fff' : '#475569',
-                    border: `1px solid ${sel ? '#E31837' : '#e2e8f0'}`,
-                    borderRadius: '6px',
-                    fontSize: '12.5px',
-                    fontWeight: sel ? 700 : 500,
-                    cursor: 'pointer',
-                    transition: '0.15s',
-                  }}
-                >{u.label}</button>
-              );
-            })}
-          </div>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder={`Quantidade em ${form.unidade}(s)`}
-            value={form.quantidade}
-            onChange={(e) => setForm({ ...form, quantidade: e.target.value.replace(/[^0-9.,]/g, '') })}
-            disabled={submitting}
-            style={{
-              ...inp,
-              borderColor: errs.quantidade ? '#e31837' : '#ddd',
-              fontSize: '22px',
-              fontWeight: 'bold',
-              textAlign: 'center',
-              fontFamily: 'monospace',
-            }}
-          />
+          {(() => {
+            const prodSel = acharProdutoPorCodigo(form.productCode);
+            return (
+              <QuantidadeFields
+                value={form.quantidades}
+                onChange={(novo) => setForm(f => ({ ...f, quantidades: novo }))}
+                cxPorPlt={prodSel?.paletizacao}
+                cxPorLastro={prodSel?.lastro}
+                produtoOk={!!prodSel}
+              />
+            );
+          })()}
           {errs.quantidade && <div style={{ color: '#e31837', fontSize: 12, marginTop: 4 }}>❌ {errs.quantidade}</div>}
         </div>
 
@@ -620,7 +619,17 @@ export function CountingForm({ conferente, onSuccess, onError }) {
                       <td style={{ padding: '8px', borderBottom: '1px solid #eee', fontWeight: 'bold' }}>{it.endereco}</td>
                       <td style={{ padding: '8px', borderBottom: '1px solid #eee', fontFamily: 'monospace' }}>{it.productCode}</td>
                       <td style={{ padding: '8px', borderBottom: '1px solid #eee' }}>{it.productName}</td>
-                      <td style={{ padding: '8px', borderBottom: '1px solid #eee', fontFamily: 'monospace' }}>{it.quantidade} {it.unidade}</td>
+                      <td style={{ padding: '8px', borderBottom: '1px solid #eee', fontFamily: 'monospace' }}>
+                        <div style={{ fontWeight: 700 }}>{it.quantidade} cx</div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {[
+                            it.qtdPalete  > 0 && `${it.qtdPalete}P`,
+                            it.qtdLastro  > 0 && `${it.qtdLastro}L`,
+                            it.qtdCaixa   > 0 && `${it.qtdCaixa}C`,
+                            it.qtdUnidade > 0 && `${it.qtdUnidade}U`,
+                          ].filter(Boolean).join(' · ')}
+                        </div>
+                      </td>
                       <td style={{ padding: '8px', borderBottom: '1px solid #eee', fontFamily: 'monospace' }}>{it.expiryDate}</td>
                       <td style={{ padding: '8px', borderBottom: '1px solid #eee' }}>
                         {ader == null

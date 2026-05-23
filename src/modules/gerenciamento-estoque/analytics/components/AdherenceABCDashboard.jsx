@@ -11,7 +11,7 @@
  * gravado no momento da contagem.
  */
 import React, { useState, useEffect, useMemo } from 'react';
-import { getDocs, writeBatch, serverTimestamp, query, where, updateDoc } from 'firebase/firestore';
+import { getDocs, writeBatch, serverTimestamp, query, where, orderBy, limit, updateDoc } from 'firebase/firestore';
 import { useUser } from '../../../../context/UserContext';
 import { NIVEIS_SUPERVISOR } from '../../../../pages/admin/ConfigurarEmpresaPage';
 import {
@@ -124,8 +124,16 @@ export function AdherenceABCDashboard() {
   async function carregar() {
     setLoading(true);
     try {
-      // produtosMap vem do Context (cacheado). Aqui só fetchamos inventory_logs.
-      const snapLogs = await getDocs(col('inventory_logs'));
+      // Filtra server-side: só os últimos 6 meses de contagens. Sem o filtro, o
+      // load da página baixava a coleção inteira (causa do spike de 60k+ reads).
+      const corte = new Date();
+      corte.setMonth(corte.getMonth() - 6);
+      const snapLogs = await getDocs(query(
+        col('inventory_logs'),
+        where('timestamp', '>=', corte),
+        orderBy('timestamp', 'desc'),
+        limit(5000),
+      ));
       // Soft delete: linhas com `excluido: true` somem de toda a UI.
       setLogs(filtrarLogsAtivos(snapLogs.docs.map(d => ({ id: d.id, ...d.data() }))));
     } catch (e) {

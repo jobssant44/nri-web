@@ -10,7 +10,7 @@
  *  - Hecto Perda: quant. Perda × hecto/cx
  */
 
-import { getDocs } from 'firebase/firestore';
+import { getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { isLogExcluido } from '../gerenciamento-estoque/shared/inventoryLogsFilter';
 
 export const THRESHOLD_SEGREGAR_PCT  = 60;      // % shelf life — usado no Stock Age Index
@@ -209,14 +209,23 @@ export function deduzirRua(endereco) {
 // Loaders compartilhados
 // ─────────────────────────────────────────────────────────────────────
 export async function carregarLogsContagem({ col, dataInicio, dataFim }) {
-  const snap = await getDocs(col('inventory_logs'));
+  // Filtra server-side. Se o caller não passar dataInicio, aplica fallback de
+  // 6 meses pra não baixar a coleção inteira (cada doc = 1 read no Firestore).
+  const corte = dataInicio instanceof Date
+    ? dataInicio
+    : (() => { const d = new Date(); d.setMonth(d.getMonth() - 6); return d; })();
+  const snap = await getDocs(query(
+    col('inventory_logs'),
+    where('timestamp', '>=', corte),
+    orderBy('timestamp', 'desc'),
+    limit(5000),
+  ));
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(l => {
       if (isLogExcluido(l)) return false; // soft delete
       const ts = tsToDate(l.timestamp);
       if (!ts) return false;
-      if (dataInicio && ts < dataInicio) return false;
       if (dataFim && ts > dataFim) return false;
       return true;
     });
@@ -270,7 +279,17 @@ export async function carregarPZVMap({ col }) {
 export async function carregarVendaMediaMap({ col, diasJanela = 30 }) {
   const map = {};
   try {
-    const snap = await getDocs(col('vendas_relatorio'));
+    // Filtra server-side: só relatórios importados nos últimos N+30 dias.
+    // (margem extra pra cobrir importações tardias que ainda contêm vendas
+    // dentro da janela útil). Antes lia a coleção inteira a cada chamada.
+    const corte = new Date();
+    corte.setDate(corte.getDate() - (diasJanela + 30));
+    const snap = await getDocs(query(
+      col('vendas_relatorio'),
+      where('importadoEm', '>=', corte),
+      orderBy('importadoEm', 'desc'),
+      limit(500),
+    ));
     if (snap.empty) return map;
 
     const hoje = new Date();
