@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getDocs } from 'firebase/firestore';
+import { getDocs, query, where } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 
 const MESES_NOME = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -30,9 +30,13 @@ export default function ResultadoIV() {
     setCarregando(true);
     setErro('');
     try {
+      // Limita abastecimentos a 6 meses (suficiente pra comparativos de resultado).
+      const corte = new Date();
+      corte.setMonth(corte.getMonth() - 6);
       const [snapPicking, snapAbasts] = await Promise.all([
         getDocs(col('picking_config_mensal')),
-        getDocs(col('abastecimentos')),
+        getDocs(query(col('abastecimentos'),
+          where('criadoEm', '>=', corte.toISOString()))),
       ]);
 
       const ppm = {};

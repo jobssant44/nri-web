@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, updateDoc, doc, addDoc, query, orderBy, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, updateDoc, doc, addDoc, query, orderBy, where, limit, writeBatch } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 import { useUser } from '../context/UserContext';
 import { useCatalogos } from '../context/CatalogosContext';
@@ -48,7 +48,15 @@ export default function RegistroAbastecimentoPage() {
   async function carregar() {
     setCarregando(true);
     try {
-      const snap = await getDocs(query(col('abastecimentos'), orderBy('criadoEm', 'desc')));
+      // Limita a 6 meses pra reduzir leituras. Os filtros locais (busca,
+      // tipo, datas) continuam aplicando sobre esse conjunto.
+      // Limite de segurança 2000 caso o volume cresça muito num período.
+      const corte = new Date();
+      corte.setMonth(corte.getMonth() - 6);
+      const snap = await getDocs(query(col('abastecimentos'),
+        where('criadoEm', '>=', corte.toISOString()),
+        orderBy('criadoEm', 'desc'),
+        limit(2000)));
       setRegistros(snap.docs.map(d => ({ _id: d.id, ...d.data() })));
     } catch (err) {
       console.error(err);

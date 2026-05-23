@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, doc, getDoc, setDoc, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, setDoc, query, orderBy, where } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 import { useUser } from '../context/UserContext';
 import { useSessionFilter } from '../hooks/useSessionFilter';
@@ -122,8 +122,14 @@ export default function DashboardIV() {
   async function carregar() {
     setCarregando(true);
     try {
+      // Limita a 6 meses (cobre a evolução visual + mês selecionado com folga).
+      // Sem esse filtro, baixava todos os ~3k abastecimentos da empresa toda
+      // vez que a página abria. Reduz pra ~600 docs (mês com média de 100/mês).
+      const corteEvolucao = new Date();
+      corteEvolucao.setMonth(corteEvolucao.getMonth() - 6);
       const [aSnap, vSnap] = await Promise.all([
-        getDocs(col('abastecimentos')),
+        getDocs(query(col('abastecimentos'),
+          where('criadoEm', '>=', corteEvolucao.toISOString()))),
         getDocs(query(col('vendas_relatorio'), orderBy('importadoEm', 'asc'))),
       ]);
 

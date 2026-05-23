@@ -28,19 +28,9 @@ export default function LancarAbastecimento() {
   const [tipo, setTipo] = useState(detectarTipo());
   const [qtdPaletes, setQtdPaletes] = useState('1');
   const [salvando, setSalvando] = useState(false);
-  const [lancamentosHoje, setLancamentosHoje] = useState([]);
-
-  useEffect(() => { carregarDados(); }, []);
-
-  async function carregarDados() {
-    // produtos vem do Context. Aqui só busca os abastecimentos de hoje.
-    const aSnap = await getDocs(col('abastecimentos'));
-    const hoje = diaOperacional();
-    const lista = aSnap.docs.map(d => d.data())
-      .filter(a => a.dataOperacional === hoje)
-      .sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm));
-    setLancamentosHoje(lista);
-  }
+  // Card "Lançamentos de Hoje" foi ocultado (2026-05-21). Removido o fetch
+  // de abastecimentos que existia só pra alimentá-lo — economizava ~3k reads
+  // por abertura da página. A função carregarDados() inteira foi removida.
 
   // Compat: produtos podem vir com `nome` (formato antigo) ou `descricao`
   // (formato novo, importado via 01.11). Sempre pegar o que existir.
@@ -82,7 +72,7 @@ export default function LancarAbastecimento() {
         criadoEm: agora.toISOString(),
       };
       await addDoc(col('abastecimentos'), registro);
-      setLancamentosHoje(prev => [registro, ...prev]);
+      // setLancamentosHoje removido junto com o card "Lançamentos de Hoje"
       setCodProduto(''); setNomeProduto(''); setQtdPaletes('1');
     } catch (e) { alert('Erro: ' + e.message); }
     setSalvando(false);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { collection, getDocs, query, orderBy, getDoc, doc, addDoc, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, where, getDoc, doc, addDoc, writeBatch } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 import { useUser } from '../context/UserContext';
 import { useSessionFilter } from '../hooks/useSessionFilter';
@@ -8,7 +8,12 @@ import { lerCache, salvarCache, invalidarCache } from '../utils/cache';
 async function buscarAbastecimentos(col) {
   const cached = lerCache('abastecimentos');
   if (cached) return cached;
-  const snap = await getDocs(col('abastecimentos'));
+  // Limita a 6 meses (cobre saldo inicial dos meses anteriores + mês atual
+  // com folga). Reduz de ~3.000 docs históricos pra ~600 docs recentes.
+  const corte = new Date();
+  corte.setMonth(corte.getMonth() - 6);
+  const snap = await getDocs(query(col('abastecimentos'),
+    where('criadoEm', '>=', corte.toISOString())));
   const dados = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
   salvarCache('abastecimentos', dados);
   return dados;
