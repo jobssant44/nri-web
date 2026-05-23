@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { collection, getDocs, addDoc } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 import { useUser } from '../context/UserContext';
+import { useCatalogos } from '../context/CatalogosContext';
 import { useNavigate } from 'react-router-dom';
 
 function hojeFormatado() {
@@ -25,6 +26,7 @@ function validarData(data) {
 
 export default function NovaNRI() {
   const { col, docRef, stamp } = useDb();
+  const { produtos: produtosCtx } = useCatalogos();
   const { usuario } = useUser();
   const navigate = useNavigate();
   const [notaFiscal, setNotaFiscal] = useState('');
@@ -48,18 +50,19 @@ export default function NovaNRI() {
   const [sugestoes, setSugestoes] = useState([]);
   const [salvando, setSalvando] = useState(false);
 
-  useEffect(() => { carregarDados(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { carregarDados(); }, [produtosCtx]);
 
   async function carregarDados() {
-    const [pSnap, mSnap, cSnap, crSnap, oSnap, curvaSnap] = await Promise.all([
-      getDocs(col('produtos')),
+    // produtos vem do Context (cache em memória); demais coleções pequenas
+    const [mSnap, cSnap, crSnap, oSnap, curvaSnap] = await Promise.all([
       getDocs(col('motoristas')),
       getDocs(col('cavalos')),
       getDocs(col('carretas')),
       getDocs(col('origens')),
       getDocs(col('curva_abc')),
     ]);
-    setBaseProdutos(pSnap.docs.map(d => d.data()));
+    setBaseProdutos(produtosCtx || []);
     setListaMotoristas(mSnap.docs.map(d => d.data().valor));
     setListaCavalos(cSnap.docs.map(d => d.data().valor));
     setListaCarretas(crSnap.docs.map(d => d.data().valor));

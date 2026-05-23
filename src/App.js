@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { UserProvider, useUser } from './context/UserContext';
+import { CatalogosProvider } from './context/CatalogosContext';
 import Login from './pages/Login';
 import Sidebar from './components/Sidebar';
 import HomePage from './pages/Home';
@@ -68,7 +69,9 @@ import ConfiguracoesPage from './pages/ConfiguracoesPage';
 export default function App() {
   return (
     <UserProvider>
-      <AppInner />
+      <CatalogosProvider>
+        <AppInner />
+      </CatalogosProvider>
     </UserProvider>
   );
 }

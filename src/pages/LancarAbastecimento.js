@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { getDocs, addDoc } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 import { useUser } from '../context/UserContext';
+import { useCatalogos } from '../context/CatalogosContext';
 
 function diaOperacional() {
   const agora = new Date();
@@ -18,7 +19,9 @@ function detectarTipo() {
 export default function LancarAbastecimento() {
   const { col, docRef } = useDb();
   const { usuario } = useUser();
-  const [baseProdutos, setBaseProdutos] = useState([]);
+  // Lista de produtos vem do Context (cache em memória entre páginas)
+  const { produtos: baseProdutosCtx } = useCatalogos();
+  const baseProdutos = baseProdutosCtx || [];
   const [codProduto, setCodProduto] = useState('');
   const [nomeProduto, setNomeProduto] = useState('');
   const [sugestoes, setSugestoes] = useState([]);
@@ -30,11 +33,8 @@ export default function LancarAbastecimento() {
   useEffect(() => { carregarDados(); }, []);
 
   async function carregarDados() {
-    const [pSnap, aSnap] = await Promise.all([
-      getDocs(col('produtos')),
-      getDocs(col('abastecimentos')),
-    ]);
-    setBaseProdutos(pSnap.docs.map(d => d.data()));
+    // produtos vem do Context. Aqui só busca os abastecimentos de hoje.
+    const aSnap = await getDocs(col('abastecimentos'));
     const hoje = diaOperacional();
     const lista = aSnap.docs.map(d => d.data())
       .filter(a => a.dataOperacional === hoje)

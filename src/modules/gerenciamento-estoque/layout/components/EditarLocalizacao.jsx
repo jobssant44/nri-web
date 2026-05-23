@@ -4,12 +4,14 @@ import {
   query, where,
 } from 'firebase/firestore';
 import { useDb } from '../../../../utils/db';
+import { useCatalogos } from '../../../../context/CatalogosContext';
 import { monthKey, nowYearMonth } from '../../shared/curvaLookup';
 
 const CURVAS = ['', 'A', 'B', 'C'];
 
 export function EditarLocalizacao() {
   const { col, docRef, db, stamp } = useDb();
+  const { locations: locationsCtx, obterLocationsMensal } = useCatalogos();
 
   const { ano: anoAtual, mes: mesAtual } = nowYearMonth();
   const [ano, setAno] = useState(anoAtual);
@@ -45,34 +47,29 @@ export function EditarLocalizacao() {
 
   // ─── Carregar locations + mensal do mês selecionado ───────────────────
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { carregar(); }, [ano, mes]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { carregar(); }, [ano, mes, locationsCtx]);
 
   async function carregar() {
     setLoading(true);
     setMessage('');
     try {
-      const [snapLoc, snapMensal] = await Promise.all([
-        getDocs(col('locations')),
-        getDocs(query(col('locations_mensal'), where('chaveMes', '==', chave))),
-      ]);
+      // locations vem do Context (cache em memória); locations_mensal cacheado por chaveMes
+      const docsMensal = await obterLocationsMensal(chave);
 
-      // Base de endereços (suporta o formato antigo {area, street, palettePosition})
-      const listaEnderecos = snapLoc.docs.map(d => {
-        const data = d.data();
+      const listaEnderecos = (locationsCtx || []).map(data => {
         const enderecoStr = data.endereco
-          || (data.area != null ? `${data.area}-${data.street}-${data.palettePosition}` : d.id);
+          || (data.area != null ? `${data.area}-${data.street}-${data.palettePosition}` : data.id);
         return {
-          id: d.id,
+          id: data.id || enderecoStr,
           endereco: enderecoStr,
           isActive: data.isActive !== false,
         };
       }).sort((a, b) => a.endereco.localeCompare(b.endereco, 'pt-BR', { numeric: true }));
 
-      // Map endereço → dados do mês
       const mapMensal = {};
-      snapMensal.docs.forEach(d => {
-        const data = d.data();
-        if (data.endereco) mapMensal[data.endereco] = { id: d.id, ...data };
+      docsMensal.forEach(data => {
+        if (data.endereco) mapMensal[data.endereco] = data;
       });
 
       setEnderecos(listaEnderecos);

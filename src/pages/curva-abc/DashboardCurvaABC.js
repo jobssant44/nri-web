@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { getDoc, getDocs } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
+import { useCatalogos } from '../../context/CatalogosContext';
 import { calcularABC } from './ImportarRelatorio';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 import {
@@ -66,6 +67,8 @@ function getValorFinal(produto, campo, metrica, fatores) {
 
 export default function DashboardCurvaABC() {
   const { col, docRef, rid } = useDb();
+  // Paletização dos produtos vem do Context (cache em memória)
+  const { cxPorPltMap } = useCatalogos();
   const [indices, setIndices]       = useState([]);
   const [anos, setAnos]             = useState([]);
   const [mesesDoAno, setMesesDoAno] = useState([]);
@@ -83,7 +86,10 @@ export default function DashboardCurvaABC() {
   const [dadosM2, setDadosM2]       = useState(null);
   const [carregando, setCarregando] = useState(false);
   // Mapa codigo → fatorPalete (campo paletizacao) carregado do Catálogo de Produtos
-  const [fatores, setFatores]       = useState({});
+  // Fatores importados do relatório 01.11 (coleção produtos_fatores).
+  // O `fatores` final (usado nos cálculos) é a combinação desses + cxPorPltMap
+  // (do Context — vem do catálogo de produtos e tem prioridade).
+  const [fatoresImportados, setFatoresImportados] = useState({});
 
   // Filtros de visão
   const [metrica, setMetrica] = useSessionFilter('dabc:metrica', 'cx');
@@ -196,27 +202,26 @@ export default function DashboardCurvaABC() {
   }
 
   async function carregarFatores() {
+    // Carrega só os fatores do 01.11. O Catálogo de Produtos (via Context)
+    // entra na combinação memoizada `fatores` abaixo.
     try {
+      const snapFatores = await getDocs(col('produtos_fatores'));
       const mapa = {};
-      // 1ª fonte: produtos_fatores (importado via relatório 01.11) — fatorPalete por código
-      try {
-        const snapFatores = await getDocs(col('produtos_fatores'));
-        snapFatores.forEach(d => {
-          const fator = d.data().fatorPalete;
-          if (d.id && fator) mapa[String(d.id)] = fator;
-        });
-      } catch (_) { /* coleção ainda não existe */ }
-      // 2ª fonte: paletizacao do Catálogo de Produtos — tem prioridade sobre 01.11
-      try {
-        const snapProd = await getDocs(col('produtos'));
-        snapProd.forEach(d => {
-          const data = d.data();
-          if (data.codigo && data.paletizacao) mapa[String(data.codigo)] = data.paletizacao;
-        });
-      } catch (_) { /* coleção ainda não existe */ }
-      setFatores(mapa);
-    } catch (_) {}
+      snapFatores.forEach(d => {
+        const fator = d.data().fatorPalete;
+        if (d.id && fator) mapa[String(d.id)] = fator;
+      });
+      setFatoresImportados(mapa);
+    } catch (_) { /* coleção ainda não existe */ }
   }
+
+  // fatores final = produtos_fatores (01.11) + cxPorPltMap (Catálogo via Context).
+  // cxPorPltMap tem prioridade — sobrescreve eventuais valores do 01.11.
+  const fatores = useMemo(() => {
+    const m = { ...fatoresImportados };
+    Object.entries(cxPorPltMap).forEach(([cod, fator]) => { if (fator) m[cod] = fator; });
+    return m;
+  }, [fatoresImportados, cxPorPltMap]);
 
   // Lê empresas/{eid}/config/marketplace e popula `marketplaceSet`.
   // Em caso de falha (doc não existe, sem permissão) usa Set vazio — daí

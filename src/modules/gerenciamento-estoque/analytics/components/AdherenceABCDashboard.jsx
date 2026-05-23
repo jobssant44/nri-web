@@ -22,6 +22,7 @@ import { useDb } from '../../../../utils/db';
 import { useSessionFilter } from '../../../../hooks/useSessionFilter';
 import { monthKey, calcularAderenteABC, CURVA_PRODUTO_PADRAO } from '../../shared/curvaLookup';
 import { filtrarLogsAtivos } from '../../shared/inventoryLogsFilter';
+import { useCatalogos } from '../../../../context/CatalogosContext';
 
 // Resolve a curva efetiva do produto: usa a do snapshot do log, ou
 // CURVA_PRODUTO_PADRAO ('C') quando produto não está cadastrado.
@@ -73,9 +74,9 @@ const badgeIndet      = { display: 'inline-block', padding: '3px 10px', backgrou
 
 export function AdherenceABCDashboard() {
   const { col } = useDb();
+  // produtosMap vem do CatalogosContext (cache em memória entre páginas).
+  const { produtosMap, obterLocationsMensal } = useCatalogos();
   const [logs, setLogs] = useState([]);
-  // Mapa codigo → descrição oficial da coleção `produtos` (campo descricao)
-  const [produtosMap, setProdutosMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [modo, setModo] = useSessionFilter('aderABC:modo', 'data'); // 'data' | 'mes'
   const [dataSel, setDataSel] = useSessionFilter('aderABC:data', '');
@@ -123,19 +124,10 @@ export function AdherenceABCDashboard() {
   async function carregar() {
     setLoading(true);
     try {
-      const [snapLogs, snapProd] = await Promise.all([
-        getDocs(col('inventory_logs')),
-        getDocs(col('produtos')),
-      ]);
+      // produtosMap vem do Context (cacheado). Aqui só fetchamos inventory_logs.
+      const snapLogs = await getDocs(col('inventory_logs'));
       // Soft delete: linhas com `excluido: true` somem de toda a UI.
       setLogs(filtrarLogsAtivos(snapLogs.docs.map(d => ({ id: d.id, ...d.data() }))));
-      const map = {};
-      snapProd.docs.forEach(d => {
-        const x = d.data();
-        const cod = String(x.codigo || d.id || '').trim();
-        if (cod) map[cod] = x.descricao || x.nome || '';
-      });
-      setProdutosMap(map);
     } catch (e) {
       console.error(e);
     } finally {
@@ -144,9 +136,8 @@ export function AdherenceABCDashboard() {
   }
 
   // ─── Layout do mês selecionado (pra validar edição de endereço) ───────
-  // Carrega `locations_mensal` filtrado pelo mês relevante (derivado do filtro
-  // atual). 1 query única — fica em cache local pelo IndexedDB Persistence.
-  // NÃO incluir `col` nas deps (recriado a cada render do useDb).
+  // Usa obterLocationsMensal do CatalogosContext — cache em memória por chaveMes.
+  // Primeira vez no mês = 1 query; troca pra outro mês usa cache se já visto.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const chave = modo === 'data'
@@ -157,11 +148,10 @@ export function AdherenceABCDashboard() {
     let cancelado = false;
     (async () => {
       try {
-        const snap = await getDocs(query(col('locations_mensal'), where('chaveMes', '==', chave)));
+        const docs = await obterLocationsMensal(chave);
         if (cancelado) return;
         const mapa = {};
-        snap.docs.forEach(d => {
-          const data = d.data();
+        docs.forEach(data => {
           const end   = String(data.endereco || '').trim().toUpperCase();
           const curva = String(data.curva || '').trim().toUpperCase();
           if (end && curva) mapa[end] = curva;

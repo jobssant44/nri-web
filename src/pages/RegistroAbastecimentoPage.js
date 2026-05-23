@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { collection, getDocs, updateDoc, doc, addDoc, query, orderBy, writeBatch } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 import { useUser } from '../context/UserContext';
+import { useCatalogos } from '../context/CatalogosContext';
 import { useSessionFilter } from '../hooks/useSessionFilter';
 import { NIVEIS_SUPERVISOR } from './admin/ConfigurarEmpresaPage';
 
@@ -23,6 +24,8 @@ const dataValida = str => parsearData(str) !== null;
 
 export default function RegistroAbastecimentoPage() {
   const { col, docRef, db } = useDb();
+  // produtos do Context (cache em memória)
+  const { produtos: produtosCtx } = useCatalogos();
   const { usuario } = useUser();
   const [registros, setRegistros] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -208,9 +211,9 @@ export default function RegistroAbastecimentoPage() {
       setImportando(true);
       try {
         const linhas = e.target.result.split('\n').filter(l => l.trim()).slice(1);
-        const pSnap = await getDocs(col('produtos'));
+        // produtos do Context (cache em memória, sem fetch novo)
         const prodMap = {};
-        pSnap.docs.forEach(d => { prodMap[d.data().codigo] = d.data().nome; });
+        (produtosCtx || []).forEach(p => { prodMap[p.codigo] = p.descricao || p.nome; });
 
         let count = 0;
         let erros = 0;

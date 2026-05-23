@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { doc, writeBatch, getDocs, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useDb } from '../utils/db';
+import { useCatalogos } from '../context/CatalogosContext';
 
 // Colunas usadas do relatório 01.11
 // A=0, B=1, E=4, G=6, I=8, J=9, M=12, P=15, V=21, X=23
@@ -66,6 +67,8 @@ async function lerPlanilha(file) {
 
 export default function ConfiguracoesPage() {
   const { col, db } = useDb();
+  // Pra invalidar o cache do Context após importar/limpar produtos.
+  const { invalidarProdutos } = useCatalogos();
   const inputRef = useRef();
 
   const [preview,     setPreview]     = useState(null);
@@ -124,6 +127,8 @@ export default function ConfiguracoesPage() {
       setTotalSalvo(preview.length);
       setPreview(null);
       setNomeArquivo('');
+      // Invalida o cache do Context — outras telas vão buscar a versão nova
+      invalidarProdutos();
     } catch (err) {
       setErro('Erro ao salvar: ' + err.message);
     }
@@ -160,6 +165,8 @@ export default function ConfiguracoesPage() {
       setProgresso(100);
       setProgressoMsg('Finalizado');
       setTotalSalvo(0);
+      // Invalida o cache do Context após limpeza
+      invalidarProdutos();
     } catch (err) {
       setErro('Erro ao limpar: ' + err.message);
     }

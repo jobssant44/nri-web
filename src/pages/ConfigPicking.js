@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { useDb } from '../utils/db';
+import { useCatalogos } from '../context/CatalogosContext';
 import * as XLSX from 'xlsx';
 import { useSessionFilter } from '../hooks/useSessionFilter';
 
@@ -31,6 +32,8 @@ function parseMesAno(str) {
 
 export default function ConfigPicking() {
   const { col, docRef } = useDb();
+  // produtos vêm do Context (cache em memória)
+  const { produtos: produtosCtx } = useCatalogos();
   const [mesesDisponiveis, setMesesDisponiveis] = useState([]);
   const [anoSelecionado, setAnoSelecionado] = useSessionFilter('cfgpick:ano', '');
   const [mesNumSelecionado, setMesNumSelecionado] = useSessionFilter('cfgpick:mes', '');
@@ -49,16 +52,14 @@ export default function ConfigPicking() {
   const [busca, setBusca] = useSessionFilter('cfgpick:busca', '');
   const [ordenacao, setOrdenacao] = useSessionFilter('cfgpick:ord', { coluna: 'nomeProduto', direcao: 'asc' });
 
-  useEffect(() => { carregarInicial(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { carregarInicial(); }, [produtosCtx]);
 
   async function carregarInicial() {
     setCarregando(true);
-    const [mSnap, pSnap] = await Promise.all([
-      getDocs(col('picking_config_mensal')),
-      getDocs(col('produtos')),
-    ]);
-    const prods = pSnap.docs.map(d => d.data());
-    setBaseProdutos(prods);
+    // produtos vêm do Context (cacheado em memória); só fetcha picking_config_mensal.
+    const mSnap = await getDocs(col('picking_config_mensal'));
+    setBaseProdutos(produtosCtx || []);
     const meses = mSnap.docs.map(d => d.id).sort().reverse();
     setMesesDisponiveis(meses);
     if (meses.length > 0) {
@@ -67,7 +68,7 @@ export default function ConfigPicking() {
       setAnoSelecionado(ano);
       setMesNumSelecionado(mes);
       const docData = mSnap.docs.find(d => d.id === primeiro)?.data();
-      setConfigs(enriquecer(docData?.produtos || [], prods));
+      setConfigs(enriquecer(docData?.produtos || [], produtosCtx || []));
     }
     setCarregando(false);
   }

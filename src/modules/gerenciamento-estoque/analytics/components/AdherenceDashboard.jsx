@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import { useSessionFilter } from '../../../../hooks/useSessionFilter';
 import { getDocs } from 'firebase/firestore';
 import { useDb } from '../../../../utils/db';
+import { useCatalogos } from '../../../../context/CatalogosContext';
 import { isLogExcluido } from '../../shared/inventoryLogsFilter';
 
 export function AdherenceDashboard() {
   const { col, colRevenda } = useDb();
+  const { locations: locationsCtx } = useCatalogos();
   const [loading, setLoading] = useState(false);
   const [metricas, setMetricas] = useState(null);
   const [detalhes, setDetalhes] = useState([]);
@@ -68,12 +70,10 @@ export function AdherenceDashboard() {
     setDetalhes([]);
 
     try {
-      // 1. Carregar localizações endereçadas
-      const locationsSnap = await getDocs(col('locations'));
+      // 1. Localizações endereçadas — vêm do Context (cacheadas em memória)
       const assignedLocations = new Set();
       const correctLocationByProduct = {};
-      locationsSnap.docs.forEach(d => {
-        const loc = d.data();
+      (locationsCtx || []).forEach(loc => {
         if (loc.assignedSkuId) {
           const key = `${loc.assignedSkuId}|${loc.area}|${String(loc.street)}|${String(loc.palettePosition)}`;
           assignedLocations.add(key);

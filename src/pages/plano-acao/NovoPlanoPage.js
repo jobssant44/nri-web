@@ -27,6 +27,7 @@ import {
 } from '../../modules/plano-acao/planoAcaoHelpers';
 import { monthKey } from '../../modules/gerenciamento-estoque/shared/curvaLookup';
 import { filtrarLogsAtivos } from '../../modules/gerenciamento-estoque/shared/inventoryLogsFilter';
+import { useCatalogos } from '../../context/CatalogosContext';
 
 function tsToDate(ts) {
   if (!ts) return null;
@@ -40,8 +41,9 @@ export default function NovoPlanoPage() {
   const { usuario } = useUser();
   const navigate = useNavigate();
 
+  // produtosMap e locations_mensal vêm do Context (cache em memória)
+  const { produtosMap, obterLocationsMensal } = useCatalogos();
   const [logs, setLogs]               = useState([]);
-  const [produtosMap, setProdutosMap] = useState({});
   const [loading, setLoading]         = useState(true);
   const [dataSel, setDataSel]         = useState('');
   const [salvando, setSalvando]       = useState(false);
@@ -57,19 +59,10 @@ export default function NovoPlanoPage() {
   async function carregar() {
     setLoading(true);
     try {
-      const [snapLogs, snapProd] = await Promise.all([
-        getDocs(col('inventory_logs')),
-        getDocs(col('produtos')),
-      ]);
+      // produtosMap já vem do Context, só fetcha inventory_logs aqui
+      const snapLogs = await getDocs(col('inventory_logs'));
       // Soft delete: linhas com `excluido: true` são ignoradas em planos novos.
       setLogs(filtrarLogsAtivos(snapLogs.docs.map(d => ({ id: d.id, ...d.data() }))));
-      const map = {};
-      snapProd.docs.forEach(d => {
-        const x = d.data();
-        const cod = String(x.codigo || d.id || '').trim();
-        if (cod) map[cod] = x.descricao || x.nome || '';
-      });
-      setProdutosMap(map);
     } finally {
       setLoading(false);
     }
@@ -112,8 +105,8 @@ export default function NovoPlanoPage() {
     (async () => {
       setLoadingRuas(true);
       try {
-        const snap = await getDocs(query(col('locations_mensal'), where('chaveMes', '==', chave)));
-        const docs = snap.docs.map(d => d.data());
+        // Usa cache do CatalogosContext — 1 fetch por chaveMes, depois grátis
+        const docs = await obterLocationsMensal(chave);
         if (!cancelado) setLocationsMensalDoMes(docs);
       } catch (e) {
         console.error('Falha ao carregar locations_mensal:', e);

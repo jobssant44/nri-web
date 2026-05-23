@@ -14,6 +14,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { getDocs, addDoc, query, where, Timestamp } from 'firebase/firestore';
 import { useDb } from '../../../../utils/db';
+import { useCatalogos } from '../../../../context/CatalogosContext';
 import {
   monthKey, nowYearMonth,
   carregarMapaCurvaComFallback, calcularAderenteABC,
@@ -37,6 +38,9 @@ const initialForm = {
 
 export function CountingForm({ conferente, onSuccess, onError }) {
   const { col, docRef, colRevenda, rid, stamp } = useDb();
+  // produtos e locations vêm do Context (cacheados em memória);
+  // locations_mensal carregado sob demanda via obterLocationsMensal.
+  const { produtos: produtosCtx, locations: locationsCtx, obterLocationsMensal } = useCatalogos();
   const { ano, mes } = nowYearMonth();
   const chave = monthKey(ano, mes);
 
@@ -78,46 +82,38 @@ export function CountingForm({ conferente, onSuccess, onError }) {
   };
 
   // ─── Carregar dados ────────────────────────────────────────────────────
+  // Dispara quando muda mês/revenda OU quando o Context termina de carregar
+  // produtos/locations (vêm null no primeiro render).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { carregar(); }, [ano, mes, rid]);
+  useEffect(() => { carregar(); }, [ano, mes, rid, produtosCtx, locationsCtx]);
 
   async function carregar() {
     setLoading(true);
     try {
-      const [snapLoc, snapMensal, snapProd] = await Promise.all([
-        getDocs(col('locations')),
-        getDocs(query(col('locations_mensal'), where('chaveMes', '==', chave))),
-        getDocs(col('produtos')),
-      ]);
+      // locations e produtos vêm do CatalogosContext (cache em memória).
+      // locations_mensal busca via Context (cache por chaveMes).
+      const docsMensal = await obterLocationsMensal(chave);
 
-      const listaEnd = snapLoc.docs.map(d => {
-        const data = d.data();
+      const listaEnd = (locationsCtx || []).map(data => {
         const endStr = data.endereco
-          || (data.area != null ? `${data.area}-${data.street}-${data.palettePosition}` : d.id);
+          || (data.area != null ? `${data.area}-${data.street}-${data.palettePosition}` : data.id);
         return { endereco: endStr, isActive: data.isActive !== false };
       })
         .filter(e => e.isActive)
         .sort((a, b) => a.endereco.localeCompare(b.endereco, 'pt-BR', { numeric: true }));
 
       const mapMensal = {};
-      snapMensal.docs.forEach(d => {
-        const data = d.data();
+      docsMensal.forEach(data => {
         if (data.endereco) mapMensal[data.endereco] = data;
       });
 
       setEnderecos(listaEnd);
       setMensaisDoMes(mapMensal);
-      // A coleção `produtos` (importada pelo relatório 01.11 em Configurações)
-      // usa o campo `descricao`. Mantemos `nome` no shape interno para
-      // simplicidade, mas a fonte é `descricao`. Para arquivos antigos que
-      // pudessem usar `nome`, mantemos como fallback.
-      setProdutos(snapProd.docs.map(d => {
-        const x = d.data();
-        return {
-          codigo: String(x.codigo || d.id || ''),
-          nome: x.descricao || x.nome || '',
-        };
-      }).filter(p => p.codigo));
+      // Produtos do Context — campo `descricao` (formato 01.11) com fallback pra `nome`.
+      setProdutos((produtosCtx || []).map(x => ({
+        codigo: String(x.codigo || x.id || ''),
+        nome: x.descricao || x.nome || '',
+      })).filter(p => p.codigo));
 
       const { mapa, origem } = await carregarMapaCurvaComFallback({
         docRefFn: docRef, colFn: col, colRevendaFn: colRevenda, rid, ano, mes,

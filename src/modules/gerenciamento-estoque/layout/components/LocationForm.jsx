@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { setDoc, getDocs } from 'firebase/firestore';
+import { setDoc } from 'firebase/firestore';
 import { useDb } from '../../../../utils/db';
+import { useCatalogos } from '../../../../context/CatalogosContext';
 
 export function LocationForm({ onSuccess }) {
   const { col, docRef } = useDb();
+  const { locations: locationsCtx } = useCatalogos();
   const [loading, setLoading] = useState(false);
   const [loadingAreas, setLoadingAreas] = useState(true);
   const [areas, setAreas] = useState([]);
@@ -46,28 +48,14 @@ export function LocationForm({ onSuccess }) {
     cursor: 'pointer',
   };
 
-  // Carregar áreas únicas do Firebase
+  // Áreas únicas — vêm do Context (cache em memória, sem fetch novo)
   useEffect(() => {
-    carregarAreas();
-  }, []);
-
-  async function carregarAreas() {
-    setLoadingAreas(true);
-    try {
-      const snap = await getDocs(col('locations'));
-      const areasSet = new Set();
-      snap.docs.forEach((d) => {
-        const area = d.data().area;
-        if (area) areasSet.add(area);
-      });
-      const areasArray = Array.from(areasSet).sort();
-      setAreas(areasArray);
-    } catch (error) {
-      console.error('Erro ao carregar áreas:', error);
-    } finally {
-      setLoadingAreas(false);
-    }
-  }
+    if (locationsCtx === null) { setLoadingAreas(true); return; }
+    const areasSet = new Set();
+    locationsCtx.forEach(loc => { if (loc.area) areasSet.add(loc.area); });
+    setAreas(Array.from(areasSet).sort());
+    setLoadingAreas(false);
+  }, [locationsCtx]);
 
   async function handleSubmit(e) {
     e.preventDefault();
