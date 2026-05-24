@@ -187,14 +187,14 @@ export function paraCaixas(log, produto) {
 }
 
 // Regra da casa (CBB):
-//   PN*  → PNC      (10 ruas: PN01..PN10, produtos não-conformes/segregados)
-//   P*   → Picking  (qualquer prefixo P que NÃO seja PN)
-//   resto → Estoque (A, B, C, M, ...)
+//   PNC*  → PNC      (rua chamada PNC — produtos não-conformes/segregados)
+//   P*    → Picking  (qualquer prefixo P que NÃO seja PNC)
+//   resto → Estoque  (A, B, C, M, ...)
 export function deduzirLocal(endereco) {
   if (!endereco) return null;
   const p = String(endereco).trim().toUpperCase();
-  if (p.startsWith('PN')) return 'PNC';
-  if (p.startsWith('P'))  return 'Picking';
+  if (p.startsWith('PNC')) return 'PNC';
+  if (p.startsWith('P'))   return 'Picking';
   return 'Estoque';
 }
 
@@ -224,6 +224,11 @@ export async function carregarLogsContagem({ col, dataInicio, dataFim }) {
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(l => {
       if (isLogExcluido(l)) return false; // soft delete
+      // Exclui Contagens de Estoque que foram gravadas em inventory_logs
+      // ANTES da separação de coleções (origens manual-web-estoque /
+      // manual-mobile-estoque). A partir da separação, as contagens novas
+      // vão pra `contagens_estoque` e nunca mais aparecem aqui.
+      if (l.origem === 'manual-web-estoque' || l.origem === 'manual-mobile-estoque') return false;
       const ts = tsToDate(l.timestamp);
       if (!ts) return false;
       if (dataFim && ts > dataFim) return false;
