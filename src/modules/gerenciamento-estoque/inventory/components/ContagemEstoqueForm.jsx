@@ -151,7 +151,7 @@ export function ContagemEstoqueForm({ conferente }) {
     try {
       for (const item of fila) {
         const agora = new Date();
-        await addDoc(col('inventory_logs'), {
+        await addDoc(col('contagens_estoque'), {
           // Pré-requisitos do batch
           numContagem:  parseInt(numContagem, 10),
           armazem:      armazem.codigo,

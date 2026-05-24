@@ -13,9 +13,6 @@ import { useDb } from '../../utils/db';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 import { filtrarLogsAtivos } from '../../modules/gerenciamento-estoque/shared/inventoryLogsFilter';
 
-// Origens que indicam Contagem de Estoque (web ou mobile)
-const ORIGENS_ESTOQUE = ['manual-web-estoque', 'manual-mobile-estoque'];
-
 // Converte Firestore Timestamp / Date / string ISO → Date (ou null)
 function tsToDate(ts) {
   if (!ts) return null;
@@ -64,9 +61,10 @@ export default function ContagensEstoquePage() {
       const fim    = new Date(y, m - 1, d, 23, 59, 59, 999);
 
       // Server-side: filtra por timestamp do dia (evita ler a coleção inteira).
-      // Client-side: filtra por origem (estoque) + soft delete.
+      // Lê de `contagens_estoque` (coleção dedicada). Coletas de validade ficam
+      // em `inventory_logs` — leitura separada, sem mistura.
       const snap = await getDocs(query(
-        col('inventory_logs'),
+        col('contagens_estoque'),
         where('timestamp', '>=', inicio),
         where('timestamp', '<=', fim),
         orderBy('timestamp', 'desc'),
@@ -74,9 +72,8 @@ export default function ContagensEstoquePage() {
       ));
 
       const todos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const ativos = filtrarLogsAtivos(todos);
-      const apenasEstoque = ativos.filter(l => ORIGENS_ESTOQUE.includes(l.origem));
-      setLogs(apenasEstoque);
+      // Mantém soft delete (campo `excluido: true`) caso seja adotado aqui também.
+      setLogs(filtrarLogsAtivos(todos));
     } catch (e) {
       console.error('Erro ao carregar contagens:', e);
       setErro(`Erro ao carregar: ${e.message}`);
