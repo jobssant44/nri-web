@@ -23,8 +23,8 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "emulators": "firebase emulators:start --import=./emulator-data --export-on-exit=./emulator-data",
-    "emulators:fresh": "firebase emulators:start --export-on-exit=./emulator-data",
+    "emulators": "firebase emulators:start --project app-nri-e0598 --import=./emulator-data --export-on-exit=./emulator-data",
+    "emulators:fresh": "firebase emulators:start --project app-nri-e0598 --export-on-exit=./emulator-data",
     "seed": "node scripts/seed-emulator.js",
     "reduzir-base": "node scripts/reduzir-base-emulator.js"
   },
