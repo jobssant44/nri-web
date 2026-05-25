@@ -36,6 +36,7 @@ export function resolverPZV(codigo, pzvMap, produto) {
 }
 
 export const COR = {
+  vencido:     '#94a3b8',
   segregar:    '#ef4444',
   atencao:     '#f59e0b',
   ok:          '#22c55e',
@@ -111,13 +112,15 @@ export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMedi
     pctShelfLife = Math.max(0, Math.min(100, (prazo / pzvDias) * 100));
   }
 
-  // Status agora segue regra simples por DIAS ATÉ VENCER:
-  //   prazo ≤ 30  → Segregar  (vermelho)
-  //   31-45 dias  → Atenção   (amarelo)
-  //   > 45 dias   → OK        (verde)
-  //   sem vencim. → sem-vencimento
+  // Status segue regra por DIAS ATÉ VENCER:
+  //   prazo < 0    → Vencido         (cinza)  — validade anterior à contagem
+  //   prazo ≤ 30   → Segregar        (vermelho)
+  //   31-45 dias   → Atenção         (amarelo)
+  //   > 45 dias    → OK              (verde)
+  //   sem vencim.  → sem-vencimento
   let status;
   if (prazo == null) status = 'sem-vencimento';
+  else if (prazo < 0) status = 'vencido';
   else if (prazo <= THRESHOLD_SEGREGAR_DIAS) status = 'segregar';
   else if (prazo <= THRESHOLD_ATENCAO_DIAS)  status = 'atencao';
   else status = 'ok';
@@ -129,8 +132,8 @@ export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMedi
 
   // Quant. perda
   let quantPerda = 0;
-  if (status === 'segregar') {
-    // Tudo é perda: ≤ 30 dias, não dá pra vender no prazo
+  if (status === 'vencido' || status === 'segregar') {
+    // Tudo é perda: ja venceu ou ≤ 30 dias (não da pra vender no prazo)
     quantPerda = quantidadeCx;
   } else if ((status === 'ok' || status === 'atencao') && vendaMediaCxDia > 0 && prazo != null && prazo > 0) {
     // Só perde se o estoque não der pra escoar dentro do prazo de venda (PZV - 30d)
@@ -164,6 +167,7 @@ export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMedi
     hecto: hectoUnit,
     hectoTotal,
     cobertura,
+    vendaMediaCxDia: Number(vendaMediaCxDia) || 0,
     quantPerda,
     hectoPerda,
     valorPerda: 0, // placeholder até termos R$/HL
@@ -277,28 +281,40 @@ export async function carregarPZVMap({ col }) {
 }
 
 /**
- * Carrega vendas dos últimos N dias (ex: 30) e devolve mapa codigo → cx/dia.
+ * Carrega vendas e devolve mapa codigo → cx/dia (média).
+ * Considera apenas dias com venda > 0 (divide a soma pela quantidade de
+ * dias com venda, não pela janela toda).
+ *
+ * Janela:
+ *  - Se `dataInicio` e `dataFim` (Date) forem passados, usa esse intervalo.
+ *  - Senão, usa `diasJanela` (default 30) — janela móvel terminando hoje.
+ *
  * Usa a coleção `vendas_relatorio` do módulo Reab (docs com produtos[] e
  * vendas: { 'DD/MM/AAAA': qtd }).
  */
-export async function carregarVendaMediaMap({ col, diasJanela = 30 }) {
+export async function carregarVendaMediaMap({ col, diasJanela = 30, dataInicio, dataFim }) {
   const map = {};
   try {
-    // Filtra server-side: só relatórios importados nos últimos N+30 dias.
-    // (margem extra pra cobrir importações tardias que ainda contêm vendas
-    // dentro da janela útil). Antes lia a coleção inteira a cada chamada.
-    const corte = new Date();
-    corte.setDate(corte.getDate() - (diasJanela + 30));
+    // Resolve janela efetiva
+    const hoje = new Date(); hoje.setHours(23, 59, 59, 999);
+    const fim    = dataFim    instanceof Date ? new Date(dataFim)    : hoje;
+    const inicio = dataInicio instanceof Date
+      ? new Date(dataInicio)
+      : (() => { const d = new Date(fim); d.setDate(d.getDate() - diasJanela); return d; })();
+    inicio.setHours(0, 0, 0, 0);
+    fim.setHours(23, 59, 59, 999);
+
+    // Filtra server-side: relatórios importados desde 30 dias ANTES do início
+    // da janela (margem pra cobrir importações tardias contendo essas vendas).
+    const corteImport = new Date(inicio); corteImport.setDate(corteImport.getDate() - 30);
     const snap = await getDocs(query(
       col('vendas_relatorio'),
-      where('importadoEm', '>=', corte),
+      where('importadoEm', '>=', corteImport),
       orderBy('importadoEm', 'desc'),
       limit(500),
     ));
     if (snap.empty) return map;
 
-    const hoje = new Date();
-    const limite = new Date(hoje); limite.setDate(hoje.getDate() - diasJanela);
     const acumulado = {};
     const diasComVenda = {};
 
@@ -311,7 +327,7 @@ export async function carregarVendaMediaMap({ col, diasJanela = 30 }) {
           const dataM = data.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
           if (!dataM) return;
           const dt = new Date(parseInt(dataM[3]), parseInt(dataM[2]) - 1, parseInt(dataM[1]));
-          if (dt < limite || dt > hoje) return;
+          if (dt < inicio || dt > fim) return;
           const q = Number(qtd) || 0;
           if (q <= 0) return;
           acumulado[cod] = (acumulado[cod] || 0) + q;
@@ -322,7 +338,8 @@ export async function carregarVendaMediaMap({ col, diasJanela = 30 }) {
     });
 
     Object.entries(acumulado).forEach(([cod, soma]) => {
-      const ndias = (diasComVenda[cod] && diasComVenda[cod].size) || diasJanela;
+      // Divide só pelos dias com venda (regra da casa). Mínimo 1 pra não /0.
+      const ndias = (diasComVenda[cod] && diasComVenda[cod].size) || 1;
       map[cod] = soma / Math.max(1, ndias);
     });
   } catch {

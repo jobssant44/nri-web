@@ -12,6 +12,14 @@ import {
   COR,
 } from '../../modules/gestao-idade/gestaoIdadeHelpers';
 
+// Converte string "YYYY-MM-DD" (input type=date) → Date local
+function parseISODate(s) {
+  if (!s) return undefined;
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return undefined;
+  return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+}
+
 // Definição das colunas da tabela com chave de ordenação
 const COLUNAS = [
   { key: 'productCode',  label: 'Item' },
@@ -24,7 +32,7 @@ const COLUNAS = [
   { key: 'vencimento',   label: 'Vencimento' },
   { key: 'prazo',        label: 'Prazo' },
   { key: 'status',       label: 'Status' },
-  { key: 'cobertura',    label: 'Cobertura (P.E.)' },
+  { key: 'vendaMediaCxDia', label: 'Venda Média' },
   { key: 'quantPerda',   label: 'Quant. Perda' },
   { key: 'hectoPerda',   label: 'Hecto Perda' },
   { key: 'situacao',     label: 'Situação' },
@@ -50,9 +58,13 @@ export default function GestaoFEFOPage() {
   const [filtroShelfLife60, setFiltroShelfLife60] = useSessionFilter('fefo:sl60', false);
   const [sortKey, setSortKey] = useSessionFilter('fefo:sortKey', 'prazo');
   const [sortDir, setSortDir] = useSessionFilter('fefo:sortDir', 'asc');
+  // Janela da Venda Média (default: últimos 30 dias)
+  const [vendaInicio, setVendaInicio] = useSessionFilter('fefo:vmInicio', '');
+  const [vendaFim,    setVendaFim]    = useSessionFilter('fefo:vmFim',    '');
 
+  // Recarrega quando muda a janela da Venda Média (recalcula vendaMap + cobertura)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { carregar(); }, []);
+  useEffect(() => { carregar(); }, [vendaInicio, vendaFim]);
 
   async function carregar() {
     setLoading(true);
@@ -61,7 +73,12 @@ export default function GestaoFEFOPage() {
         carregarLogsContagem({ col }),
         carregarProdutosMap({ col }),
         carregarPZVMap({ col }),
-        carregarVendaMediaMap({ col, diasJanela: 30 }),
+        carregarVendaMediaMap({
+          col,
+          dataInicio: vendaInicio ? parseISODate(vendaInicio) : undefined,
+          dataFim:    vendaFim    ? parseISODate(vendaFim)    : undefined,
+          diasJanela: 30,
+        }),
       ]);
 
       // Datas distintas de contagem (yyyy-mm-dd)
@@ -118,6 +135,7 @@ export default function GestaoFEFOPage() {
       if (filtroLocal !== 'Todos' && l.local !== filtroLocal) return false;
       if (filtroCurva !== 'Todas' && l.curva !== filtroCurva) return false;
       if (filtroEmbalagem !== 'Todas' && l.embalagem !== filtroEmbalagem) return false;
+      if (filtroStatus === 'Vencido'  && l.status !== 'vencido')  return false;
       if (filtroStatus === 'Segregar' && l.status !== 'segregar') return false;
       if (filtroStatus === 'Atenção' && l.status !== 'atencao') return false;
       if (filtroStatus === 'OK' && l.status !== 'ok') return false;
@@ -128,7 +146,7 @@ export default function GestaoFEFOPage() {
     // Ordenação
     if (!sortKey) return filtradas_;
     // Ordem semântica de status/situação (mais grave primeiro quando asc)
-    const ordemStatus  = { segregar: 0, atencao: 1, ok: 2, 'sem-vencimento': 3 };
+    const ordemStatus  = { vencido: 0, segregar: 1, atencao: 2, ok: 3, 'sem-vencimento': 4 };
     const ordemSituacao = { alto: 0, critico: 1, medio: 2, baixo: 3 };
     return [...filtradas_].sort((a, b) => {
       let va = a[sortKey];
@@ -243,6 +261,7 @@ export default function GestaoFEFOPage() {
         <FilterField label="Status">
           <select style={sInput} value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
             <option>Todos</option>
+            <option>Vencido</option>
             <option>Segregar</option>
             <option>Atenção</option>
             <option>OK</option>
@@ -257,6 +276,12 @@ export default function GestaoFEFOPage() {
             <input type="checkbox" checked={filtroShelfLife60} onChange={e => setFiltroShelfLife60(e.target.checked)} />
             Apenas
           </label>
+        </FilterField>
+        <FilterField label="Venda média de">
+          <input type="date" style={sInput} value={vendaInicio} onChange={e => setVendaInicio(e.target.value)} />
+        </FilterField>
+        <FilterField label="até">
+          <input type="date" style={sInput} value={vendaFim} onChange={e => setVendaFim(e.target.value)} />
         </FilterField>
         <BotaoClear onClick={limpar} />
       </FilterBar>
@@ -328,6 +353,9 @@ export default function GestaoFEFOPage() {
                     {l.prazo != null ? `${l.prazo}d` : '—'}
                   </td>
                   <td style={tdStyle}>
+                    {l.status === 'vencido' && (
+                      <span style={{ padding: '3px 9px', borderRadius: 6, backgroundColor: COR.vencido, color: '#fff', fontSize: 10.5, fontWeight: 700 }}>Vencido</span>
+                    )}
                     {l.status === 'segregar' && (
                       <span style={{ padding: '3px 9px', borderRadius: 6, backgroundColor: COR.segregar, color: '#fff', fontSize: 10.5, fontWeight: 700 }}>Segregar</span>
                     )}
@@ -342,7 +370,9 @@ export default function GestaoFEFOPage() {
                     )}
                   </td>
                   <td style={{ ...tdStyle, fontFamily: D.mono, textAlign: 'right' }}>
-                    {l.cobertura != null ? `${l.cobertura}d` : '—'}
+                    {l.vendaMediaCxDia > 0
+                      ? `${l.vendaMediaCxDia.toFixed(2)} cx/dia`
+                      : '—'}
                   </td>
                   <td style={{ ...tdStyle, fontFamily: D.mono, textAlign: 'right', color: l.quantPerda > 0 ? D.red : D.textMuted, fontWeight: l.quantPerda > 0 ? 700 : 400 }}>
                     {fmtNum(l.quantPerda, 0)}
