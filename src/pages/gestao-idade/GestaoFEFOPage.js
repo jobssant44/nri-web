@@ -42,7 +42,7 @@ const COLUNAS = [
 ];
 
 export default function GestaoFEFOPage() {
-  const { col, docRef, rid } = useDb();
+  const { col, docRef, colRevenda, rid } = useDb();
 
   const [linhas, setLinhas] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -84,7 +84,7 @@ export default function GestaoFEFOPage() {
         // Curva ABC ATUAL (não o snapshot do log) — regra do user em 2026-05-24.
         // Mensal do mês corrente com fallback pra curva_abc achatada (último import).
         carregarMapaCurvaComFallback({
-          docRefFn: docRef, colFn: col, rid,
+          docRefFn: docRef, colFn: col, colRevendaFn: colRevenda, rid,
           ano: hoje.getFullYear(), mes: hoje.getMonth() + 1,
         }),
       ]);
