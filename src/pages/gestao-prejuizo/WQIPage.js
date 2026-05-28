@@ -12,6 +12,7 @@ import {
   FilterBar, FilterField, Chip, Tabela, TooltipBRL, Skeleton, EmptyState, Vazio,
   BotaoVoltar, BotaoNav, BotaoClear, MiniRanking,
 } from '../../design';
+import { carregarMeta, META_PADRAO } from '../../modules/gestao-prejuizo/metasHelpers';
 
 // ─── Mapeamento de motivos ─────────────────────────────────────────────────────
 const MOTIVOS_WQI = {
@@ -341,13 +342,15 @@ function QuebraPorAjudante({ onVoltar, linhasBase, classificacoes, colaboradores
 // ─── Página principal ──────────────────────────────────────────────────────────
 
 export default function WQIPage() {
-  const { col, colRevenda } = useDb();
+  const { col, colRevenda, docRef, rid } = useDb();
   const [linhasBase,       setLinhasBase]       = useState([]);
   const [hectoBase,        setHectoBase]        = useState([]);
   const [colaboradores,    setColaboradores]    = useState([]);
   const [areas,            setAreas]            = useState([]);
   const [motivos,          setMotivos]          = useState([]);
   const [classificacoes,   setClassificacoes]   = useState({});
+  // Meta R$/HL — vem do cadastro `prejuizo_meta_wqi` (com fallback 0,50).
+  const [metaPorHL,        setMetaPorHL]        = useState(META_PADRAO.wqi);
   const [topN,             setTopN]             = useState(10);
   const [subPagina,        setSubPagina]        = useState('wqi');
   const [carregando,       setCarregando]       = useState(true);
@@ -359,14 +362,16 @@ export default function WQIPage() {
   useEffect(() => {
     async function carregar() {
       try {
-        const [snap030237, snapHecto, snapColabs, snapAreas, snapMotivos, snapClass] = await Promise.all([
+        const [snap030237, snapHecto, snapColabs, snapAreas, snapMotivos, snapClass, meta] = await Promise.all([
           getDocs(colRevenda('relatorio_030237')),
           getDocs(colRevenda('relatorio_030147hecto')),
           getDocs(col('prejuizo_colaboradores')),
           getDocs(col('prejuizo_areas')),
           getDocs(col('prejuizo_motivos')),
           getDocs(colRevenda('prejuizo_classificacoes')),
+          carregarMeta('wqi', docRef, rid),
         ]);
+        setMetaPorHL(meta);
         const todas = [];
         snap030237.docs.forEach(d => {
           (d.data().linhas || []).forEach(l => {
@@ -480,7 +485,7 @@ export default function WQIPage() {
             return hectoMap[iso] || 0;
           };
           const hecto = buscarHecto(1) || buscarHecto(2);
-          if (hecto > 0) meta = Math.round(hecto * 0.50 * 100) / 100;
+          if (hecto > 0) meta = Math.round(hecto * metaPorHL * 100) / 100;
         }
         return { dia, valor: Math.round(valor * 100) / 100, meta };
       });
@@ -540,7 +545,7 @@ export default function WQIPage() {
 
   const filtroAtivo = filtroDataInicio || filtroDataFim || filtroMotivo;
   const temDados    = linhasBase.length > 0;
-  const metaRS      = totalHecto * 0.50;
+  const metaRS      = totalHecto * metaPorHL;
   const saldo       = metaRS - totalValor;
   const dentroMeta  = saldo >= 0;
 
@@ -599,7 +604,7 @@ export default function WQIPage() {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
           <KPICardSecondary label="Hecto Entregue" valor={numFmt(totalHecto)} cor={D.blue} />
-          <KPICardSecondary label="Meta R$" valor={brl(metaRS)} cor={D.amber} sub="R$ 0,50 × Hecto" />
+          <KPICardSecondary label="Meta R$" valor={brl(metaRS)} cor={D.amber} sub={`R$ ${metaPorHL.toFixed(2).replace('.', ',')} × Hecto`} />
           <KPICardSecondary label="Perda R$/HL" valor={totalHecto > 0 ? brl(totalValor / totalHecto) : '—'} cor={D.green} sub="R$ Perda ÷ Hecto" />
         </div>
       </div>
@@ -636,7 +641,23 @@ export default function WQIPage() {
                   <BarChart data={porMotivo} layout="vertical" margin={{ top: 4, right: 78, left: 4, bottom: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={D.borderLight} />
                     <XAxis type="number" tickFormatter={v => brl(v)} tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="motivo" width={140} tick={{ fontSize: 10, fill: D.textSec, fontFamily: D.font }} axisLine={false} tickLine={false} tickFormatter={v => v.length > 20 ? v.slice(0, 20) + '…' : v} />
+                    <YAxis
+                      type="category"
+                      dataKey="motivo"
+                      width={180}
+                      axisLine={false}
+                      tickLine={false}
+                      interval={0}
+                      tick={({ x, y, payload }) => {
+                        const txt = String(payload.value || '');
+                        const trunc = txt.length > 28 ? txt.slice(0, 28) + '…' : txt;
+                        return (
+                          <text x={x - 176} y={y} dy={4} textAnchor="start" fontSize={10} fontFamily={D.font} fill={D.textSec}>
+                            {trunc}
+                          </text>
+                        );
+                      }}
+                    />
                     <Tooltip content={<TooltipBRL />} cursor={{ fill: D.blueSoft }} />
                     <Bar dataKey="valor" name="R$ Perda" fill={D.blue} radius={[0, 5, 5, 0]}
                       label={{ position: 'right', formatter: v => brl(v), fontSize: 10, fill: D.textSec, fontFamily: D.font }} />
@@ -658,7 +679,23 @@ export default function WQIPage() {
                   <BarChart data={topEmbalagem} layout="vertical" margin={{ top: 4, right: 78, left: 4, bottom: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={D.borderLight} />
                     <XAxis type="number" tickFormatter={v => brl(v)} tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="embalagem" width={130} tick={{ fontSize: 10, fill: D.textSec, fontFamily: D.font }} axisLine={false} tickLine={false} tickFormatter={v => v.length > 18 ? v.slice(0, 18) + '…' : v} />
+                    <YAxis
+                      type="category"
+                      dataKey="embalagem"
+                      width={170}
+                      axisLine={false}
+                      tickLine={false}
+                      interval={0}
+                      tick={({ x, y, payload }) => {
+                        const txt = String(payload.value || '');
+                        const trunc = txt.length > 26 ? txt.slice(0, 26) + '…' : txt;
+                        return (
+                          <text x={x - 166} y={y} dy={4} textAnchor="start" fontSize={10} fontFamily={D.font} fill={D.textSec}>
+                            {trunc}
+                          </text>
+                        );
+                      }}
+                    />
                     <Tooltip content={<TooltipBRL />} cursor={{ fill: D.redSoft }} />
                     <Bar dataKey="valor" name="R$ Perda" radius={[0, 5, 5, 0]}
                       label={{ position: 'right', formatter: v => brl(v), fontSize: 10, fill: D.textSec, fontFamily: D.font }}>
@@ -671,17 +708,21 @@ export default function WQIPage() {
 
           </div>
 
-          {/* ── R$ Perda por Mês ─────────────────────────────────────────── */}
+          {/* ── R$ Perda por Mês (mesmo padrão visual do Mês a Mês da Reposição) ─ */}
           <ChartCard titulo="R$ Perda — Mês a Mês">
             {porMes.length === 0 ? <Vazio /> : (
               <ResponsiveContainer width="100%" height={260}>
-                <LineChart data={porMes} margin={{ top: 8, right: 24, left: 8, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={D.borderLight} />
+                <BarChart data={porMes} margin={{ top: 8, right: 24, left: 8, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={D.borderLight} />
                   <XAxis dataKey="mes" tick={{ fontSize: 12, fill: D.textSec, fontFamily: D.font }} axisLine={false} tickLine={false} />
                   <YAxis tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: D.textMuted, fontFamily: D.font }} axisLine={false} tickLine={false} width={52} />
-                  <Tooltip content={<TooltipBRL />} />
-                  <Line type="linear" dataKey="valor" name="R$ Perda" stroke={D.red} strokeWidth={2} dot={{ r: 4, fill: D.red }} activeDot={{ r: 6 }} />
-                </LineChart>
+                  <Tooltip content={<TooltipBRL />} cursor={{ fill: D.amberSoft }} />
+                  <Bar dataKey="valor" name="R$ Perda" radius={[5, 5, 0, 0]} maxBarSize={48}>
+                    {porMes.map((entry, i) => (
+                      <Cell key={i} fill={D.amber} />
+                    ))}
+                  </Bar>
+                </BarChart>
               </ResponsiveContainer>
             )}
           </ChartCard>
@@ -697,7 +738,7 @@ export default function WQIPage() {
                   <Tooltip content={<TooltipBRL />} />
                   <Legend wrapperStyle={{ fontSize: 12, fontFamily: D.font, paddingTop: 8 }} />
                   <Line type="linear" dataKey="valor" name="R$ Perda" stroke={D.blue} strokeWidth={2} dot={{ r: 3, fill: D.blue }} activeDot={{ r: 6 }} />
-                  <Line type="linear" dataKey="meta" name="Meta (R$0,50 × HL anterior)" stroke={D.red} strokeWidth={2} strokeDasharray="6 3" dot={false} activeDot={{ r: 5 }} connectNulls={false} />
+                  <Line type="linear" dataKey="meta" name={`Meta (R$ ${metaPorHL.toFixed(2).replace('.', ',')} × HL anterior)`} stroke={D.red} strokeWidth={2} strokeDasharray="6 3" dot={false} activeDot={{ r: 5 }} connectNulls={false} />
                 </LineChart>
               </ResponsiveContainer>
             )}

@@ -5,7 +5,11 @@ import { useDb } from '../../utils/db';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
-const INDICADORES = ['EFC', 'EFD', 'TI', 'PC Física', 'PC Financeira'];
+// EFC tem 2 metas separadas por tipo de frota:
+//   - "EFC FF"   → Frotas Padronizadas (frota própria/contrato fixo)
+//   - "EFC Spot" → demais frotas (avulsas/terceirizadas)
+// Migração de dados antigos: chave "EFC" no Firestore é lida como "EFC FF" automaticamente.
+const INDICADORES = ['EFC FF', 'EFC Spot', 'EFD', 'TI', 'PC Física', 'PC Financeira'];
 
 const HORARIOS = (() => {
   const opts = [];
@@ -200,8 +204,20 @@ export default function MetasMPD() {
         const snap = await getDoc(docRef('metas_mpd', docId));
         if (snap.exists()) {
           const d = snap.data();
-          if (d.horarios) setHorarios(d.horarios);
-          if (d.percents) setPercents(d.percents);
+          // Back-compat: chave antiga "EFC" vira "EFC FF" automaticamente.
+          // Se já existir "EFC FF" salvo, preserva (não sobrescreve).
+          if (d.horarios) {
+            const h = { ...PADRAO_HORARIO, ...d.horarios };
+            if (d.horarios['EFC'] && !d.horarios['EFC FF']) h['EFC FF'] = d.horarios['EFC'];
+            delete h['EFC'];
+            setHorarios(h);
+          }
+          if (d.percents) {
+            const p = { ...PADRAO_PERCENT, ...d.percents };
+            if (d.percents['EFC'] != null && d.percents['EFC FF'] == null) p['EFC FF'] = d.percents['EFC'];
+            delete p['EFC'];
+            setPercents(p);
+          }
         }
       } catch {
         // sem metas salvas, usa padrão

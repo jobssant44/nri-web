@@ -351,6 +351,77 @@ export default function MinhaPaginaNova() {
 - Bar radius: `[0, 5, 5, 0]` (horizontal) or `[5, 5, 0, 0]` (vertical, top-rounded)
 - Line color: `D.red` for "real / loss", `D.blue` for "meta / reference", `strokeDasharray="6 3"` for projection/target
 
+### Interactive elements — defaults (NÃO PRECISA PEDIR)
+
+Toda página WJS já vem com esses comportamentos. Não espere o usuário pedir — sempre aplicar:
+
+#### 1. Tabelas — sempre com cabeçalho ordenável
+
+**Toda tabela criada no app DEVE ter setas de ordenação em todas as colunas.** O usuário precisa poder clicar no cabeçalho e ordenar por ordem alfabética/numérica/percentual/valor — ascendente ou descendente.
+
+Padrão de UX:
+- Seta neutra `↕` (cinza, `opacity: 0.5`) em colunas sem ordenação ativa
+- Seta `▲` (vermelho `D.red`) quando ordenada ascendente
+- Seta `▼` (vermelho `D.red`) quando ordenada descendente
+- Click cicla: `null → asc → desc → asc → desc …`
+- Trocar de coluna reseta pra `asc`
+- Cabeçalho clicável ganha `cursor: pointer` + `userSelect: 'none'` + cor mais escura quando ativo
+- Ordenação numérica automática quando os valores são números puros (ex: número de mapa); senão `localeCompare('pt-BR', { numeric: true })` pra ordenar texto com números embutidos corretamente
+
+**Referência canônica:** `TabelaEFC` em `src/pages/gestao-mpd/_FasePage.js` (subcomponente local com `useState` + `useMemo`).
+
+A tabela compartilhada `Tabela` do `src/design/components.js` também aceita esse padrão — quando criar uma tabela nova, garanta que ela tenha setas no `<thead>` desde o primeiro render.
+
+#### 2. Gráficos — sempre clicáveis, sempre como filtro
+
+**Todo gráfico do app DEVE ser clicável e funcionar como filtro.** Click em barra/fatia/ponto aplica filtro pelo valor daquela categoria; click de novo na mesma categoria remove o filtro (toggle).
+
+Padrão de UX:
+- `onClick={(payload) => toggle('campo', payload.valor)}` no `<Bar />`, `<Pie />`, `<Line />` etc.
+- `cursor: 'pointer'` no elemento (Recharts respeita via prop)
+- Cor da categoria filtrada destacada; outras opacas (`opacity: 0.35` ou similar)
+- O estado de filtro vive em `useState` no componente da página (não localStorage) e dispara re-filter de todos os outros gráficos + tabela de detalhamento via `useMemo`
+- `<Chip>` aparece na `FilterBar` mostrando o filtro ativo, com botão `×` pra limpar
+- Múltiplos gráficos no mesmo módulo são todos cruzáveis — clicar em "Motorista X" filtra também os gráficos de "Placa", "Mapa", "Cliente" etc.
+
+**Referências canônicas:**
+- `ReposicaoPage.js` — múltiplos gráficos cruzáveis (Motivo, Produto, Motorista, Ajudante, Placa, RN, Cliente)
+- `_FasePage.js` (MPD) — `toggle('motorista' | 'placa' | 'data', valor)` cascateando em todos os componentes
+
+Mesmo gráficos "informativos" (KPIs visuais, evolução mês a mês) devem ser clicáveis quando faz sentido filtrar pelo período/categoria daquele ponto. Se sinceramente não faz sentido (ex: gauge único), documente o motivo num comentário inline.
+
+#### 3. Filtros — sempre multi-select com Ctrl/Cmd+click
+
+**Todo filtro do app DEVE suportar seleção múltipla via Ctrl/Cmd+click.** Vale tanto pra cliques em gráficos quanto pra opções de lista suspensa (dropdown).
+
+Padrão de UX:
+- **Click normal** → substitui pelo valor único (toggle: re-click no mesmo valor limpa)
+- **Ctrl/Cmd+click** → adiciona/remove sem afetar os outros valores selecionados
+- Estado guardado sempre como `string[] | null` (array de valores ou vazio). Aceitar string-única só pra back-compat de chamadas antigas
+- Uma `<Chip>` por valor selecionado na FilterBar, cada uma com seu próprio botão `×` pra remover só aquele
+- Em dropdowns: dica "Segure Ctrl pra selecionar múltiplos" no topo da lista; opções selecionadas com ✓ visível
+
+**Helpers canônicos** (em `src/pages/gestao-mpd/_FasePage.js` — promover pra `src/design/utils.js` quando outro módulo precisar):
+```js
+asLista(v)                          // normaliza string | array | null → array
+toggleMulti(atual, valor, event)    // produz novo estado respeitando ctrl/meta key
+```
+
+Lógica de filtro:
+```js
+const lista = asLista(filtros.campo);
+if (lista.length > 0 && !lista.includes(l.campo)) return false;
+```
+
+Handler de gráfico (passa o event):
+```js
+onClick={(payload, e) => toggle('campo', payload.valor, e)}
+```
+
+**Dropdown nativo `<select>` NÃO suporta Ctrl+click sem virar listbox feia.** Em vez de usar `<select multiple>`, use o componente `MultiSelectDropdown` (custom com checkboxes + Ctrl+click) — implementação de referência em `_FasePage.js`.
+
+**Referência canônica:** `_FasePage.js` (MPD) — filtros `frota` (dropdown), `placa`, `motorista`, `data` (cross-filter via gráfico) — todos multi-aware desde 2026-05-27.
+
 ### Multi-page modules
 
 When a module has multiple pages (like `gestao-prejuizo/` with WQI, Troca, Reposição, Cadastros), keep them consistent:
@@ -554,6 +625,36 @@ Reusable alert display in `shared/AlertWidget.jsx`. Props:
 - `alerts` — array of `{ type, message, severity, suggestedActions }`
 - `mode` — `'compact'` (inline badges) or `'full'` (expandable cards)
 - Colors: error (#fee2e2), warning (#fef3c7), info (#dbeafe)
+
+## Gestão MPD Module
+
+Located in `src/pages/gestao-mpd/`. Pages: **EFC**, **EFD**, **TI**, **Histograma**, **Metas**, **Importar**.
+
+Relatório fonte principal: **03.11.20** (mapas de carregamento) + **01.20.01.47** (cadastro de motoristas).
+
+### Business rules — EFC (Eficiência de Carregamento)
+
+Um mapa é **EFC OK** quando o carregamento (`fase = "Carregado"`) acontece antes da meta de horário-limite na noite anterior à entrega:
+
+- `dataOperacao < dataEmissao` → **OK automático** (carregou na véspera)
+- `dataOperacao > dataEmissao` → **NOK automático** (carregou no dia seguinte)
+- `dataOperacao = dataEmissao` → **OK se** `horaOperacao ≤ metaHorario`
+
+### EFC tem 2 metas por tipo de frota
+
+Desde 2026-05-27, EFC opera com **duas metas separadas** (em `metas_mpd.horarios`):
+- **`"EFC FF"`** → Frotas **Padronizadas** (frota própria/contrato fixo). Identificadas pela coluna `Frota Cadastro` começando com `"padroniz"` (case-insensitive — cobre "Padronizada", "Padronizado", "Padronizadas").
+- **`"EFC Spot"`** → demais frotas (terceirizadas/avulsas). Identificadas como **qualquer outro valor** (incluindo vazio/null).
+
+Cada linha do relatório 03.11.20 é classificada individualmente via `isFrotaPadronizada(linha)` no `_FasePage.js`, e o cálculo de EFC usa a meta correspondente. Os gráficos consolidados (Mês a Mês, Por Dia) somam mapas FF e Spot em um único %, porque cada um já foi classificado linha-a-linha antes de entrar no agregado.
+
+**Back-compat:** o `MetasMPD.js` e o `_FasePage.js` reconhecem a chave antiga `"EFC"` no Firestore como sinônimo de `"EFC FF"`. Isso preserva metas cadastradas antes da divisão. Quando o supervisor abre `/gestao-mpd/metas` e salva, a chave `"EFC"` antiga é descartada e fica só `"EFC FF" + "EFC Spot"`.
+
+**EFD e TI continuam com 1 meta única** (sem split de frota).
+
+### Convenção de meta "não cadastrada"
+
+`metaHorario === "00:00"` (default no `PADRAO_HORARIO` do MetasMPD) é tratado como **"não cadastrada"** pelo helper `metaValida()`. Sem isso, qualquer hora positiva caía em NOK indevido. Em todos os pontos que consomem meta, use `metaValida(metaStr)` em vez de checar `!= null` direto.
 
 ## Key Patterns
 

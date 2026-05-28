@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { addDoc, getDocs, writeBatch, doc } from 'firebase/firestore';
+import * as XLSX from 'xlsx';
 import { useDb } from '../../utils/db';
 import {
   D, intFmt, numFmt,
@@ -516,6 +517,211 @@ function CardRefugo({ label, descricao, icon, id }) {
   );
 }
 
+// ─── Card 03.18.05 — Reposições (Excel/CSV) ──────────────────────────────────
+// Mapeamento explícito de colunas (letra Excel → índice 0-based):
+//   C=2 cliente · I=8 statusSolicitacao · K=10 aprovador · M=12 notaFiscal
+//   N=13 statusNF · W=22 motivo · AE=30 placa · AH=33 codMotorista
+//   AI=34 nomeMotorista · AJ=35 codAjudante · AK=36 nomeAjudante
+//   AN=39 solicitante · BG=58 opcaoReposicao
+// Nota fiscal (M) vem como "xxxxx-001" — só guardamos a parte antes do "-".
+
+const CAMPOS_031805 = [
+  { idx: 2,  campo: 'cliente',           label: 'Cliente' },
+  { idx: 8,  campo: 'statusSolicitacao', label: 'Status Solicitação' },
+  { idx: 10, campo: 'aprovador',         label: 'Aprovador' },
+  { idx: 12, campo: 'notaFiscal',        label: 'Nota Fiscal' },
+  { idx: 13, campo: 'statusNF',          label: 'Status NF' },
+  { idx: 22, campo: 'motivo',            label: 'Motivo' },
+  { idx: 30, campo: 'placa',             label: 'Placa' },
+  { idx: 33, campo: 'codMotorista',      label: 'Cód. Motorista' },
+  { idx: 34, campo: 'nomeMotorista',     label: 'Nome do Motorista' },
+  { idx: 35, campo: 'codAjudante',       label: 'Cód. Ajudante' },
+  { idx: 36, campo: 'nomeAjudante',      label: 'Nome do Ajudante' },
+  { idx: 39, campo: 'solicitante',       label: 'Solicitante' },
+  { idx: 58, campo: 'opcaoReposicao',    label: 'Opção de Reposição' },
+];
+
+function extrairLinha031805(cols) {
+  const obj = {};
+  CAMPOS_031805.forEach(({ idx, campo }) => {
+    const raw = (cols[idx] ?? '').toString().replace(/^"|"$/g, '').trim();
+    if (campo === 'notaFiscal') {
+      // "xxxxx-001" → "xxxxx" (mantém só o que vem antes do hífen)
+      obj[campo] = raw.split('-')[0].trim();
+    } else {
+      obj[campo] = raw;
+    }
+  });
+  return obj;
+}
+
+function Card031805() {
+  const { col, stamp } = useDb();
+  const [fase, setFase] = useState('idle');
+  const [mensagem, setMensagem] = useState('');
+  const [dados, setDados] = useState(null);
+  const inputRef = useRef(null);
+
+  function lerExcel(arquivo) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const wb    = XLSX.read(ev.target.result, { type: 'array' });
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const rows  = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+          // Pula a 1ª linha (cabeçalho) e extrai por índice
+          const linhas = rows.slice(1)
+            .filter(r => Array.isArray(r) && r.some(c => c !== '' && c != null))
+            .map(extrairLinha031805)
+            .filter(o => CAMPOS_031805.some(({ campo }) => o[campo]));
+          resolve(linhas);
+        } catch (e) { reject(e); }
+      };
+      reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
+      reader.readAsArrayBuffer(arquivo);
+    });
+  }
+
+  // Decodifica auto: tenta UTF-8 estrito (fatal). Se cair, usa windows-1252
+  // (superset de latin1) — formato padrão dos exports AMBEV/CSI. Evita o
+  // caractere U+FFFD que apareceu em "Jo�o".
+  function decodificarTexto(buffer) {
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    } catch {
+      return new TextDecoder('windows-1252').decode(buffer);
+    }
+  }
+
+  function lerCSV(arquivo) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const texto = decodificarTexto(ev.target.result);
+          const linhasRaw = texto.split(/\r?\n/).filter(l => l.trim());
+          if (linhasRaw.length < 2) return reject(new Error('Arquivo vazio.'));
+          const sep = linhasRaw[0].includes(';') ? ';' : ',';
+          const linhas = linhasRaw.slice(1)
+            .map(l => extrairLinha031805(splitLinha(l, sep)))
+            .filter(o => CAMPOS_031805.some(({ campo }) => o[campo]));
+          resolve(linhas);
+        } catch (e) { reject(e); }
+      };
+      reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
+      reader.readAsArrayBuffer(arquivo);
+    });
+  }
+
+  async function handleArquivo(e) {
+    const arquivo = e.target.files?.[0];
+    if (!arquivo) return;
+    const nome = arquivo.name.toLowerCase();
+    const ehExcel = nome.endsWith('.xlsx') || nome.endsWith('.xls');
+    const ehCSV   = nome.endsWith('.csv');
+    if (!ehExcel && !ehCSV) {
+      setFase('erro'); setMensagem('Selecione um arquivo .xlsx, .xls ou .csv.');
+      e.target.value = ''; return;
+    }
+    setFase('carregando'); setMensagem(''); setDados(null);
+    try {
+      const linhas = ehExcel ? await lerExcel(arquivo) : await lerCSV(arquivo);
+      if (linhas.length === 0) {
+        setFase('erro'); setMensagem('Nenhuma linha de dados encontrada.'); return;
+      }
+      setDados({ linhas, total: linhas.length, nomeArquivo: arquivo.name });
+      setFase('preview');
+    } catch (err) {
+      setFase('erro'); setMensagem(err.message || 'Erro ao processar o arquivo.');
+    }
+    e.target.value = '';
+  }
+
+  async function handleSalvar() {
+    if (!dados) return;
+    setFase('salvando'); setMensagem('');
+    try {
+      // Append igual o 03.02.37: cada import = um doc novo em `relatorio_031805`
+      await addDoc(col('relatorio_031805'), {
+        importadoEm: new Date(),
+        nomeArquivo: dados.nomeArquivo,
+        totalLinhas: dados.total,
+        linhas:      dados.linhas,
+        ...stamp(),
+      });
+      setFase('salvo');
+      setMensagem(`${intFmt(dados.total)} linha(s) salvas com sucesso.`);
+      setDados(null);
+      if (inputRef.current) inputRef.current.value = '';
+    } catch (err) {
+      setFase('erro');
+      setMensagem(`Erro ao salvar no Firebase: ${err.message}`);
+    }
+  }
+
+  function handleLimpar() {
+    setFase('idle'); setMensagem(''); setDados(null);
+    if (inputRef.current) inputRef.current.value = '';
+  }
+
+  const temPreview = fase === 'preview' || fase === 'salvando';
+
+  return (
+    <CardBase
+      icone="🔁"
+      titulo="03.18.05 — Reposições"
+      descricao={`Relatório de reposições — aceita Excel (.xlsx, .xls) ou CSV. ${CAMPOS_031805.length} campos mapeados por posição de coluna.`}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv,.xlsx,.xls"
+          id="file-031805"
+          style={{ display: 'none' }}
+          onChange={handleArquivo}
+        />
+        <label htmlFor="file-031805" style={s.btnUpload}>📂 Selecionar arquivo</label>
+
+        {temPreview && (
+          <button
+            onClick={handleSalvar}
+            disabled={fase === 'salvando'}
+            style={{ ...s.btnSalvar, opacity: fase === 'salvando' ? 0.6 : 1, cursor: fase === 'salvando' ? 'not-allowed' : 'pointer' }}
+          >
+            {fase === 'salvando' ? '⏳ Salvando...' : '💾 Salvar no Firebase'}
+          </button>
+        )}
+
+        {(temPreview || fase === 'salvo' || fase === 'erro') && (
+          <button onClick={handleLimpar} style={s.btnLimpar}>✕ Limpar</button>
+        )}
+      </div>
+
+      {fase === 'carregando' && <Alerta tipo="neutro">⏳ Processando...</Alerta>}
+      {fase === 'salvo'      && <Alerta tipo="sucesso">✅ {mensagem}</Alerta>}
+      {fase === 'erro'       && <Alerta tipo="erro">❌ {mensagem}</Alerta>}
+
+      {temPreview && dados && (
+        <Alerta tipo="info">
+          📋 Arquivo: <strong>{dados.nomeArquivo}</strong> · <strong>{intFmt(dados.total)}</strong> linha(s) prontas para salvar
+        </Alerta>
+      )}
+
+      {temPreview && dados && (
+        <TabelaPreview
+          cabecalho={CAMPOS_031805.map(c => c.label)}
+          linhas={dados.linhas.map(l => Object.fromEntries(CAMPOS_031805.map(c => [c.label, l[c.campo]])))}
+          total={dados.total}
+        />
+      )}
+
+      {fase === 'idle' && <Placeholder />}
+    </CardBase>
+  );
+}
+
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 export default function ImportarRelatoriosPrejuizo() {
@@ -524,12 +730,13 @@ export default function ImportarRelatoriosPrejuizo() {
       <PageHeader
         kicker="Gestão de Prejuízo"
         titulo="Importar Relatórios"
-        sub="Selecione os arquivos CSV para cada relatório de prejuízo."
+        sub="Selecione os arquivos para cada relatório de prejuízo."
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <Card030237 />
         <Card030147Hecto />
+        <Card031805 />
         <CardRefugo id="refugo_afericao" label="Refugo fábrica - aferição" descricao="Relatório de refugo de fábrica (aferição)" icon="🏭" />
         <CardRefugo id="refugo_cobranca" label="Refugo fábrica - cobrança" descricao="Relatório de refugo de fábrica (cobrança)" icon="💰" />
       </div>

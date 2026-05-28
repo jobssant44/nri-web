@@ -11,6 +11,7 @@ import {
   carregarLogsContagem, carregarProdutosMap, carregarPZVMap, carregarVendaMediaMap,
   COR,
 } from '../../modules/gestao-idade/gestaoIdadeHelpers';
+import { carregarMapaCurvaComFallback } from '../../modules/gerenciamento-estoque/shared/curvaLookup';
 
 // Converte string "YYYY-MM-DD" (input type=date) → Date local
 function parseISODate(s) {
@@ -41,7 +42,7 @@ const COLUNAS = [
 ];
 
 export default function GestaoFEFOPage() {
-  const { col } = useDb();
+  const { col, docRef, rid } = useDb();
 
   const [linhas, setLinhas] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -69,7 +70,8 @@ export default function GestaoFEFOPage() {
   async function carregar() {
     setLoading(true);
     try {
-      const [logs, produtosMap, pzvMap, vendaMap] = await Promise.all([
+      const hoje = new Date();
+      const [logs, produtosMap, pzvMap, vendaMap, curvaInfo] = await Promise.all([
         carregarLogsContagem({ col }),
         carregarProdutosMap({ col }),
         carregarPZVMap({ col }),
@@ -79,7 +81,14 @@ export default function GestaoFEFOPage() {
           dataFim:    vendaFim    ? parseISODate(vendaFim)    : undefined,
           diasJanela: 30,
         }),
+        // Curva ABC ATUAL (não o snapshot do log) — regra do user em 2026-05-24.
+        // Mensal do mês corrente com fallback pra curva_abc achatada (último import).
+        carregarMapaCurvaComFallback({
+          docRefFn: docRef, colFn: col, rid,
+          ano: hoje.getFullYear(), mes: hoje.getMonth() + 1,
+        }),
       ]);
+      const curvaAtualMap = curvaInfo?.mapa || {};
 
       // Datas distintas de contagem (yyyy-mm-dd)
       const setDatas = new Set();
@@ -105,7 +114,9 @@ export default function GestaoFEFOPage() {
           produto,
           pzvDias: pzv,
           vendaMediaCxDia: vMedia,
-          curvaProduto: log.productCurva,
+          // Usa curva ABC ATUAL (regra do user). Se o produto não está na
+          // curva atual, cai no snapshot do log como fallback.
+          curvaProduto: curvaAtualMap[String(log.productCode || '').trim()] || log.productCurva,
         });
         a._ts = tsToDate(log.timestamp);
         return a;

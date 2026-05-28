@@ -11,6 +11,7 @@ import NRIs from './pages/NRIs';
 import NovaNRI from './pages/NovaNRI';
 import Cadastros from './pages/Cadastros';
 import Importar from './pages/Importar';
+import ImportacoesHub from './pages/ImportacoesHub';
 import Exportar from './pages/Exportar';
 import LancarAbastecimento from './pages/LancarAbastecimento';
 import ImportarVendasPage from './pages/ImportarVendasPage';
@@ -24,6 +25,7 @@ import DashboardCurvaABC from './pages/curva-abc/DashboardCurvaABC';
 import ImportarRelatorio from './pages/curva-abc/ImportarRelatorio';
 import CountingPage from './pages/gerenciamento-estoque/CountingPage';
 import ContagensEstoquePage from './pages/gerenciamento-estoque/ContagensEstoquePage';
+import ImportarContagemRetroativaPage from './pages/gerenciamento-estoque/ImportarContagemRetroativaPage';
 import DashboardPage from './pages/gerenciamento-estoque/DashboardPage';
 import GerenciarLocalizacoesPage from './pages/gerenciamento-estoque/GerenciarLocalizacoesPage';
 import EndereçamentoPage from './pages/gerenciamento-estoque/EndereçamentoPage';
@@ -49,6 +51,8 @@ import MetasMPD from './pages/gestao-mpd/MetasMPD';
 import EFCPage from './pages/gestao-mpd/EFCPage';
 import EFDPage from './pages/gestao-mpd/EFDPage';
 import TIPage from './pages/gestao-mpd/TIPage';
+import TIFisicoPage from './pages/gestao-mpd/TIFisicoPage';
+import TIFinanceiroPage from './pages/gestao-mpd/TIFinanceiroPage';
 import HistogramaPage from './pages/gestao-mpd/HistogramaPage';
 import PainelPlanoPage from './pages/plano-acao/PainelPlanoPage';
 import NovoPlanoPage from './pages/plano-acao/NovoPlanoPage';
@@ -66,6 +70,8 @@ import ConfigurarEmpresaPage, { NIVEIS_SUPERVISOR } from './pages/admin/Configur
 import UsuariosGlobalPage from './pages/admin/UsuariosGlobalPage';
 import UsuariosEmpresaPage from './pages/UsuariosEmpresaPage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
+import ImportarVendedoresPage from './pages/cadastros/ImportarVendedoresPage';
+import ReuniaoPage from './pages/reuniao/ReuniaoPage';
 
 export default function App() {
   return (
@@ -134,6 +140,7 @@ function AppInner() {
             <Route path="/nris"                    element={<NRIs />} />
             <Route path="/nova-nri"                element={<NovaNRI />} />
             <Route path="/cadastros"               element={guardaSup ? <Navigate to={guardaSup} /> : <Cadastros />} />
+            <Route path="/importacoes"            element={guardaSup ? <Navigate to={guardaSup} /> : <ImportacoesHub />} />
             <Route path="/importar"                element={guardaSup ? <Navigate to={guardaSup} /> : <Importar />} />
             <Route path="/exportar"                element={guardaSup ? <Navigate to={guardaSup} /> : <Exportar />} />
 
@@ -157,6 +164,7 @@ function AppInner() {
             <Route path="/estoque/aderencia-abc"          element={<AderenciaABCPage />} />
             <Route path="/estoque/contar"                 element={<CountingPage />} />
             <Route path="/estoque/contagens"              element={<ContagensEstoquePage />} />
+            <Route path="/estoque/importar-retroativa"    element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarContagemRetroativaPage />} />
             <Route path="/estoque/gerenciar-localizacoes" element={guardaSup ? <Navigate to={guardaSup} /> : <GerenciarLocalizacoesPage />} />
             <Route path="/estoque/enderecamento"          element={<EndereçamentoPage />} />
             {/* <Route path="/estoque/coletas-validade"       element={<ColetasValidadePage />} /> */}
@@ -196,6 +204,12 @@ function AppInner() {
             <Route path="/gestao-idade/estoque-estoque"    element={<EstoqueEstoquePage />} />
             <Route path="/gestao-idade/importar-pzv"       element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarPZVPage />} />
 
+            {/* Cadastros — importações de catálogos compartilhados */}
+            <Route path="/cadastros/importar-vendedores"   element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarVendedoresPage />} />
+
+            {/* Reunião — gera PowerPoint consolidado */}
+            <Route path="/reuniao"                         element={<ReuniaoPage />} />
+
             {/* Portaria */}
             <Route path="/portaria"             element={<PortariaPage />} />
             <Route path="/portaria/dashboard"   element={<DashboardPortaria />} />
@@ -205,8 +219,10 @@ function AppInner() {
             {/* Gestão MDP */}
             <Route path="/gestao-mpd/efc"          element={<EFCPage />} />
             <Route path="/gestao-mpd/efd"          element={<EFDPage />} />
-            <Route path="/gestao-mpd/ti"           element={<TIPage />} />
-            <Route path="/gestao-mpd/histograma"   element={<HistogramaPage />} />
+            <Route path="/gestao-mpd/ti"             element={<TIPage />} />
+            <Route path="/gestao-mpd/ti-fisico"      element={<TIFisicoPage />} />
+            <Route path="/gestao-mpd/ti-financeiro"  element={<TIFinanceiroPage />} />
+            <Route path="/gestao-mpd/histograma"     element={<HistogramaPage />} />
             <Route path="/gestao-mpd/importar"     element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarRelatoriosMPD />} />
             <Route path="/gestao-mpd/metas"        element={guardaSup ? <Navigate to={guardaSup} /> : <MetasMPD />} />
 

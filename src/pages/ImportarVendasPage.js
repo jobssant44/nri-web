@@ -1,8 +1,26 @@
 import { useState, useEffect, useRef } from 'react';
-import { collection, getDocs, addDoc, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, getDoc, addDoc, setDoc, doc, writeBatch } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 import { invalidarCache } from '../utils/cache';
+import { calcularABC, escolherMesParaCurvaAchatada } from './curva-abc/ImportarRelatorio';
 import * as XLSX from 'xlsx';
+
+// Helpers de agregação mensal (Curva ABC)
+function mesKey(ano, mes) {
+  return `${ano}-${String(mes).padStart(2, '0')}`;
+}
+function r2(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+// Parser de data que extrai { ano, mes, dia } pra usar como chave mensal.
+// Aceita os mesmos formatos do `parsearData` desta tela.
+function parseDataYMD(valor) {
+  const str = parsearData(valor);
+  if (!str) return null;
+  const m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  return { dia: parseInt(m[1], 10), mes: parseInt(m[2], 10), ano: parseInt(m[3], 10) };
+}
 
 function parsearData(valor) {
   if (valor === null || valor === undefined || valor === '') return null;
@@ -61,12 +79,15 @@ function ordenarDatas(datas) {
 }
 
 export default function ImportarVendasPage() {
-  const { col, docRef, db } = useDb();
+  const { col, docRef, db, rid, stamp } = useDb();
   const [pickingCodes, setPickingCodes] = useState(new Set());
   const [dados, setDados] = useState(null);
   const [mensagem, setMensagem] = useState('');
   const [nomeArquivo, setNomeArquivo] = useState('');
   const [salvando, setSalvando] = useState(false);
+  // Barra de progresso: 0..100 + texto da etapa atual
+  const [progresso, setProgresso]       = useState(0);
+  const [progressoMsg, setProgressoMsg] = useState('');
   const inputRef = useRef();
 
   useEffect(() => { carregarPicking(); }, []);
@@ -103,22 +124,46 @@ export default function ImportarVendasPage() {
         const tabela = {};
         const tabelaPrepicking = {};
         const tabelaAvulsas = {};
+        // mesesData: agregação mensal pra Curva ABC (TODAS as linhas — separadas aberto/fechado)
+        //   { 'YYYY-MM': { codigo: { codigo, nome, cxTotal, cxAberto, cxFechado, diasSet } } }
+        const mesesData = {};
         let ignoradas = 0;
         let processadas = 0;
         let processadasPrepicking = 0;
 
         for (let i = 1; i < rows.length; i++) {
           const row = rows[i];
-          // Coluna AC (row[28]) = Palete Fechado — só considera "Não"
-          if (String(row[28] || '').trim() !== 'Não') { ignoradas++; continue; }
+          const paleteFechado = String(row[28] || '').trim().toLowerCase() === 'sim';
 
-          const data      = parsearData(row[1]);                                   // B
-          const codigo    = String(row[19] || '').trim();                          // T
-          const descricao = String(row[20] || '').trim();                          // U
+          const data      = parsearData(row[1]);                                        // B
+          const ymd       = parseDataYMD(row[1]);                                       // { ano, mes, dia }
+          const codigo    = String(row[19] || '').trim();                               // T
+          const descricao = String(row[20] || '').trim();                               // U
           const qtd       = parseFloat(String(row[26] || '0').replace(',', '.')) || 0;  // AA
-          const avulsas   = parseInt(String(row[27] || '0').replace(',', '.')) || 0;    // AB
+          const avulsas   = parseInt(String(row[27] || '0').replace(',', '.'))   || 0;  // AB
 
           if (!data || !codigo) continue;
+
+          // ── Agregação mensal pra Curva ABC (TODAS as linhas com qtd > 0) ──
+          if (ymd && qtd > 0 && descricao) {
+            const chave = mesKey(ymd.ano, ymd.mes);
+            if (!mesesData[chave]) mesesData[chave] = {};
+            if (!mesesData[chave][codigo]) {
+              mesesData[chave][codigo] = {
+                codigo, nome: descricao,
+                cxTotal: 0, cxAberto: 0, cxFechado: 0,
+                diasSet: new Set(),
+              };
+            }
+            const prod = mesesData[chave][codigo];
+            prod.cxTotal += qtd;
+            if (paleteFechado) prod.cxFechado += qtd;
+            else               prod.cxAberto  += qtd;
+            prod.diasSet.add(`${ymd.ano}-${String(ymd.mes).padStart(2,'0')}-${String(ymd.dia).padStart(2,'0')}`);
+          }
+
+          // ── Vendas detalhadas (só palete aberto = "Não") ──
+          if (paleteFechado) { ignoradas++; continue; }
 
           // Unidades avulsas — todos os produtos
           if (avulsas > 0) {
@@ -135,6 +180,30 @@ export default function ImportarVendasPage() {
             tabelaPrepicking[codigo].vendas[data] = (tabelaPrepicking[codigo].vendas[data] || 0) + qtd;
             processadasPrepicking++;
           }
+        }
+
+        // Transforma mesesData em estrutura final pra Curva ABC
+        const curvaABCMensal = {};
+        for (const [chave, prodMap] of Object.entries(mesesData)) {
+          const [anoStr, mesStr] = chave.split('-');
+          const produtos = Object.values(prodMap)
+            .map(p => ({
+              codigo:        p.codigo,
+              nome:          p.nome,
+              cxTotal:       r2(p.cxTotal),
+              cxAberto:      r2(p.cxAberto),
+              cxFechado:     r2(p.cxFechado),
+              diasComVendas: p.diasSet.size,
+            }))
+            .filter(p => p.cxTotal > 0);
+          curvaABCMensal[chave] = {
+            ano:           parseInt(anoStr,  10),
+            mes:           parseInt(mesStr,  10),
+            produtos,
+            totalProdutos: produtos.length,
+            totalCx:       r2(produtos.reduce((s, p) => s + p.cxTotal, 0)),
+            importadoEm:   new Date().toISOString(),
+          };
         }
 
         if (processadas === 0 && processadasPrepicking === 0) {
@@ -166,12 +235,14 @@ export default function ImportarVendasPage() {
           .map(([codigo, v]) => ({ codigo, descricao: v.descricao, avulsas: v.avulsas }))
           .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
 
-        setDados({ produtos, datas, produtosPrepicking, datasPrepicking, produtosAvulsas, datasAvulsas });
+        setDados({ produtos, datas, produtosPrepicking, datasPrepicking, produtosAvulsas, datasAvulsas, curvaABCMensal });
 
+        const mesesABC = Object.keys(curvaABCMensal).sort();
         setMensagem(
           `✅ Picking: ${processadas} linha(s) · ${produtos.length} produto(s) · ${datas.length} dia(s)` +
           (processadasPrepicking > 0 ? ` | Pré-Picking: ${produtosPrepicking.length} produto(s)` : '') +
           (produtosAvulsas.length > 0 ? ` | Avulsas: ${produtosAvulsas.length} produto(s)` : '') +
+          (mesesABC.length > 0 ? ` | Curva ABC: ${mesesABC.length} mês/meses (${mesesABC.join(', ')})` : '') +
           (ignoradas > 0 ? ` · ${ignoradas} linha(s) ignorada(s) (palete fechado)` : '')
         );
       } catch (err) {
@@ -186,7 +257,12 @@ export default function ImportarVendasPage() {
     if (!dados) return;
     setSalvando(true);
     setMensagem('');
+    setProgresso(0);
+    setProgressoMsg('Iniciando...');
     try {
+      // ── 1. Vendas (3 coleções do módulo Reab) ──
+      setProgresso(5);
+      setProgressoMsg('Salvando vendas (Picking + Pré-picking + Avulsas)...');
       const promises = [];
       if (dados.produtos.length > 0) {
         promises.push(addDoc(col('vendas_relatorio'), {
@@ -213,9 +289,72 @@ export default function ImportarVendasPage() {
         }));
       }
       await Promise.all(promises);
+      setProgresso(25);
+
+      // ── 2. Curva ABC (mesmo arquivo, agregação mensal) ──
+      const curvaABCMensal = dados.curvaABCMensal || {};
+      const chavesMes = Object.keys(curvaABCMensal).sort();
+      if (chavesMes.length > 0) {
+        // 2a. Salva um doc por mês — distribui progresso de 25% até 65%
+        for (let idx = 0; idx < chavesMes.length; idx++) {
+          const k = chavesMes[idx];
+          setProgressoMsg(`Salvando Curva ABC mensal: ${k} (${idx + 1}/${chavesMes.length})...`);
+          await setDoc(docRef('curva_abc_mensal', `${rid || 'global'}_${k}`), {
+            ...curvaABCMensal[k],
+            ...stamp(),
+          });
+          setProgresso(25 + Math.round(((idx + 1) / chavesMes.length) * 40));
+        }
+        // 2b. Atualiza índice de meses
+        setProgressoMsg('Atualizando índice de meses...');
+        const metaDocId  = rid || 'global';
+        const snapIdx    = await getDoc(docRef('curva_abc_meta', metaDocId));
+        const existentes = snapIdx.exists() ? (snapIdx.data().meses || []) : [];
+        await setDoc(docRef('curva_abc_meta', metaDocId),
+          { meses: [...new Set([...existentes, ...chavesMes])].sort() });
+        setProgresso(70);
+        // 2c. Atualiza curva_abc (achatado, usado pelo módulo NRI).
+        //     Regra do user: prioridade mês atual → mês anterior → mais recente
+        //     importado (fallback). Pareto sobre cxTotal.
+        setProgressoMsg('Calculando Curva ABC achatada (Pareto)...');
+        const mesEscolhido = escolherMesParaCurvaAchatada(curvaABCMensal);
+        const curvaPorCx = mesEscolhido
+          ? calcularABC(curvaABCMensal[mesEscolhido].produtos, 'cxTotal')
+          : [];
+        setProgresso(75);
+        // Limpa curva_abc antiga e regrava
+        setProgressoMsg('Limpando curva_abc anterior...');
+        const snapAntigo = await getDocs(col('curva_abc'));
+        const totalBatchesDelete = Math.ceil(snapAntigo.docs.length / 450) || 1;
+        let batchIdxDel = 0;
+        for (let i = 0; i < snapAntigo.docs.length; i += 450) {
+          const batch = writeBatch(db);
+          snapAntigo.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
+          await batch.commit();
+          batchIdxDel++;
+          setProgresso(75 + Math.round((batchIdxDel / totalBatchesDelete) * 10));
+        }
+        setProgresso(85);
+        setProgressoMsg(`Regravando ${curvaPorCx.length} produto(s) na curva_abc...`);
+        const totalBatchesWrite = Math.ceil(curvaPorCx.length / 450) || 1;
+        let batchIdxWr = 0;
+        for (let i = 0; i < curvaPorCx.length; i += 450) {
+          const batch = writeBatch(db);
+          curvaPorCx.slice(i, i + 450).forEach(p =>
+            batch.set(doc(col('curva_abc')), { codigo: p.codigo, curva: p._curva, ...stamp() })
+          );
+          await batch.commit();
+          batchIdxWr++;
+          setProgresso(85 + Math.round((batchIdxWr / totalBatchesWrite) * 14));
+        }
+      }
+
       // Invalida todos os caches relacionados para forçar releitura do Firebase
+      setProgressoMsg('Invalidando cache local...');
       invalidarCache('vendasMap', 'vendasAllMap', 'prepicking:vendasMap', 'prepicking:avulsasMap');
-      setMensagem('✅ Relatório salvo com sucesso!');
+      setProgresso(100);
+      setProgressoMsg('Concluído!');
+      setMensagem(`✅ Salvo: Vendas + Curva ABC (${chavesMes.length} mês/meses)`);
       setDados(null);
       setNomeArquivo('');
       if (inputRef.current) inputRef.current.value = '';
@@ -223,6 +362,8 @@ export default function ImportarVendasPage() {
       setMensagem(`❌ Erro ao salvar: ${err.message}`);
     } finally {
       setSalvando(false);
+      // Limpa a barra após um instante pra dar feedback visual de "100%"
+      setTimeout(() => { setProgresso(0); setProgressoMsg(''); }, 800);
     }
   }
 
@@ -263,10 +404,7 @@ export default function ImportarVendasPage() {
 
   return (
     <div style={{ maxWidth: '100%', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
-      <h1 style={{ color: '#E31837', marginBottom: '4px' }}>📥 Importar Vendas (03.02.36.08)</h1>
-      <p style={{ color: '#666', marginBottom: '20px', fontSize: '13px' }}>
-        Importa o relatório de vendas. Apenas produtos cadastrados no Picking Config são considerados. Paletes fechados são ignorados.
-      </p>
+      <h1 style={{ color: '#E31837', marginBottom: '4px' }}>📥 Importar 03.02.36.08</h1>
 
       <div style={cardStyle}>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -295,6 +433,25 @@ export default function ImportarVendasPage() {
             </>
           )}
         </div>
+
+        {salvando && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                {progressoMsg || 'Processando...'}
+              </span>
+              <span style={{ fontSize: 11, color: '#666', fontFamily: 'monospace' }}>{progresso}%</span>
+            </div>
+            <div style={{ height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                width: `${progresso}%`,
+                background: 'linear-gradient(90deg, #E31837 0%, #1D5A9E 100%)',
+                transition: 'width 0.3s ease',
+              }} />
+            </div>
+          </div>
+        )}
 
         {mensagem && (
           <div style={{

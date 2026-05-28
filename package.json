@@ -9,6 +9,7 @@
     "@testing-library/user-event": "^13.5.0",
     "firebase": "^12.12.0",
     "lucide-react": "^1.14.0",
+    "pptxgenjs": "^3.12.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.14.1",
@@ -25,6 +26,7 @@
     "eject": "react-scripts eject",
     "emulators": "firebase emulators:start --project app-nri-e0598 --import=./emulator-data --export-on-exit=./emulator-data",
     "emulators:fresh": "firebase emulators:start --project app-nri-e0598 --export-on-exit=./emulator-data",
+    "emulators:save": "firebase emulators:export ./emulator-data --project app-nri-e0598 --force",
     "seed": "node scripts/seed-emulator.js",
     "reduzir-base": "node scripts/reduzir-base-emulator.js"
   },

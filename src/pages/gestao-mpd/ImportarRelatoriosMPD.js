@@ -4,42 +4,91 @@ import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
 import * as XLSX from 'xlsx';
 
-// ─── Campos do relatório 03.11.20 (índice 0-based) ───────────────────────────
+// ─── Campos do relatório 03.11.20 ────────────────────────────────────────────
+// Mapeamento por NOME do cabeçalho (case-insensitive) em vez de índice fixo.
+// Mais robusto: se a AMBEV adicionar/remover colunas no relatório, o import
+// continua funcionando porque resolve via header.
 const CAMPOS_031120 = [
-  { idx: 0,  campo: 'mapa',           label: 'Mapa',            isDate: false },
-  { idx: 1,  campo: 'fase',           label: 'Fase',            isDate: false },
-  { idx: 2,  campo: 'revenda',        label: 'Revenda',         isDate: false },
-  { idx: 3,  campo: 'placa',          label: 'Placa',           isDate: false },
-  { idx: 4,  campo: 'frotaCadastrada',label: 'Frota Cadastrada',isDate: false },
-  { idx: 7,  campo: 'dataEmissao',    label: 'Data Emissão',    isDate: true  },
-  { idx: 8,  campo: 'dataOperacao',   label: 'Data Operação',   isDate: true  },
-  { idx: 9,  campo: 'horaOperacao',   label: 'Hora',            isDate: false },
-  { idx: 10, campo: 'usuario',        label: 'Usuário',         isDate: false },
-  { idx: 15, campo: 'motorista',      label: 'Motorista',       isDate: false },
+  { nome: 'Mapa',            campo: 'mapa',            label: 'Mapa',            isDate: false },
+  { nome: 'Fase',            campo: 'fase',            label: 'Fase',            isDate: false },
+  { nome: 'Veiculo',         campo: 'veiculo',         label: 'Veículo',         isDate: false },
+  { nome: 'Placa',           campo: 'placa',           label: 'Placa',           isDate: false },
+  { nome: 'Frota Cadastro',  campo: 'frotaCadastrada', label: 'Frota Cadastrada',isDate: false },
+  { nome: 'Emissao',         campo: 'dataEmissao',     label: 'Data Emissão',    isDate: true  },
+  { nome: 'DtOper',          campo: 'dataOperacao',    label: 'Data Operação',   isDate: true  },
+  { nome: 'HrOper',          campo: 'horaOperacao',    label: 'Hora',            isDate: false },
+  { nome: 'Usuario',         campo: 'usuario',         label: 'Usuário',         isDate: false },
+  { nome: 'Motorista',       campo: 'motorista',       label: 'Motorista',       isDate: false },
 ];
 
-// ─── Campos do relatório 01.20.01.47 (índice 0-based) ────────────────────────
+// ─── Campos do relatório 01.20.01.47 ──────────────────────────────────────────
 const CAMPOS_MOTORISTAS = [
-  { idx: 0, campo: 'codigoMotorista', label: 'Código' },
-  { idx: 1, campo: 'nomeMotorista',   label: 'Nome' },
+  { nome: 'Código', campo: 'codigoMotorista', label: 'Código' },
+  { nome: 'Nome',   campo: 'nomeMotorista',   label: 'Nome' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function celulaParaString(val, isDate = false) {
-  if (val === null || val === undefined) return '';
-  if (val instanceof Date) {
-    const d = val;
-    return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
-  }
-  // Serial numérico do Excel para campos de data (sem cellDates: true)
-  if (isDate && typeof val === 'number' && val > 1) {
-    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
-    if (!isNaN(d.getTime())) {
-      return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+// Formata Date object em DD/MM/AAAA (usando UTC pra evitar deslocamento de timezone)
+function dataParaBR(d) {
+  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+}
+
+// Normaliza string de data pra sempre devolver DD/MM/AAAA, aceitando:
+//   - "AAAA-MM-DD"      (ISO — comum em CSVs novos da AMBEV)
+//   - "AAAA/MM/DD"      (ISO com barra)
+//   - "DD/MM/AAAA"      (BR)
+//   - "DD-MM-AAAA"      (BR com hífen)
+//   - "MM/DD/AAAA"      (US — quando exportado de locale en-US)
+//
+// Estratégia: se primeiro ou segundo número > 12 → desambígua sozinho;
+// se ambos ≤ 12 → assume DD/MM (BR é o padrão do sistema).
+function normalizarStringData(s) {
+  if (!s) return s;
+  const str = String(s).trim();
+
+  // ── 1) ISO: AAAA-MM-DD ou AAAA/MM/DD (com hora opcional depois)
+  const iso = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (iso) {
+    const ano = iso[1];
+    const mes = String(parseInt(iso[2], 10)).padStart(2, '0');
+    const dia = String(parseInt(iso[3], 10)).padStart(2, '0');
+    if (+mes >= 1 && +mes <= 12 && +dia >= 1 && +dia <= 31) {
+      return `${dia}/${mes}/${ano}`;
     }
   }
-  return String(val).trim();
+
+  // ── 2) PP/SS/AAAA (com barra ou hífen)
+  const m = str.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})$/);
+  if (m) {
+    const p1 = parseInt(m[1], 10);
+    const p2 = parseInt(m[2], 10);
+    const ano = m[3];
+    let dia, mes;
+    if (p1 > 12)      { dia = p1; mes = p2; }   // DD/MM (BR)
+    else if (p2 > 12) { dia = p2; mes = p1; }   // MM/DD (US) — normaliza
+    else              { dia = p1; mes = p2; }   // ambíguo → DD/MM
+    if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+      return `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${ano}`;
+    }
+  }
+
+  return str; // não reconheceu → retorna como veio (parseDataBR no FasePage ainda tenta)
+}
+
+function celulaParaString(val, isDate = false) {
+  if (val === null || val === undefined) return '';
+  // Date object (caso cellDates: true em algum momento)
+  if (val instanceof Date) return dataParaBR(val);
+  // Serial numérico do Excel
+  if (isDate && typeof val === 'number' && val > 1) {
+    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+    if (!isNaN(d.getTime())) return dataParaBR(d);
+  }
+  const str = String(val).trim();
+  // String de data — normaliza MM/DD → DD/MM se necessário
+  if (isDate) return normalizarStringData(str);
+  return str;
 }
 
 function parsearArquivo(file) {
@@ -61,14 +110,49 @@ function parsearArquivo(file) {
   });
 }
 
+// Normaliza string pra comparação de cabeçalho: lowercase, remove espaços
+// extras, acentos e caracteres especiais. Assim "Data Emissão" casa com
+// "data emissao", "DATA EMISSAO" etc.
+function normalizarHeader(s) {
+  return String(s ?? '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove acentos
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function extrairLinhas(rows, campos, pularHeader, filtroPlaca) {
+  if (rows.length === 0) return [];
+
+  // Resolve índice de cada campo pelo NOME na primeira linha (cabeçalho).
+  // Se algum campo não for encontrado no cabeçalho, fica como -1 (ignorado).
+  const cabecalho = (rows[0] || []).map(normalizarHeader);
+  const idxPorCampo = {};
+  const camposNaoEncontrados = [];
+  campos.forEach(({ nome, campo }) => {
+    const idx = cabecalho.indexOf(normalizarHeader(nome));
+    idxPorCampo[campo] = idx;
+    if (idx < 0) camposNaoEncontrados.push(nome);
+  });
+  if (camposNaoEncontrados.length > 0) {
+    // Avisa no console pra ajudar debug — não bloqueia o import.
+    console.warn(
+      '[Importar 03.11.20] Colunas não encontradas no cabeçalho:',
+      camposNaoEncontrados.join(', '),
+      '\nCabeçalho lido:',
+      cabecalho.filter(Boolean).join(' | ')
+    );
+  }
+
   const inicio = pularHeader ? 1 : 0;
   const linhas = [];
   for (let i = inicio; i < rows.length; i++) {
     const row = rows[i];
+    if (!row) continue;
     const obj = {};
-    campos.forEach(({ idx, campo, isDate }) => {
-      obj[campo] = celulaParaString(row[idx], isDate);
+    campos.forEach(({ campo, isDate }) => {
+      const idx = idxPorCampo[campo];
+      obj[campo] = idx >= 0 ? celulaParaString(row[idx], isDate) : '';
     });
     const vazia = campos.every(({ campo }) => !obj[campo]);
     if (vazia) continue;

@@ -1,18 +1,21 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
+  LineChart, Line, ReferenceLine, Brush,
 } from 'recharts';
 
-// ─── Navegação entre as 4 abas ───────────────────────────────────────────────
-const PAGES = [
-  { label: 'EFC',        path: '/gestao-mpd/efc' },
-  { label: 'EFD',        path: '/gestao-mpd/efd' },
-  { label: 'TI',         path: '/gestao-mpd/ti' },
-  { label: 'Histograma', path: '/gestao-mpd/histograma' },
+// ─── Navegação entre as abas MPD ─────────────────────────────────────────────
+export const PAGES = [
+  { label: 'EFC',            path: '/gestao-mpd/efc' },
+  { label: 'EFD',            path: '/gestao-mpd/efd' },
+  { label: 'TI',             path: '/gestao-mpd/ti' },
+  { label: 'TI Físico',      path: '/gestao-mpd/ti-fisico' },
+  { label: 'TI Financeiro',  path: '/gestao-mpd/ti-financeiro' },
+  { label: 'Histograma',     path: '/gestao-mpd/histograma' },
 ];
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -77,6 +80,52 @@ function horaParaMinutos(h) {
   return null;
 }
 
+// Classifica a linha por tipo de frota:
+//   - FF (Frota Padronizada) → coluna "Frota Cadastro" começa com "padroniz"
+//     (cobre "Padronizada", "Padronizado", "Padronizadas", etc.)
+//   - Spot (demais) → qualquer outro valor, inclusive vazio/null
+// Usado pelo cálculo de EFC pra escolher entre meta-EFC-FF e meta-EFC-Spot.
+function isFrotaPadronizada(linha) {
+  const f = String(linha?.frotaCadastrada ?? '').trim().toLowerCase();
+  return f.startsWith('padroniz');
+}
+
+// Meta de horário é considerada "não cadastrada" quando vazia ou "00:00"
+// (default do MetasMPD). Sem esse tratamento, qualquer hora positiva ficava
+// NOK indevidamente quando o supervisor ainda não setou a meta.
+function metaValida(metaStr) {
+  if (!metaStr) return false;
+  const s = String(metaStr).trim();
+  return s !== '' && s !== '00:00';
+}
+
+// ─── Filtros multi-select (padrão WJS) ────────────────────────────────────────
+// Todos os filtros (dropdowns + cross-filter dos gráficos) suportam múltiplos
+// valores. Estado é guardado como array | null | '' (compatível com filtro vazio).
+
+// Normaliza qualquer formato de filtro pra array — aceita string (single legado),
+// null/'' (vazio) ou array (multi).
+function asLista(v) {
+  if (v == null || v === '') return [];
+  return Array.isArray(v) ? v : [v];
+}
+
+// Decide o novo valor do filtro quando o user clica num gráfico/linha.
+//   - Sem Ctrl/Cmd → substitui (toggle único): se já era o único valor, limpa.
+//   - Com Ctrl/Cmd → adiciona ao set; se já estava, remove (toggle item).
+// Retorna `null` quando a lista fica vazia (mantém shape compatível).
+function toggleMulti(atual, valor, event) {
+  const lista = asLista(atual);
+  const isMulti = !!(event && (event.ctrlKey || event.metaKey));
+  if (isMulti) {
+    const idx = lista.indexOf(valor);
+    const nova = idx >= 0 ? lista.filter(v => v !== valor) : [...lista, valor];
+    return nova.length === 0 ? null : nova;
+  }
+  if (lista.length === 1 && lista[0] === valor) return null; // re-click → limpa
+  return [valor];
+}
+
 // eslint-disable-next-line no-unused-vars
 function parseNum(val) {
   if (typeof val === 'number') return isNaN(val) ? 0 : val;
@@ -97,13 +146,62 @@ function parseNum(val) {
   return isNaN(n) ? 0 : n;
 }
 
+// Parser de data robusto — aceita:
+//   "DD/MM/AAAA" (padrão BR)
+//   "MM/DD/AAAA" (padrão US, comum em Excel exportado em locale en-US)
+//   "AAAA-MM-DD" (ISO)
+//   serial numérico do Excel
+//
+// Estratégia de desambiguação (p1/p2/AAAA):
+//   - p1 > 12 → DD/MM inequívoco (dia não pode ser mês)
+//   - p2 > 12 → MM/DD inequívoco
+//   - ambos ≤ 12 → ambíguo, assume DD/MM (sistema é BR)
 function parseDataBR(str) {
   if (!str) return null;
+  if (str instanceof Date) return isNaN(str.getTime()) ? null : str;
   const s = String(str).trim();
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) return new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]));
+  if (!s) return null;
+
+  // ISO AAAA-MM-DD
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const ano = parseInt(iso[1], 10), mes = parseInt(iso[2], 10), dia = parseInt(iso[3], 10);
+    if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) return new Date(ano, mes - 1, dia);
+  }
+
+  // PP/SS/AAAA (com barra ou traço)
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) {
+    const p1 = parseInt(m[1], 10);
+    const p2 = parseInt(m[2], 10);
+    const ano = parseInt(m[3], 10);
+    let dia, mes;
+    if (p1 > 12)      { dia = p1; mes = p2; }   // DD/MM (BR)
+    else if (p2 > 12) { dia = p2; mes = p1; }   // MM/DD (US)
+    else              { dia = p1; mes = p2; }   // ambíguo → DD/MM (padrão BR)
+    if (mes < 1 || mes > 12 || dia < 1 || dia > 31) return null;
+    return new Date(ano, mes - 1, dia);
+  }
+
+  // PP/SS/AA (ano com 2 dígitos — converte 50+ pra 19XX, < 50 pra 20XX)
+  const curto = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
+  if (curto) {
+    const p1 = parseInt(curto[1], 10);
+    const p2 = parseInt(curto[2], 10);
+    const ano2 = parseInt(curto[3], 10);
+    const ano  = ano2 < 50 ? 2000 + ano2 : 1900 + ano2;
+    let dia, mes;
+    if (p1 > 12)      { dia = p1; mes = p2; }
+    else if (p2 > 12) { dia = p2; mes = p1; }
+    else              { dia = p1; mes = p2; }
+    if (mes < 1 || mes > 12 || dia < 1 || dia > 31) return null;
+    return new Date(ano, mes - 1, dia);
+  }
+
+  // Serial Excel (n.º grande de dias desde 1900)
   const n = parseFloat(s);
   if (!isNaN(n) && n > 1000) return new Date(Math.round((n - 25569) * 86400 * 1000));
+
   return null;
 }
 
@@ -121,27 +219,31 @@ function toMesAno(str) {
 }
 
 // ─── Filtro cruzado ───────────────────────────────────────────────────────────
-// Filtros globais (revenda, frota, período): sempre aplicados em todos os charts.
+// Filtros globais (frota, período): sempre aplicados em todos os charts.
 // Filtros de cross-filter (data, motorista, placa): excluídos no chart proprietário.
+// TODOS os filtros são multi-aware: aceitam string única (legado), array (multi) ou null.
 function filtrarLinhas(linhas, filtros, excluir = null) {
+  const frotas     = asLista(filtros.frota);
+  const datas      = asLista(filtros.data);
+  const motoristas = asLista(filtros.motorista);
+  const placas     = asLista(filtros.placa);
   return linhas.filter(l => {
     // Globais — aplicados sempre
-    if (filtros.revenda && l.revenda          !== filtros.revenda) return false;
-    if (filtros.frota   && l.frotaCadastrada  !== filtros.frota)   return false;
+    if (frotas.length > 0 && !frotas.includes(l.frotaCadastrada)) return false;
     if (filtros.dataInicio || filtros.dataFim) {
       const iso = toISO(l.dataEmissao);
       if (filtros.dataInicio && (!iso || iso < filtros.dataInicio)) return false;
       if (filtros.dataFim    && (!iso || iso > filtros.dataFim))    return false;
     }
     // Cross-filter — ignorado no chart da própria dimensão
-    if (excluir !== 'data'      && filtros.data      && toISO(l.dataEmissao) !== filtros.data)      return false;
-    if (excluir !== 'motorista' && filtros.motorista && l.motorista           !== filtros.motorista) return false;
-    if (excluir !== 'placa'     && filtros.placa     && l.placa               !== filtros.placa)     return false;
+    if (excluir !== 'data'      && datas.length      > 0 && !datas.includes(toISO(l.dataEmissao))) return false;
+    if (excluir !== 'motorista' && motoristas.length > 0 && !motoristas.includes(l.motorista))     return false;
+    if (excluir !== 'placa'     && placas.length     > 0 && !placas.includes(l.placa))             return false;
     return true;
   });
 }
 
-const FILTROS_VAZIOS = { data: null, motorista: null, placa: null, revenda: '', frota: '', dataInicio: '', dataFim: '' };
+const FILTROS_VAZIOS = { data: null, motorista: null, placa: null, frota: null, dataInicio: '', dataFim: '' };
 
 // ─── Agregadores ──────────────────────────────────────────────────────────────
 function agruparPorData(linhas) {
@@ -155,6 +257,126 @@ function agruparPorData(linhas) {
   return [...mapa.values()].sort((a, b) => a.iso.localeCompare(b.iso));
 }
 
+// ─── EFC ──────────────────────────────────────────────────────────────────────
+// Todas as funções agruparEFC* recebem `getMeta(linha) => 'HH:MM'`
+// que devolve a meta de horário a usar pra AQUELA linha (FF vs Spot vs único).
+// Isso permite metas diferentes por tipo de frota no mesmo agrupamento sem
+// duplicar lógica. Se a meta retornada for "00:00"/vazia, a linha não pode
+// ser avaliada no mesmo dia (vira NOK só se isoOp > isoEm).
+
+// Decide se o mapa é OK com base nas datas/hora + meta-da-linha. Centraliza
+// a regra pra não duplicar em cada agrupar.
+//
+// Regras por fase:
+//   EFC (carregamento, atividade da véspera da entrega):
+//     - dataOp < dataEm           → OK auto (carregou antes do dia da entrega)
+//     - dataOp > dataEm           → NOK auto (atrasou o carregamento)
+//     - dataOp = dataEm           → OK se horaOp ≤ meta (FF ou Spot conforme frota)
+//
+//   EFD (descarga, acontece após o caminhão voltar da rota):
+//     - Compara APENAS horaOp ≤ meta, ignora diferença de data.
+//     - Motivo: dataOp é tipicamente > dataEm (caminhão sai no dia da emissão,
+//       volta horas depois — a operação de descarga é regida pelo horário de
+//       retorno ao CD, não pela data calendário.
+//     - Sem meta cadastrada → NOK (força o supervisor a configurar).
+//
+//   Demais fases (ex.: TI) → mesma regra do EFC.
+function ehMapaOK(linha, getMeta, fase) {
+  const isoOp = toISO(linha.dataOperacao);
+  const isoEm = toISO(linha.dataEmissao);
+  if (!isoOp || !isoEm) return false;
+
+  // EFD: só hora vs meta, qualquer data conta.
+  if (fase === 'EFD') {
+    const metaStr = getMeta(linha);
+    if (!metaValida(metaStr)) return false;
+    const metaMin = horaParaMinutos(metaStr);
+    if (metaMin == null) return false;
+    const hMin = horaParaMinutos(linha.horaOperacao);
+    if (hMin == null) return false;
+    return hMin <= metaMin;
+  }
+
+  // EFC / demais: regra de véspera da entrega.
+  if (isoOp < isoEm) return true;
+  if (isoOp > isoEm) return false;
+  // Mesmo dia → depende da meta da linha (FF ou Spot)
+  const metaStr = getMeta(linha);
+  if (!metaValida(metaStr)) return false;
+  const metaMin = horaParaMinutos(metaStr);
+  if (metaMin == null) return false;
+  const hMin = horaParaMinutos(linha.horaOperacao);
+  if (hMin == null) return false;
+  return hMin <= metaMin;
+}
+
+// Agrupa EFC por data: % = mapas OK ÷ total de mapas naquele dia.
+// "OK" = (dataOperacao < dataEmissao) OU (dataOperacao = dataEmissao E horaOperacao ≤ meta).
+// Conta MAPAS ÚNICOS por dia (não linhas) — se o mesmo mapa aparece em 2 linhas
+// de fase=Carregado, conta 1 vez; basta ter ALGUMA linha OK pra mapa ser OK.
+function agruparEFCPorData(linhas, getMeta, fase) {
+  // Map<isoDia, { iso, label, totalMapas: Set, mapasOK: Set }>
+  const mapa = new Map();
+  linhas.forEach(l => {
+    if (!l.mapa) return;
+    const iso = toISO(l.dataEmissao);
+    if (!iso) return;
+    const isoOp = toISO(l.dataOperacao);
+    if (!isoOp) return;
+
+    let cur = mapa.get(iso);
+    if (!cur) {
+      // Label do eixo X: só DD/MM (sem ano), construído a partir do ISO pra
+      // garantir formato consistente independente do que veio no CSV original.
+      const [, mm, dd] = iso.split('-');
+      cur = { iso, label: `${dd}/${mm}`, totalMapas: new Set(), mapasOK: new Set() };
+      mapa.set(iso, cur);
+    }
+    cur.totalMapas.add(l.mapa);
+    if (ehMapaOK(l, getMeta, fase)) cur.mapasOK.add(l.mapa);
+  });
+  return [...mapa.values()]
+    .map(d => {
+      const total = d.totalMapas.size;
+      const ok    = d.mapasOK.size;
+      const efc   = total > 0 ? Math.round((ok / total) * 1000) / 10 : 0; // 1 casa decimal
+      return { iso: d.iso, label: d.label, total, ok, efc };
+    })
+    .sort((a, b) => a.iso.localeCompare(b.iso));
+}
+
+// EFC por Mês: agrega mapas únicos por mês (chave YYYY-MM da dataEmissao).
+// Mesma regra do gráfico diário (OK se operação < emissão OU mesmo dia + hora ≤ meta).
+function agruparEFCPorMes(linhas, getMeta, fase) {
+  const mapa = new Map();
+  linhas.forEach(l => {
+    if (!l.mapa) return;
+    const dEm = parseDataBR(l.dataEmissao);
+    if (!dEm) return;
+    const chave = `${dEm.getFullYear()}-${String(dEm.getMonth() + 1).padStart(2, '0')}`;
+    let cur = mapa.get(chave);
+    if (!cur) {
+      cur = {
+        chave,
+        label: `${String(dEm.getMonth() + 1).padStart(2, '0')}/${dEm.getFullYear()}`,
+        totalMapas: new Set(),
+        mapasOK: new Set(),
+      };
+      mapa.set(chave, cur);
+    }
+    cur.totalMapas.add(l.mapa);
+    if (ehMapaOK(l, getMeta, fase)) cur.mapasOK.add(l.mapa);
+  });
+  return [...mapa.values()]
+    .map(d => {
+      const total = d.totalMapas.size;
+      const ok    = d.mapasOK.size;
+      const efc   = total > 0 ? Math.round((ok / total) * 1000) / 10 : 0;
+      return { chave: d.chave, label: d.label, total, ok, efc };
+    })
+    .sort((a, b) => a.chave.localeCompare(b.chave));
+}
+
 function agruparPorMotorista(linhas, top = 12) {
   const mapa = new Map();
   linhas.forEach(l => {
@@ -164,6 +386,31 @@ function agruparPorMotorista(linhas, top = 12) {
   return [...mapa.entries()].sort((a, b) => b[1] - a[1]).slice(0, top).map(([name, count]) => ({ name, count }));
 }
 
+// Agrupa EFC por motorista: % = mapas OK ÷ total de mapas atribuídos àquele motorista.
+// Mapas únicos por motorista (não linhas). Ordena por % EFC ascendente (pior primeiro)
+// pra destacar quem precisa de atenção. Em caso de empate, prioriza maior volume.
+// `top = Infinity` por padrão → mostra todos. Passe um número pra limitar.
+function agruparEFCPorMotorista(linhas, getMeta, fase, top = Infinity) {
+  const mapa = new Map();
+  linhas.forEach(l => {
+    if (!l.mapa) return;
+    const mot = String(l.motorista ?? '').trim() || '—';
+    let cur = mapa.get(mot);
+    if (!cur) { cur = { total: new Set(), ok: new Set() }; mapa.set(mot, cur); }
+    cur.total.add(l.mapa);
+    if (ehMapaOK(l, getMeta, fase)) cur.ok.add(l.mapa);
+  });
+  return [...mapa.entries()]
+    .map(([codigo, d]) => ({
+      codigo,
+      total: d.total.size,
+      ok: d.ok.size,
+      efc: d.total.size > 0 ? Math.round((d.ok.size / d.total.size) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => a.efc - b.efc || b.total - a.total) // pior EFC primeiro; em empate, mais volume
+    .slice(0, top);
+}
+
 function agruparPorPlaca(linhas, top = 12) {
   const mapa = new Map();
   linhas.forEach(l => {
@@ -171,6 +418,63 @@ function agruparPorPlaca(linhas, top = 12) {
     mapa.set(k, (mapa.get(k) ?? 0) + 1);
   });
   return [...mapa.entries()].sort((a, b) => b[1] - a[1]).slice(0, top).map(([name, count]) => ({ name, count }));
+}
+
+// EFC por Placa: % = mapas OK ÷ total atribuído àquela placa.
+// Mesma ordenação do motorista (pior EFC primeiro, depois maior volume).
+// `top = Infinity` → mostra todas. Passe um número pra limitar.
+function agruparEFCPorPlaca(linhas, getMeta, fase, top = Infinity) {
+  const mapa = new Map();
+  linhas.forEach(l => {
+    if (!l.mapa) return;
+    const placa = String(l.placa ?? '').trim() || '—';
+    let cur = mapa.get(placa);
+    if (!cur) { cur = { total: new Set(), ok: new Set() }; mapa.set(placa, cur); }
+    cur.total.add(l.mapa);
+    if (ehMapaOK(l, getMeta, fase)) cur.ok.add(l.mapa);
+  });
+  return [...mapa.entries()]
+    .map(([placa, d]) => ({
+      placa,
+      total: d.total.size,
+      ok: d.ok.size,
+      efc: d.total.size > 0 ? Math.round((d.ok.size / d.total.size) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => a.efc - b.efc || b.total - a.total)
+    .slice(0, top);
+}
+
+// EFC por Mapa: cada mapa é 100% (OK) ou 0% (NOK). Lista TODOS os mapas com
+// NOK primeiro (piores casos no topo). `top = Infinity` por padrão.
+function agruparEFCPorMapa(linhas, getMeta, fase, top = Infinity) {
+  // Map<mapa, { motorista, placa, dataEmissao, dataOperacao, horaOperacao, ok }>
+  // Se houver várias linhas do mesmo mapa, basta UMA OK pra mapa ser OK.
+  const mapa = new Map();
+  linhas.forEach(l => {
+    if (!l.mapa) return;
+    let cur = mapa.get(l.mapa);
+    if (!cur) {
+      cur = {
+        mapa: l.mapa,
+        placa: l.placa || '',
+        motorista: l.motorista || '',
+        frotaCadastrada: l.frotaCadastrada || '',
+        dataEmissao: l.dataEmissao || '',
+        dataOperacao: l.dataOperacao || '',
+        horaOperacao: l.horaOperacao || '',
+        ok: false,
+      };
+      mapa.set(l.mapa, cur);
+    }
+    if (ehMapaOK(l, getMeta, fase)) cur.ok = true;
+  });
+  return [...mapa.values()]
+    // total/ok como números (1/0) pra que a linha de Total da TabelaEFC consiga
+    // somar e calcular o % global ponderado (somaOK/somaTotal). Sem isso, d.total
+    // ficava undefined e o rodapé mostrava sempre 0%.
+    .map(d => ({ ...d, total: 1, ok: d.ok ? 1 : 0, efc: d.ok ? 100 : 0 }))
+    .sort((a, b) => a.efc - b.efc) // NOK (0) primeiro, OK (100) depois
+    .slice(0, top);
 }
 
 // ─── Componentes ──────────────────────────────────────────────────────────────
@@ -241,6 +545,129 @@ function Chip({ label, onClear }) {
   );
 }
 
+// Dropdown custom com checkboxes — substitui <select> nativo nos filtros.
+// - Click numa opção: substitui (single select).
+// - Ctrl/Cmd+click numa opção: adiciona/remove sem fechar (multi).
+// - Click no item "Todas/Limpar" no topo: limpa.
+// - Click fora fecha. Mostra "N selecionado(s)" no header quando multi.
+//
+// Padrão WJS: TODO filtro em lista suspensa do app DEVE usar este componente
+// (ou equivalente) pra suportar multi-select via Ctrl/Cmd+click.
+function MultiSelectDropdown({ label, valor, opcoes, onChange, placeholderTodos = 'Todas' }) {
+  const [aberto, setAberto] = useState(false);
+  const selecionados = asLista(valor);
+
+  // Click fora fecha
+  useEffect(() => {
+    if (!aberto) return;
+    function onDoc(e) {
+      if (!e.target.closest?.('[data-multiselect]')) setAberto(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [aberto]);
+
+  // Texto do botão
+  let texto;
+  if (selecionados.length === 0)        texto = placeholderTodos;
+  else if (selecionados.length === 1)   texto = selecionados[0];
+  else                                  texto = `${selecionados.length} selecionado(s)`;
+
+  function clicarOpcao(opcao, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    onChange(toggleMulti(valor, opcao, e));
+    if (!(e.ctrlKey || e.metaKey)) setAberto(false); // sem ctrl → fecha; com ctrl → mantém aberto pra selecionar mais
+  }
+
+  return (
+    <div data-multiselect style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label style={sLabel}>{label}</label>
+      <button
+        type="button"
+        onClick={() => setAberto(a => !a)}
+        style={{
+          ...sSelect,
+          textAlign: 'left',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          gap: 8, cursor: 'pointer',
+          color: selecionados.length === 0 ? D.textMuted : D.text,
+        }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{texto}</span>
+        <span style={{ fontSize: 9, color: D.textMuted, transform: aberto ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▼</span>
+      </button>
+
+      {aberto && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+          minWidth: '100%', maxHeight: 320, overflowY: 'auto',
+          background: D.surface, border: `1px solid ${D.border}`,
+          borderRadius: 8, boxShadow: D.shadowMd, zIndex: 50,
+          padding: 4,
+        }}>
+          {/* Dica de Ctrl+click no topo */}
+          <div style={{ padding: '7px 12px 9px', fontSize: 10, color: D.textMuted, fontFamily: D.font, borderBottom: `1px solid ${D.borderLight}` }}>
+            Segure <strong style={{ color: D.text }}>Ctrl</strong> para selecionar múltiplos
+          </div>
+          {/* Limpar (todas) */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onChange(null); setAberto(false); }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              width: '100%', padding: '7px 12px',
+              background: selecionados.length === 0 ? D.redSoft : 'transparent',
+              border: 'none', borderRadius: 6,
+              cursor: 'pointer', textAlign: 'left',
+              fontSize: 12, fontWeight: selecionados.length === 0 ? 700 : 500,
+              color: selecionados.length === 0 ? D.red : D.textSec,
+              fontFamily: D.font,
+            }}
+            onMouseEnter={e => { if (selecionados.length !== 0) e.currentTarget.style.background = D.bg; }}
+            onMouseLeave={e => { if (selecionados.length !== 0) e.currentTarget.style.background = 'transparent'; }}
+          >
+            <span style={{ fontSize: 11, opacity: 0.6 }}>○</span>
+            {placeholderTodos}
+          </button>
+          {opcoes.map(op => {
+            const checado = selecionados.includes(op);
+            return (
+              <button
+                type="button"
+                key={op}
+                onClick={(e) => clicarOpcao(op, e)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  width: '100%', padding: '7px 12px',
+                  background: checado ? D.redSoft : 'transparent',
+                  border: 'none', borderRadius: 6,
+                  cursor: 'pointer', textAlign: 'left',
+                  fontSize: 12, fontWeight: checado ? 700 : 500,
+                  color: checado ? D.red : D.text,
+                  fontFamily: D.font,
+                }}
+                onMouseEnter={e => { if (!checado) e.currentTarget.style.background = D.bg; }}
+                onMouseLeave={e => { if (!checado) e.currentTarget.style.background = 'transparent'; }}
+              >
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 14, height: 14, borderRadius: 3,
+                  border: `1.5px solid ${checado ? D.red : D.border}`,
+                  background: checado ? D.red : D.surface,
+                  color: '#fff', fontSize: 10, lineHeight: 1, fontWeight: 700,
+                  flexShrink: 0,
+                }}>{checado ? '✓' : ''}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{op}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Skeleton({ width = '100%', height = 20, radius = 6, style: sx = {} }) {
   return (
     <div style={{ width, height, borderRadius: radius, background: 'linear-gradient(90deg, #f1f5f9 25%, #e8edf2 50%, #f1f5f9 75%)', backgroundSize: '200% 100%', animation: 'shimmer 1.6s ease-in-out infinite', ...sx }} />
@@ -288,6 +715,341 @@ function TooltipCustom({ active, payload, label }) {
   );
 }
 
+// Tabela "EFC por X" — cores harmônicas com a página (fundo branco + indicador
+// lateral colorido + badge "pill" à direita). Mostra TODOS os itens com scroll.
+// Linha "Total" no rodapé com EFC global ponderado (somaOK / somaTotal).
+//
+// Props:
+//   titulo         — título do card
+//   colLabel       — nome da coluna da esquerda
+//   dados          — [{ ok, total, efc, ... }]
+//   getKey(d)      — chave única do item (pra filtros e React key)
+//   getLabel(d)    — texto da coluna esquerda
+//   formatValor(d) — opcional, retorna node React pra coluna direita
+//                    (default: `XX%`). Útil pra mostrar "OK"/"NOK".
+//   filtroAtivo    — valor atual do filtro (pra destacar linha selecionada)
+//   onClick(d)     — handler do click na linha (opcional)
+//   metaPercent    — limiar pra colorir verde/vermelho (default: 100%)
+function TabelaEFC({
+  titulo, colLabel, dados, getKey, getLabel, formatValor,
+  filtroAtivo, onClick, metaPercent,
+}) {
+  const limiar = metaPercent != null ? metaPercent : 100;
+  const totalMapas = dados.reduce((s, d) => s + (d.total || 0), 0);
+  const totalOK    = dados.reduce((s, d) => s + (d.ok    || 0), 0);
+  const efcGlobal  = totalMapas > 0 ? Math.round((totalOK / totalMapas) * 1000) / 10 : 0;
+  const totalAtingiu = efcGlobal >= limiar;
+
+  // ── Ordenação por coluna (padrão WJS: toda tabela tem seta clicável no cabeçalho) ──
+  const [sortKey, setSortKey] = useState(null);   // 'label' | 'valor' | null
+  const [sortDir, setSortDir] = useState('asc');  // 'asc' | 'desc'
+
+  function alternarOrdem(key) {
+    if (sortKey === key) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
+
+  const dadosOrdenados = useMemo(() => {
+    if (!sortKey) return dados;
+    const arr = [...dados];
+    arr.sort((a, b) => {
+      if (sortKey === 'valor') {
+        const va = a.efc ?? 0;
+        const vb = b.efc ?? 0;
+        return sortDir === 'asc' ? va - vb : vb - va;
+      }
+      // sortKey === 'label'
+      const va = String(getLabel(a) ?? '');
+      const vb = String(getLabel(b) ?? '');
+      // Se ambos são numéricos puros (mapas, códigos), ordena como número
+      const naMatch = va.trim().match(/^(\d+)/);
+      const nbMatch = vb.trim().match(/^(\d+)/);
+      if (naMatch && nbMatch && /^\d+\s*$/.test(va.trim()) && /^\d+\s*$/.test(vb.trim())) {
+        const na = parseInt(naMatch[1], 10);
+        const nb = parseInt(nbMatch[1], 10);
+        return sortDir === 'asc' ? na - nb : nb - na;
+      }
+      return sortDir === 'asc'
+        ? va.localeCompare(vb, 'pt-BR', { numeric: true })
+        : vb.localeCompare(va, 'pt-BR', { numeric: true });
+    });
+    return arr;
+  }, [dados, sortKey, sortDir, getLabel]);
+
+  // Seta de ordenação que aparece no cabeçalho
+  function SetaOrdem({ ativo }) {
+    if (!ativo) {
+      return <span style={{ fontSize: 9, color: D.textMuted, opacity: 0.5, marginLeft: 4 }}>↕</span>;
+    }
+    return (
+      <span style={{ fontSize: 9, color: D.red, marginLeft: 4 }}>
+        {sortDir === 'asc' ? '▲' : '▼'}
+      </span>
+    );
+  }
+
+  const headerCellStyle = {
+    cursor: 'pointer',
+    userSelect: 'none',
+    transition: D.transition,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 2,
+  };
+
+  return (
+    <div style={{
+      background: D.surface,
+      border: `1px solid ${D.border}`,
+      borderRadius: D.radius,
+      boxShadow: D.shadow,
+      overflow: 'hidden',
+      display: 'flex',
+      flexDirection: 'column',
+    }}>
+      {/* Header — mesmo padrão dos outros cards (vermelho WJS) */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '14px 18px',
+        borderBottom: `1px solid ${D.borderLight}`,
+      }}>
+        <div style={{ width: 3, height: 14, background: D.red, borderRadius: 2 }} />
+        <span style={{
+          fontSize: 13, fontWeight: 700, color: D.text,
+          letterSpacing: -0.2, fontFamily: D.font,
+        }}>{titulo}</span>
+      </div>
+
+      {/* Sub-header das colunas — clicável pra ordenar */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 100px',
+        background: D.bg,
+        color: D.textMuted,
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: 1.5,
+        textTransform: 'uppercase',
+        borderBottom: `1px solid ${D.borderLight}`,
+      }}>
+        <div
+          onClick={() => alternarOrdem('label')}
+          style={{ ...headerCellStyle, padding: '8px 16px', color: sortKey === 'label' ? D.text : D.textMuted }}
+          title={`Ordenar por ${colLabel}`}
+        >
+          <span>{colLabel}</span>
+          <SetaOrdem ativo={sortKey === 'label'} />
+        </div>
+        <div
+          onClick={() => alternarOrdem('valor')}
+          style={{ ...headerCellStyle, padding: '8px 12px', justifyContent: 'center', color: sortKey === 'valor' ? D.text : D.textMuted }}
+          title="Ordenar por % EFC"
+        >
+          <span>% EFC</span>
+          <SetaOrdem ativo={sortKey === 'valor'} />
+        </div>
+      </div>
+
+      {/* Body com scroll */}
+      <div style={{ maxHeight: 420, overflowY: 'auto', flex: 1 }}>
+        {dadosOrdenados.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: D.textMuted, fontSize: 13, fontStyle: 'italic' }}>
+            Sem dados pra este período.
+          </div>
+        ) : (
+          dadosOrdenados.map((d, i) => {
+            const atingiu = d.efc >= limiar;
+            const cor     = atingiu ? D.green : D.red;
+            const corSoft = atingiu ? D.greenSoft : D.redSoft;
+            const key     = getKey(d);
+            const ativo   = asLista(filtroAtivo).includes(key);
+            return (
+              <div
+                key={key}
+                // Passa o event pro onClick — assim Ctrl/Cmd+click vira multi-select
+                onClick={(e) => onClick && onClick(d, e)}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 100px',
+                  alignItems: 'center',
+                  background: ativo ? corSoft : (i % 2 === 0 ? D.surface : D.bg),
+                  borderTop: i === 0 ? 'none' : `1px solid ${D.borderLight}`,
+                  borderLeft: `3px solid ${cor}`,
+                  cursor: onClick ? 'pointer' : 'default',
+                  fontSize: 12,
+                  fontFamily: D.font,
+                  transition: D.transition,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = corSoft; }}
+                onMouseLeave={e => { e.currentTarget.style.background = ativo ? corSoft : (i % 2 === 0 ? D.surface : D.bg); }}
+              >
+                <div style={{
+                  padding: '8px 16px',
+                  color: D.text,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}>
+                  {getLabel(d)}
+                </div>
+                <div style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  <span style={{
+                    display: 'inline-block',
+                    padding: '3px 10px',
+                    borderRadius: 999,
+                    background: corSoft,
+                    color: cor,
+                    fontFamily: D.mono,
+                    fontWeight: 700,
+                    fontSize: 11,
+                    letterSpacing: 0.3,
+                    minWidth: 48,
+                  }}>
+                    {formatValor ? formatValor(d) : `${d.efc.toFixed(1).replace('.', ',')}%`}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Rodapé com Total — sutil, com mesma cor do header pra fechar visualmente */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 100px',
+        alignItems: 'center',
+        background: D.bg,
+        borderTop: `1px solid ${D.border}`,
+        fontSize: 12,
+        fontWeight: 700,
+        color: D.text,
+        letterSpacing: 0.3,
+        fontFamily: D.font,
+      }}>
+        <div style={{ padding: '10px 16px' }}>Total</div>
+        <div style={{ padding: '6px 10px', textAlign: 'center' }}>
+          <span style={{
+            display: 'inline-block',
+            padding: '3px 10px',
+            borderRadius: 999,
+            background: totalAtingiu ? D.greenSoft : D.redSoft,
+            color: totalAtingiu ? D.green : D.red,
+            fontFamily: D.mono,
+            fontWeight: 700,
+            fontSize: 12,
+            letterSpacing: 0.3,
+            minWidth: 48,
+          }}>
+            {efcGlobal.toFixed(1).replace('.', ',')}%
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Tooltip do gráfico EFC por Motorista — mostra "código - Nome" + %EFC + mapas OK/total
+function TooltipEFCMotorista({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  return (
+    <div style={{ background: D.surface, border: `1px solid ${D.border}`, borderRadius: 10, padding: '10px 14px', fontSize: 12, boxShadow: D.shadowMd, fontFamily: D.font, minWidth: 180 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6, color: D.text, fontSize: 12.5 }}>{d.label}</div>
+      <div style={{ color: D.blue, fontWeight: 700, fontFamily: D.mono, fontSize: 16, marginBottom: 2 }}>
+        {d.efc.toFixed(1).replace('.', ',')}% EFC
+      </div>
+      <div style={{ color: D.textSec, fontFamily: D.mono, fontSize: 11 }}>
+        {d.ok} OK de {d.total} mapa{d.total === 1 ? '' : 's'}
+      </div>
+    </div>
+  );
+}
+
+// Tooltip do gráfico EFC por Placa — mostra placa + %EFC + mapas OK/total
+function TooltipEFCPlaca({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  return (
+    <div style={{ background: D.surface, border: `1px solid ${D.border}`, borderRadius: 10, padding: '10px 14px', fontSize: 12, boxShadow: D.shadowMd, fontFamily: D.font, minWidth: 160 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6, color: D.text, fontSize: 13, fontFamily: D.mono, letterSpacing: 0.5 }}>{d.placa}</div>
+      <div style={{ color: D.blue, fontWeight: 700, fontFamily: D.mono, fontSize: 16, marginBottom: 2 }}>
+        {d.efc.toFixed(1).replace('.', ',')}% EFC
+      </div>
+      <div style={{ color: D.textSec, fontFamily: D.mono, fontSize: 11 }}>
+        {d.ok} OK de {d.total} mapa{d.total === 1 ? '' : 's'}
+      </div>
+    </div>
+  );
+}
+
+// Tooltip do gráfico EFC por Mapa — mostra mapa + placa + motorista + status + datas/hora
+function TooltipEFCMapa({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  const cor = d.efc === 100 ? D.green : D.red;
+  const status = d.efc === 100 ? 'OK' : 'NOK';
+  return (
+    <div style={{ background: D.surface, border: `1px solid ${D.border}`, borderRadius: 10, padding: '10px 14px', fontSize: 12, boxShadow: D.shadowMd, fontFamily: D.font, minWidth: 220 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6, color: D.text, fontSize: 13 }}>
+        Mapa <span style={{ fontFamily: D.mono }}>{d.mapa}</span>
+      </div>
+      <div style={{ color: cor, fontWeight: 700, fontFamily: D.font, fontSize: 16, marginBottom: 6 }}>
+        {status}
+      </div>
+      <div style={{ color: D.textSec, fontSize: 11, lineHeight: 1.6 }}>
+        {d.placa     && <div><strong>Placa:</strong> <span style={{ fontFamily: D.mono }}>{d.placa}</span></div>}
+        {d.motorista && <div><strong>Motorista:</strong> {d.motorista}</div>}
+        {d.dataEmissao  && <div><strong>Emissão:</strong> <span style={{ fontFamily: D.mono }}>{d.dataEmissao}</span></div>}
+        {d.dataOperacao && <div><strong>Operação:</strong> <span style={{ fontFamily: D.mono }}>{d.dataOperacao}</span> às <span style={{ fontFamily: D.mono }}>{d.horaOperacao || '—'}</span></div>}
+      </div>
+    </div>
+  );
+}
+
+// Tooltip do gráfico EFC Mês a Mês — mostra mês + %EFC + mapas OK/total
+function TooltipEFCMes({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  return (
+    <div style={{ background: D.surface, border: `1px solid ${D.border}`, borderRadius: 10, padding: '10px 14px', fontSize: 12, boxShadow: D.shadowMd, fontFamily: D.font, minWidth: 150 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6, color: D.text, fontSize: 13 }}>{d.label}</div>
+      <div style={{ color: D.blue, fontWeight: 700, fontFamily: D.mono, fontSize: 16, marginBottom: 2 }}>
+        {d.efc.toFixed(1).replace('.', ',')}% EFC
+      </div>
+      <div style={{ color: D.textSec, fontFamily: D.mono, fontSize: 11 }}>
+        {d.ok} OK de {d.total} mapa{d.total === 1 ? '' : 's'}
+      </div>
+    </div>
+  );
+}
+
+// Tooltip do gráfico EFC por Dia — mostra %EFC + mapas OK / total
+function TooltipEFC({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  return (
+    <div style={{ background: D.surface, border: `1px solid ${D.border}`, borderRadius: 10, padding: '10px 14px', fontSize: 12, boxShadow: D.shadowMd, fontFamily: D.font, minWidth: 150 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6, color: D.text, fontSize: 12.5 }}>{label}</div>
+      <div style={{ color: D.blue, fontWeight: 700, fontFamily: D.mono, fontSize: 16, marginBottom: 2 }}>
+        {d.efc.toFixed(1).replace('.', ',')}% EFC
+      </div>
+      <div style={{ color: D.textSec, fontFamily: D.mono, fontSize: 11 }}>
+        {d.ok} OK de {d.total} mapa{d.total === 1 ? '' : 's'}
+      </div>
+    </div>
+  );
+}
+
 // ─── Estilos dos controles de filtro ─────────────────────────────────────────
 const sLabel  = { fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: D.textSec, fontFamily: D.font };
 const sSelect = {
@@ -309,7 +1071,17 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
   const [carregando, setCarregando] = useState(true);
   const [filtros, setFiltros]       = useState(FILTROS_VAZIOS);
   const [metaPercent, setMetaPercent]   = useState(null);
-  const [metaHorario, setMetaHorario]   = useState(null);
+  // EFC tem 2 metas distintas: FF (Frota Padronizada) e Spot (demais).
+  // EFD/TI continuam com 1 meta única (carregada em metaHorarioFF e reusada).
+  const [metaHorarioFF,   setMetaHorarioFF]   = useState(null);
+  const [metaHorarioSpot, setMetaHorarioSpot] = useState(null);
+  // Tabela de detalhamento — busca livre + ordenação por coluna
+  const [busca, setBusca]               = useState('');
+  const [ordenacao, setOrdenacao]       = useState({ campo: 'dataEmissao', direcao: 'desc' });
+  // Janela do gráfico EFC por Dia: 'mes' (todos os dias) | '15' | '7'
+  const [janelaDias, setJanelaDias]     = useState('mes');
+  // Mapa código → nome do motorista (vem de relatoriomotoristas, importado via 01.20.01.47)
+  const [motoristasMap, setMotoristasMap] = useState({});
 
   useEffect(() => {
     let mounted = true;
@@ -317,29 +1089,98 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
     Promise.all([
       getDocs(colRevenda('relatorio031120')),
       getDoc(docRef('metas_mpd', rid || 'global')),
-    ]).then(([snap, metaSnap]) => {
+      getDocs(col('relatoriomotoristas')),
+    ]).then(([snap, metaSnap, snapMot]) => {
       if (!mounted) return;
       setLinhas(snap.docs.map(d => d.data()));
       if (metaSnap.exists()) {
         const m = metaSnap.data();
-        setMetaPercent(m?.percents?.[fase] ?? null);
-        setMetaHorario(m?.horarios?.[fase] ?? null);
+        // % global da fase (continua único; back-compat: chave antiga "EFC" → "EFC FF" pro %)
+        if (fase === 'EFC') {
+          setMetaPercent(m?.percents?.['EFC FF'] ?? m?.percents?.['EFC'] ?? null);
+        } else {
+          setMetaPercent(m?.percents?.[fase] ?? null);
+        }
+        // Metas de horário — EFC tem 2 (FF e Spot); outras fases reusam metaFF
+        if (fase === 'EFC') {
+          const ff   = m?.horarios?.['EFC FF']   ?? m?.horarios?.['EFC'] ?? null;
+          const spot = m?.horarios?.['EFC Spot']                         ?? null;
+          setMetaHorarioFF(ff);
+          setMetaHorarioSpot(spot);
+        } else {
+          const h = m?.horarios?.[fase] ?? null;
+          setMetaHorarioFF(h);
+          setMetaHorarioSpot(null);
+        }
       }
+      // Monta mapa de motoristas: normaliza o código (tira zeros à esquerda)
+      const mmap = {};
+      snapMot.docs.forEach(d => {
+        const m = d.data();
+        const cod = String(m.codigoMotorista ?? '').trim().replace(/^0+(?=\d)/, '');
+        if (cod) mmap[cod] = m.nomeMotorista || '';
+        // Também indexa pelo código bruto pra robustez (sem normalização)
+        const codBruto = String(m.codigoMotorista ?? '').trim();
+        if (codBruto && codBruto !== cod) mmap[codBruto] = m.nomeMotorista || '';
+      });
+      setMotoristasMap(mmap);
     }).catch(() => {}).finally(() => { if (mounted) setCarregando(false); });
     return () => { mounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fase]);
 
-  // Linhas com filtros globais apenas (sem cross-filter, sem fase) — base para KPIs
-  const linhasGlobal = useMemo(() => linhas.filter(l => {
-    if (filtros.revenda    && l.revenda         !== filtros.revenda) return false;
-    if (filtros.frota      && l.frotaCadastrada !== filtros.frota)   return false;
-    if (filtros.dataInicio || filtros.dataFim) {
-      const iso = toISO(l.dataEmissao);
-      if (filtros.dataInicio && (!iso || iso < filtros.dataInicio)) return false;
-      if (filtros.dataFim    && (!iso || iso > filtros.dataFim))    return false;
+  // Resolve código de motorista → "código - Nome" via mapa. Fallback: só o código.
+  const labelMotorista = (cod) => {
+    const c = String(cod ?? '').trim();
+    if (!c) return '—';
+    const cNorm = c.replace(/^0+(?=\d)/, '');
+    const nome = motoristasMap[cNorm] || motoristasMap[c];
+    return nome ? `${cNorm} - ${nome}` : c;
+  };
+
+  // Resolve a meta-de-horário pra UMA linha:
+  //   - fase EFC + frota Padronizada → metaHorarioFF
+  //   - fase EFC + qualquer outra    → metaHorarioSpot
+  //   - fase EFD/TI                  → metaHorarioFF (única)
+  // Encapsula essa decisão pra todas as funções de agrupar e pra calcularEFCLinha.
+  const getMetaParaLinha = useCallback((linha) => {
+    if (fase === 'EFC') {
+      return isFrotaPadronizada(linha) ? metaHorarioFF : metaHorarioSpot;
     }
-    return true;
-  }), [linhas, filtros]);
+    return metaHorarioFF;
+  }, [fase, metaHorarioFF, metaHorarioSpot]);
+
+  // Calcula status EFC pra UMA linha (regra do mapaOK aplicada por linha).
+  // Retorna 'OK', 'NOK' ou '—' (sem dados pra avaliar).
+  const calcularEFCLinha = (l) => {
+    const isoOp = toISO(l.dataOperacao);
+    const isoEm = toISO(l.dataEmissao);
+    if (!isoOp || !isoEm) return '—';
+    if (isoOp < isoEm) return 'OK';                 // carregou antes do dia da entrega
+    if (isoOp > isoEm) return 'NOK';                // depois do dia da entrega
+    // Mesmo dia: depende da hora vs meta-da-linha (FF ou Spot)
+    const metaStr = getMetaParaLinha(l);
+    if (!metaValida(metaStr)) return '—';           // meta não cadastrada → não dá pra avaliar
+    const metaMin = horaParaMinutos(metaStr);
+    if (metaMin == null) return '—';
+    const hMin = horaParaMinutos(l.horaOperacao);
+    if (hMin == null) return '—';
+    return hMin <= metaMin ? 'OK' : 'NOK';
+  };
+
+  // Linhas com filtros globais apenas (sem cross-filter, sem fase) — base para KPIs
+  const linhasGlobal = useMemo(() => {
+    const frotas = asLista(filtros.frota);
+    return linhas.filter(l => {
+      if (frotas.length > 0 && !frotas.includes(l.frotaCadastrada)) return false;
+      if (filtros.dataInicio || filtros.dataFim) {
+        const iso = toISO(l.dataEmissao);
+        if (filtros.dataInicio && (!iso || iso < filtros.dataInicio)) return false;
+        if (filtros.dataFim    && (!iso || iso > filtros.dataFim))    return false;
+      }
+      return true;
+    });
+  }, [linhas, filtros]);
 
   // Linhas desta fase (filtros globais já aplicados)
   const linhasFase = useMemo(
@@ -347,21 +1188,109 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
     [linhasGlobal, faseCodigo]
   );
 
-  // Listas únicas para os selects (derivadas de todas as linhas, sem filtros)
-  const uniqueRevendas = useMemo(
-    () => [...new Set(linhas.map(l => (l.revenda ?? '').trim()).filter(Boolean))].sort(),
-    [linhas]
-  );
+  // Lista única de Frotas pra dropdown (derivada de todas as linhas, sem filtros)
   const uniqueFrotas = useMemo(
     () => [...new Set(linhas.map(l => (l.frotaCadastrada ?? '').trim()).filter(Boolean))].sort(),
     [linhas]
   );
 
   // Memos com filtro cruzado — cada chart exclui sua própria dimensão
-  const dadosData       = useMemo(() => agruparPorData(filtrarLinhas(linhasFase, filtros, 'data')),           [linhasFase, filtros]);
-  const dadosMotorista  = useMemo(() => agruparPorMotorista(filtrarLinhas(linhasFase, filtros, 'motorista')), [linhasFase, filtros]);
-  const dadosPlaca      = useMemo(() => agruparPorPlaca(filtrarLinhas(linhasFase, filtros, 'placa')),         [linhasFase, filtros]);
+  const dadosData       = useMemo(() => agruparEFCPorData(filtrarLinhas(linhasFase, filtros, 'data'), getMetaParaLinha, fase), [linhasFase, filtros, getMetaParaLinha, fase]);
+  const dadosMes        = useMemo(() => agruparEFCPorMes(filtrarLinhas(linhasFase, filtros), getMetaParaLinha, fase),          [linhasFase, filtros, getMetaParaLinha, fase]);
+  // Índices do Brush no gráfico Dia a Dia — calcula últimos N dias quando muda janela
+  const brushRange      = useMemo(() => {
+    const len = dadosData.length;
+    if (len === 0 || janelaDias === 'mes') return null;
+    const tam = janelaDias === '7' ? 7 : 15;
+    const startIndex = Math.max(0, len - tam);
+    const endIndex   = len - 1;
+    return { startIndex, endIndex };
+  }, [dadosData.length, janelaDias]);
+
+  // Domínio dinâmico do eixo Y do gráfico "EFC por Dia" — zoom automático no
+  // range visível dos dados (e da meta) pra destacar variações pequenas.
+  // Arredonda pra baixo no múltiplo de 5 mais próximo, pra ficar redondo nos ticks.
+  const yDomainDia = useMemo(() => {
+    if (dadosData.length === 0) return [0, 100];
+    const valoresEfc = dadosData.map(d => d.efc);
+    // Inclui meta no cálculo: garante que a linha tracejada sempre aparece visível
+    const todos = metaPercent != null ? [...valoresEfc, metaPercent] : valoresEfc;
+    const min = Math.min(...todos);
+    const arredondado = Math.max(0, Math.floor(min / 5) * 5);
+    return [arredondado, 100];
+  }, [dadosData, metaPercent]);
+
+  // Gera ticks dinâmicos entre min e 100 com step apropriado pro range
+  const yTicksDia = useMemo(() => {
+    const [min] = yDomainDia;
+    const range = 100 - min;
+    const step  = range <= 20 ? 5 : range <= 40 ? 10 : range <= 70 ? 15 : 25;
+    const ticks = [];
+    for (let v = min; v <= 100; v += step) ticks.push(v);
+    if (ticks[ticks.length - 1] !== 100) ticks.push(100);
+    return ticks;
+  }, [yDomainDia]);
+  const dadosMotorista  = useMemo(() => {
+    const arr = agruparEFCPorMotorista(filtrarLinhas(linhasFase, filtros, 'motorista'), getMetaParaLinha, fase);
+    // Resolve o nome do motorista pra mostrar "código - Nome" no eixo Y.
+    return arr.map(d => ({ ...d, label: labelMotorista(d.codigo) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhasFase, filtros, getMetaParaLinha, motoristasMap, fase]);
+  const dadosPlaca      = useMemo(() => agruparEFCPorPlaca(filtrarLinhas(linhasFase, filtros, 'placa'), getMetaParaLinha, fase), [linhasFase, filtros, getMetaParaLinha, fase]);
+  // EFC por Mapa — não excluí nenhum cross-filter (mapa não é filtro hoje)
+  const dadosMapa       = useMemo(() => {
+    const arr = agruparEFCPorMapa(filtrarLinhas(linhasFase, filtros), getMetaParaLinha, fase);
+    // Enriquece com label "mapa · placa · motorista" pra leitura rápida
+    return arr.map(d => ({
+      ...d,
+      label: `${d.mapa}${d.placa ? `  ·  ${d.placa}` : ''}${d.motorista ? `  ·  ${labelMotorista(d.motorista)}` : ''}`,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhasFase, filtros, getMetaParaLinha, motoristasMap, fase]);
   const linhasFiltradas = useMemo(() => filtrarLinhas(linhasFase, filtros),                                   [linhasFase, filtros]);
+
+  // Lista pra tabela de detalhamento — aplica busca livre + ordenação por coluna.
+  const linhasParaTabela = useMemo(() => {
+    let arr = linhasFiltradas;
+    const q = busca.trim().toLowerCase();
+    if (q) {
+      arr = arr.filter(l => {
+        const haystack = [
+          l.mapa, l.placa, l.frotaCadastrada,
+          l.dataEmissao, l.horaOperacao,
+          l.motorista, labelMotorista(l.motorista),    // inclui nome do motorista
+          calcularEFCLinha(l),                          // permite buscar "OK" ou "NOK"
+          l.usuario, l.fase, l.veiculo, l.revenda,
+        ].map(v => String(v ?? '').toLowerCase()).join(' ');
+        return haystack.includes(q);
+      });
+    }
+    // Comparador inteligente: data vira ISO, motorista usa o label resolvido,
+    // EFC ordena por status (NOK < OK), qualquer outro usa localeCompare pt-BR.
+    const cmp = (a, b) => {
+      if (ordenacao.campo === 'dataEmissao') {
+        return (toISO(a.dataEmissao) || '').localeCompare(toISO(b.dataEmissao) || '');
+      }
+      if (ordenacao.campo === 'motorista') {
+        return labelMotorista(a.motorista).localeCompare(labelMotorista(b.motorista), 'pt-BR', { numeric: true });
+      }
+      if (ordenacao.campo === 'efc') {
+        return calcularEFCLinha(a).localeCompare(calcularEFCLinha(b));
+      }
+      const ca = a[ordenacao.campo];
+      const cb = b[ordenacao.campo];
+      return String(ca ?? '').localeCompare(String(cb ?? ''), 'pt-BR', { numeric: true });
+    };
+    return [...arr].sort((a, b) => cmp(a, b) * (ordenacao.direcao === 'asc' ? 1 : -1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhasFiltradas, busca, ordenacao, motoristasMap, getMetaParaLinha]);
+
+  function toggleOrdenacao(campo) {
+    setOrdenacao(prev => prev.campo === campo
+      ? { campo, direcao: prev.direcao === 'asc' ? 'desc' : 'asc' }
+      : { campo, direcao: 'asc' }
+    );
+  }
 
   // ── KPI calculations — respondem a todos os filtros incluindo cross-filter ──
   const totalMapas = useMemo(
@@ -370,26 +1299,14 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
   );
 
   const mapaOK = useMemo(() => {
-    const metaMin = horaParaMinutos(metaHorario);
+    // Cada linha usa sua meta correta (FF ou Spot pra EFC; única pra EFD/TI).
     const ok = new Set();
     linhasFiltradas.forEach(l => {
       if (!l.mapa) return;
-      const isoOp = toISO(l.dataOperacao);
-      const isoEm = toISO(l.dataEmissao);
-      if (!isoOp || !isoEm) return;
-
-      if (isoOp < isoEm) {
-        // Operação anterior à emissão → OK automático
-        ok.add(l.mapa);
-      } else if (isoOp === isoEm && metaMin !== null) {
-        // Mesmo dia → OK somente se hora <= meta
-        const hMin = horaParaMinutos(l.horaOperacao);
-        if (hMin !== null && hMin <= metaMin) ok.add(l.mapa);
-      }
-      // isoOp > isoEm → NOK automático (não adiciona)
+      if (ehMapaOK(l, getMetaParaLinha, fase)) ok.add(l.mapa);
     });
     return ok.size;
-  }, [linhasFiltradas, metaHorario]);
+  }, [linhasFiltradas, getMetaParaLinha, fase]);
 
   const mapaNOK    = useMemo(() => totalMapas - mapaOK, [totalMapas, mapaOK]);
   const efcPercent = useMemo(
@@ -397,15 +1314,17 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
     [mapaOK, totalMapas]
   );
 
-  function toggle(dim, val) {
-    setFiltros(prev => ({ ...prev, [dim]: prev[dim] === val ? null : val }));
+  // Toggle multi-aware — Ctrl/Cmd+click adiciona/remove sem afetar os outros;
+  // click normal substitui (re-click no mesmo valor limpa).
+  function toggle(dim, val, event) {
+    setFiltros(prev => ({ ...prev, [dim]: toggleMulti(prev[dim], val, event) }));
   }
   function setGlobal(campo, val) {
     setFiltros(prev => ({ ...prev, [campo]: val }));
   }
 
-  const temFiltroGlobal = filtros.revenda || filtros.frota || filtros.dataInicio || filtros.dataFim;
-  const temFiltroChart  = filtros.data || filtros.motorista || filtros.placa;
+  const temFiltroGlobal = asLista(filtros.frota).length > 0 || filtros.dataInicio || filtros.dataFim;
+  const temFiltroChart  = asLista(filtros.data).length > 0 || asLista(filtros.motorista).length > 0 || asLista(filtros.placa).length > 0;
   const temFiltro       = temFiltroGlobal || temFiltroChart;
 
   // ── Skeleton
@@ -436,6 +1355,20 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', fontFamily: D.font }}>
 
+      {/* Estilo do Brush (recharts): escurece só a "janela clicável"
+          (entre as 2 alças) pra ficar evidente o que o user pode arrastar.
+          O fundo continua claro (fill={D.border} no <Brush>). */}
+      <style>{`
+        .recharts-brush-slide {
+          fill: ${D.text};
+          fill-opacity: 0.35;
+          cursor: ew-resize;
+        }
+        .recharts-brush-slide:hover {
+          fill-opacity: 0.5;
+        }
+      `}</style>
+
       {/* ── Header ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 16 }}>
         <div>
@@ -454,33 +1387,14 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
         padding: '16px 20px', boxShadow: D.shadow, marginBottom: 16,
         display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-end',
       }}>
-        {/* Revenda */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={sLabel}>Revenda</label>
-          <select
-            className="mpd-select"
-            value={filtros.revenda}
-            onChange={e => setGlobal('revenda', e.target.value)}
-            style={sSelect}
-          >
-            <option value="">Todas as revendas</option>
-            {uniqueRevendas.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
-        </div>
-
-        {/* Frota */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={sLabel}>Frota</label>
-          <select
-            className="mpd-select"
-            value={filtros.frota}
-            onChange={e => setGlobal('frota', e.target.value)}
-            style={sSelect}
-          >
-            <option value="">Todas as frotas</option>
-            {uniqueFrotas.map(f => <option key={f} value={f}>{f}</option>)}
-          </select>
-        </div>
+        {/* Frota — multi-select (Ctrl+click pra escolher várias) */}
+        <MultiSelectDropdown
+          label="Frota"
+          valor={filtros.frota}
+          opcoes={uniqueFrotas}
+          onChange={val => setGlobal('frota', val)}
+          placeholderTodos="Todas as frotas"
+        />
 
         {/* Separador visual */}
         <div style={{ width: 1, height: 36, background: D.border, alignSelf: 'flex-end', marginBottom: 2 }} />
@@ -527,11 +1441,18 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
       </div>
 
       {/* ── Chips de cross-filter (cliques nos gráficos) ── */}
+      {/* Cada valor selecionado vira uma chip independente; clicar no × remove só aquele */}
       {temFiltroChart && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16, animation: 'fadeUp 0.25s ease both' }}>
-          {filtros.data      && <Chip label={`Data: ${filtros.data}`}           onClear={() => toggle('data', filtros.data)} />}
-          {filtros.motorista && <Chip label={`Motorista: ${filtros.motorista}`}  onClear={() => toggle('motorista', filtros.motorista)} />}
-          {filtros.placa     && <Chip label={`Placa: ${filtros.placa}`}          onClear={() => toggle('placa', filtros.placa)} />}
+          {asLista(filtros.data).map(v => (
+            <Chip key={`data-${v}`} label={`Data: ${v}`} onClear={() => toggle('data', v)} />
+          ))}
+          {asLista(filtros.motorista).map(v => (
+            <Chip key={`mot-${v}`} label={`Motorista: ${labelMotorista(v)}`} onClear={() => toggle('motorista', v)} />
+          ))}
+          {asLista(filtros.placa).map(v => (
+            <Chip key={`placa-${v}`} label={`Placa: ${v}`} onClear={() => toggle('placa', v)} />
+          ))}
         </div>
       )}
 
@@ -554,102 +1475,304 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
           {/* ── Gráficos ── */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
 
-            <ChartCard titulo="Operações por Data" badge={<span style={{ fontSize: 10.5, color: D.textMuted, fontFamily: D.font }}>clique para filtrar</span>}>
-              {dadosData.length === 0 ? <Vazio /> : (
+            <ChartCard titulo="EFC Mês a Mês" badge={<span style={{ fontSize: 10.5, color: D.textMuted, fontFamily: D.font }}>visão geral</span>}>
+              {dadosMes.length === 0 ? <Vazio /> : (
                 <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={dadosData} margin={{ top: 4, right: 4, left: -16, bottom: 24 }}>
+                  <BarChart data={dadosMes} margin={{ top: 24, right: 12, left: -16, bottom: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={D.borderLight} vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} angle={-35} textAnchor="end" interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} allowDecimals={false} />
-                    <Tooltip content={<TooltipCustom />} />
-                    <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={40} onClick={d => toggle('data', d.iso)} style={{ cursor: 'pointer' }}>
-                      {dadosData.map(d => <Cell key={d.iso} fill={filtros.data && filtros.data !== d.iso ? D.borderLight : D.red} />)}
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: D.textSec, fontFamily: D.font }} axisLine={false} tickLine={false} />
+                    <YAxis
+                      domain={[0, 110]}
+                      ticks={[0, 25, 50, 75, 100]}
+                      tickFormatter={v => `${v}%`}
+                      tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }}
+                    />
+                    <Tooltip content={<TooltipEFCMes />} cursor={{ fill: D.blueSoft }} />
+                    {metaPercent != null && (
+                      <ReferenceLine
+                        y={metaPercent}
+                        stroke={D.green}
+                        strokeDasharray="6 3"
+                        strokeWidth={2}
+                        label={{ value: `Meta ${metaPercent}%`, position: 'right', fill: D.green, fontSize: 10, fontFamily: D.font, fontWeight: 700 }}
+                      />
+                    )}
+                    <Bar dataKey="efc" radius={[5, 5, 0, 0]} maxBarSize={48} label={{ position: 'top', formatter: v => `${v}%`, fontSize: 10, fill: D.textSec, fontFamily: D.font, fontWeight: 700 }}>
+                      {dadosMes.map(d => {
+                        const corBase = metaPercent != null
+                          ? (d.efc >= metaPercent ? D.green : D.red)
+                          : D.blue;
+                        return <Cell key={d.chave} fill={corBase} />;
+                      })}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               )}
             </ChartCard>
 
-            <ChartCard titulo="Top Motoristas" badge={<span style={{ fontSize: 10.5, color: D.textMuted, fontFamily: D.font }}>clique para filtrar</span>}>
-              {dadosMotorista.length === 0 ? <Vazio /> : (
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={dadosMotorista} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={D.borderLight} horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} allowDecimals={false} />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} width={110} />
-                    <Tooltip content={<TooltipCustom />} />
-                    <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={22} onClick={d => toggle('motorista', d.name)} style={{ cursor: 'pointer' }}>
-                      {dadosMotorista.map(d => <Cell key={d.name} fill={filtros.motorista && filtros.motorista !== d.name ? D.borderLight : D.blue} />)}
-                    </Bar>
-                  </BarChart>
+            <ChartCard
+              titulo="EFC por Dia"
+              badge={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <select
+                    value={janelaDias}
+                    onChange={e => setJanelaDias(e.target.value)}
+                    style={{
+                      padding: '4px 24px 4px 8px',
+                      border: `1px solid ${D.border}`,
+                      borderRadius: 6,
+                      fontSize: 11,
+                      color: D.text,
+                      background: `${D.bg} url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='none' stroke='%2394a3b8' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E") no-repeat right 6px center`,
+                      fontFamily: D.font,
+                      cursor: 'pointer',
+                      WebkitAppearance: 'none',
+                      MozAppearance: 'none',
+                      appearance: 'none',
+                    }}
+                  >
+                    <option value="mes">Mês</option>
+                    <option value="15">15 dias</option>
+                    <option value="7">7 dias</option>
+                  </select>
+                  <span style={{ fontSize: 10.5, color: D.textMuted, fontFamily: D.font }}>
+                    clique no ponto para filtrar
+                  </span>
+                </div>
+              }
+            >
+              {dadosData.length === 0 ? <Vazio /> : (
+                <ResponsiveContainer width="100%" height={brushRange ? 300 : 220}>
+                  <LineChart data={dadosData} margin={{ top: 4, right: 12, left: -16, bottom: brushRange ? 56 : 24 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={D.borderLight} vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} angle={-35} textAnchor="end" interval={brushRange ? 0 : 'preserveStartEnd'} />
+                    <YAxis
+                      domain={yDomainDia}
+                      ticks={yTicksDia}
+                      tickFormatter={v => `${v}%`}
+                      tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }}
+                    />
+                    <Tooltip content={<TooltipEFC />} />
+                    {/* Linha tracejada verde — meta cadastrada */}
+                    {metaPercent != null && (
+                      <ReferenceLine
+                        y={metaPercent}
+                        stroke={D.green}
+                        strokeDasharray="6 3"
+                        strokeWidth={2}
+                        label={{
+                          value: `Meta ${metaPercent}%`,
+                          position: 'right',
+                          fill: D.green,
+                          fontSize: 10,
+                          fontFamily: D.font,
+                          fontWeight: 700,
+                        }}
+                      />
+                    )}
+                    {/* Linha do EFC realizado */}
+                    <Line
+                      type="monotone"
+                      dataKey="efc"
+                      stroke={D.blue}
+                      strokeWidth={2.5}
+                      dot={(props) => {
+                        const { cx, cy, payload } = props;
+                        const selecionado = asLista(filtros.data).includes(payload.iso);
+                        return (
+                          <circle
+                            cx={cx} cy={cy}
+                            r={selecionado ? 6 : 4}
+                            fill={selecionado ? '#fff' : D.blue}
+                            stroke={D.blue}
+                            strokeWidth={selecionado ? 2.5 : 0}
+                          />
+                        );
+                      }}
+                      activeDot={{
+                        r: 7,
+                        cursor: 'pointer',
+                        // Ctrl/Cmd+click adiciona ao filtro (multi); click normal substitui
+                        onClick: (_, e) => {
+                          const p = e?.payload || e;
+                          if (p?.iso) toggle('data', p.iso, e);
+                        },
+                        fill: D.blue,
+                        stroke: '#fff',
+                        strokeWidth: 2,
+                      }}
+                    />
+                    {/* Brush — scrollbar com janela visível quando janelaDias != 'mes' */}
+                    {brushRange && (
+                      <Brush
+                        dataKey="label"
+                        height={14}
+                        y={262}
+                        stroke={D.textSec}
+                        fill={D.border}
+                        travellerWidth={6}
+                        startIndex={brushRange.startIndex}
+                        endIndex={brushRange.endIndex}
+                        tickFormatter={() => ''}
+                      />
+                    )}
+                  </LineChart>
                 </ResponsiveContainer>
               )}
             </ChartCard>
 
           </div>
 
-          <div style={{ marginBottom: 20 }}>
-            <ChartCard titulo="Top Placas" badge={<span style={{ fontSize: 10.5, color: D.textMuted, fontFamily: D.font }}>clique para filtrar</span>}>
-              {dadosPlaca.length === 0 ? <Vazio /> : (
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={dadosPlaca} margin={{ top: 4, right: 4, left: -16, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={D.borderLight} vertical={false} />
-                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} angle={-25} textAnchor="end" interval={0} />
-                    <YAxis tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} allowDecimals={false} />
-                    <Tooltip content={<TooltipCustom />} />
-                    <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={36} onClick={d => toggle('placa', d.name)} style={{ cursor: 'pointer' }}>
-                      {dadosPlaca.map(d => <Cell key={d.name} fill={filtros.placa && filtros.placa !== d.name ? D.borderLight : D.amber} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </ChartCard>
+          {/* ── 3 tabelas EFC lado a lado: Mapa · Placa · Motorista ── */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+            gap: 20,
+            marginBottom: 20,
+          }}>
+            <TabelaEFC
+              titulo="EFC por Mapa"
+              colLabel="Mapa"
+              dados={dadosMapa}
+              getKey={d => d.mapa}
+              getLabel={d => d.mapa}
+              formatValor={d => d.efc === 100 ? 'OK' : 'NOK'}
+              metaPercent={metaPercent}
+            />
+            <TabelaEFC
+              titulo="EFC por Placa"
+              colLabel="Placa"
+              dados={dadosPlaca}
+              getKey={d => d.placa}
+              getLabel={d => d.placa}
+              filtroAtivo={filtros.placa}
+              onClick={(d, e) => toggle('placa', d.placa, e)}
+              metaPercent={metaPercent}
+            />
+            <TabelaEFC
+              titulo="EFC por Motorista"
+              colLabel="Nome Motorista"
+              dados={dadosMotorista}
+              getKey={d => d.codigo}
+              getLabel={d => d.label}
+              filtroAtivo={filtros.motorista}
+              onClick={(d, e) => toggle('motorista', d.codigo, e)}
+              metaPercent={metaPercent}
+            />
           </div>
 
           {/* ── Tabela ── */}
           <div style={{ background: D.surface, border: `1px solid ${D.border}`, borderRadius: D.radius, overflow: 'hidden', boxShadow: D.shadow }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: `1px solid ${D.borderLight}` }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: `1px solid ${D.borderLight}`, gap: 14, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <div style={{ width: 3, height: 14, background: D.red, borderRadius: 2 }} />
                 <span style={{ fontSize: 13, fontWeight: 700, color: D.text, fontFamily: D.font }}>Detalhamento</span>
               </div>
-              <span style={{ fontSize: 11.5, color: D.textMuted, fontFamily: D.font }}>
-                {linhasFiltradas.length.toLocaleString('pt-BR')} registro(s)
-                {temFiltro && <> — <strong style={{ color: D.red }}>filtro ativo</strong></>}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                {/* Input de busca livre — filtra em qualquer coluna */}
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    value={busca}
+                    onChange={e => setBusca(e.target.value)}
+                    placeholder="Buscar por mapa, placa, motorista, usuário…"
+                    style={{ ...sInput, paddingLeft: 30, minWidth: 280 }}
+                  />
+                  <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: D.textMuted, pointerEvents: 'none' }}>🔎</span>
+                  {busca && (
+                    <button
+                      onClick={() => setBusca('')}
+                      style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: D.textMuted, fontSize: 14, padding: '2px 6px' }}
+                      title="Limpar busca"
+                    >×</button>
+                  )}
+                </div>
+                {temFiltro && (
+                  <span style={{ fontSize: 11.5, color: D.textMuted, fontFamily: D.font }}>
+                    <strong style={{ color: D.red }}>filtro ativo</strong>
+                  </span>
+                )}
+              </div>
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    {['Revenda','Mapa','Placa','Frota','Data Emissão','Hora','Motorista','Usuário'].map(c => (
-                      <th key={c} style={{ background: D.text, color: '#fff', padding: '9px 14px', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 11, fontFamily: D.font, letterSpacing: 0.3 }}>{c}</th>
-                    ))}
+                    {[
+                      { label: 'Data Emissão', campo: 'dataEmissao'     },
+                      { label: 'Mapa',         campo: 'mapa'            },
+                      { label: 'Frota',        campo: 'frotaCadastrada' },
+                      { label: 'Placa',        campo: 'placa'           },
+                      { label: 'Motorista',    campo: 'motorista'       },
+                      { label: 'Hora',         campo: 'horaOperacao'    },
+                      { label: 'EFC',          campo: 'efc'             },
+                    ].map(({ label, campo }) => {
+                      const ativo = ordenacao.campo === campo;
+                      const seta  = ativo ? (ordenacao.direcao === 'asc' ? '▲' : '▼') : '↕';
+                      return (
+                        <th
+                          key={campo}
+                          onClick={() => toggleOrdenacao(campo)}
+                          style={{
+                            background: D.text, color: '#fff', padding: '9px 14px',
+                            textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap',
+                            fontSize: 11, fontFamily: D.font, letterSpacing: 0.3,
+                            cursor: 'pointer', userSelect: 'none',
+                          }}
+                          title={`Ordenar por ${label}`}
+                        >
+                          {label}
+                          <span style={{
+                            marginLeft: 6, fontSize: 9,
+                            color: ativo ? '#fff' : '#9ca3af',
+                            opacity: ativo ? 1 : 0.5,
+                          }}>{seta}</span>
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
-                  {linhasFiltradas.length === 0 ? (
-                    <tr><td colSpan={8}><Vazio /></td></tr>
+                  {linhasParaTabela.length === 0 ? (
+                    <tr><td colSpan={7}><Vazio /></td></tr>
                   ) : (
-                    linhasFiltradas.slice(0, 200).map((l, i) => (
-                      <tr key={i} style={{ background: i % 2 === 0 ? D.surface : D.bg }}>
-                        <td style={tdS}>{l.revenda || '—'}</td>
-                        <td style={tdS}>{l.mapa || '—'}</td>
-                        <td style={{ ...tdS, fontWeight: 600, fontFamily: D.mono, fontSize: 11 }}>{l.placa || '—'}</td>
-                        <td style={tdS}>{l.frotaCadastrada || '—'}</td>
-                        <td style={tdS}>{l.dataEmissao || '—'}</td>
-                        <td style={{ ...tdS, fontFamily: D.mono, fontSize: 11 }}>{l.horaOperacao || '—'}</td>
-                        <td style={tdS}>{l.motorista || '—'}</td>
-                        <td style={tdS}>{l.usuario || '—'}</td>
-                      </tr>
-                    ))
+                    linhasParaTabela.slice(0, 200).map((l, i) => {
+                      const efc = calcularEFCLinha(l);
+                      const corEFC = efc === 'OK' ? D.green : efc === 'NOK' ? D.red : D.textMuted;
+                      const bgEFC  = efc === 'OK' ? `${D.green}1F` : efc === 'NOK' ? `${D.red}1F` : 'transparent';
+                      return (
+                        <tr key={i} style={{ background: i % 2 === 0 ? D.surface : D.bg }}>
+                          <td style={tdS}>{l.dataEmissao || '—'}</td>
+                          <td style={tdS}>{l.mapa || '—'}</td>
+                          <td style={tdS}>{l.frotaCadastrada || '—'}</td>
+                          <td style={{ ...tdS, fontWeight: 600, fontFamily: D.mono, fontSize: 11 }}>{l.placa || '—'}</td>
+                          <td style={tdS}>{labelMotorista(l.motorista)}</td>
+                          <td style={{ ...tdS, fontFamily: D.mono, fontSize: 11 }}>{l.horaOperacao || '—'}</td>
+                          <td style={tdS}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '2px 10px',
+                              borderRadius: 12,
+                              background: bgEFC,
+                              color: corEFC,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              fontFamily: D.font,
+                              letterSpacing: 0.5,
+                            }}>
+                              {efc}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
             </div>
-            {linhasFiltradas.length > 200 && (
+            {linhasParaTabela.length > 200 && (
               <div style={{ padding: '10px 20px', fontSize: 12, color: D.textMuted, borderTop: `1px solid ${D.borderLight}`, fontStyle: 'italic', fontFamily: D.font }}>
-                Exibindo 200 de {linhasFiltradas.length.toLocaleString('pt-BR')} registros
+                Exibindo 200 de {linhasParaTabela.length.toLocaleString('pt-BR')} registros
               </div>
             )}
           </div>
@@ -658,3 +1781,33 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
     </div>
   );
 }
+
+// ─── Exports adicionais ──────────────────────────────────────────────────────
+// Helpers, tokens, estilos e componentes UI reusados pelo _TIBasePage.js
+// (e por qualquer futura página MPD que precise da mesma identidade visual).
+// Mantém o componente FasePage como default export — só promove o que era
+// privado pra public sem mudar uso interno.
+export {
+  D,
+  horaParaMinutos,
+  parseDataBR,
+  toISO,
+  metaValida,
+  asLista,
+  toggleMulti,
+  filtrarLinhas,
+  FILTROS_VAZIOS,
+  isFrotaPadronizada,
+  sLabel,
+  sInput,
+  sSelect,
+  TopbarNav,
+  KPICard,
+  ChartCard,
+  Chip,
+  MultiSelectDropdown,
+  Skeleton,
+  Vazio,
+  EmptyState,
+  TooltipCustom,
+};

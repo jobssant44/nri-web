@@ -7,10 +7,12 @@ import {
 } from '../../design';
 
 const ABAS = [
-  { key: 'colaboradores', label: 'Colaborador',  colecao: 'prejuizo_colaboradores', campo: 'nome',  tipo: 'texto'  },
-  { key: 'areas',         label: 'Área',          colecao: 'prejuizo_areas',         campo: 'nome',  tipo: 'texto'  },
-  { key: 'motivos',       label: 'Motivo',         colecao: 'prejuizo_motivos',        campo: 'nome',  tipo: 'texto'  },
-  { key: 'meta_wqi',      label: 'Meta WQI',       colecao: 'prejuizo_meta_wqi',       campo: 'valor', tipo: 'numero' },
+  { key: 'colaboradores',   label: 'Colaborador',      colecao: 'prejuizo_colaboradores',   campo: 'nome',  tipo: 'texto'  },
+  { key: 'areas',           label: 'Área',              colecao: 'prejuizo_areas',           campo: 'nome',  tipo: 'texto'  },
+  { key: 'motivos',         label: 'Motivo',             colecao: 'prejuizo_motivos',          campo: 'nome',  tipo: 'texto'  },
+  { key: 'meta_wqi',        label: 'Meta WQI',           colecao: 'prejuizo_meta_wqi',         campo: 'valor', tipo: 'numero' },
+  { key: 'meta_troca',      label: 'Meta Troca',         colecao: 'prejuizo_meta_troca',       campo: 'valor', tipo: 'numero' },
+  { key: 'meta_reposicao',  label: 'Meta Reposição',     colecao: 'prejuizo_meta_reposicao',   campo: 'valor', tipo: 'numero' },
 ];
 
 function CardCadastro({ aba }) {
@@ -234,7 +236,7 @@ export default function CadastrosPrejuizoPage() {
       <PageHeader
         kicker="Gestão de Prejuízo"
         titulo="Cadastros"
-        sub="Gerencie colaboradores, áreas, motivos e metas do WQI."
+        sub="Gerencie colaboradores, áreas, motivos e metas (R$/HL) de WQI, Troca e Reposição."
       />
 
       {/* Abas */}

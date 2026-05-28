@@ -126,6 +126,33 @@ export function calcularABC(produtos, campo) {
   });
 }
 
+/**
+ * Decide qual mês usar pra gerar a `curva_abc` achatada (lida pela Nova NRI
+ * e por outras telas operacionais).
+ *
+ * Regra do user:
+ *   1. Se o mês atual está em `analise` (com produtos) → usa ele
+ *   2. Senão, se o mês anterior está em `analise` → usa ele
+ *   3. Senão, fallback pro mês mais recente importado
+ *
+ * Retorna a chave (YYYY-MM) ou null se `analise` estiver vazio.
+ */
+export function escolherMesParaCurvaAchatada(analise) {
+  if (!analise || typeof analise !== 'object') return null;
+  const chaves = Object.keys(analise).sort();
+  if (chaves.length === 0) return null;
+
+  const hoje      = new Date();
+  const atual     = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+  const dataAnt   = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+  const anterior  = `${dataAnt.getFullYear()}-${String(dataAnt.getMonth() + 1).padStart(2, '0')}`;
+
+  const temProdutos = (k) => analise[k] && Array.isArray(analise[k].produtos) && analise[k].produtos.length > 0;
+  if (temProdutos(atual))    return atual;
+  if (temProdutos(anterior)) return anterior;
+  return chaves[chaves.length - 1]; // fallback: mais recente importado
+}
+
 /** Apaga todos os documentos de uma coleção em lotes de 450 */
 async function limparColecao(nomeColecao, col, db) {
   const snap = await getDocs(col(nomeColecao));
@@ -395,9 +422,12 @@ function Importar030236() {
         { meses: [...new Set([...existentes, ...chaves])].sort() });
 
       // 3. Atualiza curva_abc (usada pelo módulo de Recebimento de NRI)
-      //    Usa o mês mais recente dos importados, classificação por cxTotal (Pareto)
-      const mesRecente = chaves[chaves.length - 1];
-      const curvaPorCx = calcularABC(analise[mesRecente].produtos, 'cxTotal');
+      //    Regra do user: prioridade mês atual → mês anterior → mais recente
+      //    importado (fallback). Pareto sobre cxTotal.
+      const mesEscolhido = escolherMesParaCurvaAchatada(analise);
+      const curvaPorCx = mesEscolhido
+        ? calcularABC(analise[mesEscolhido].produtos, 'cxTotal')
+        : [];
 
       prog(93, 'Limpando curva ABC do módulo NRI...');
       await limparColecao('curva_abc', colRevenda, db);

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { getDocs } from 'firebase/firestore';
 import { useDb } from '../../../utils/db';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, LineChart, Line, Cell,
 } from 'recharts';
 import {
@@ -12,6 +12,7 @@ import {
   FilterBar, FilterField, Chip, TooltipBRL, Skeleton, EmptyState, Vazio,
   BotaoClear,
 } from '../../../design';
+import { carregarMeta, META_PADRAO } from '../../../modules/gestao-prejuizo/metasHelpers';
 
 // ─── Helpers de parsing ───────────────────────────────────────────────────────
 function parseNum(val) {
@@ -67,21 +68,35 @@ function isoParaBR(iso) {
 
 const getNome    = l => l.descricao || l.codProduto || '—';
 const getCliente = l => l.nomeCliente || l.cliente || '—';
-const getRN      = l => {
-  const rn = String(l.rn || '').trim();
-  if (!rn) return '(sem RN)';
-  const s = rn.replace(/^0+/, '');
-  return s || rn;
+// Código do RN bruto (sem zeros à esquerda). Aceita tanto `rn` quanto `vendedor`
+// (relatorio_030237 grava como `vendedor`; mapeamentos antigos usavam `rn`).
+const getRNCodigo = l => {
+  const raw = String(l.rn || l.vendedor || '').trim();
+  if (!raw) return '';
+  const s = raw.replace(/^0+/, '');
+  return s || raw;
+};
+// Código do GV (via lookup do RN no mapa de vendedores). Retorna '' quando
+// o RN não tem GV cadastrado.
+const getGVCodigo = (l, vmap) => {
+  const rn = getRNCodigo(l);
+  if (!rn) return '';
+  const v = vmap && vmap[rn];
+  const gv = v && v.codigoGV ? String(v.codigoGV).trim() : '';
+  return gv.replace(/^0+/, '') || gv;
 };
 
 // ─── Filtro cruzado ───────────────────────────────────────────────────────────
-function filtrarLinhas(linhas, { excluir, filtroRN, filtroProduto, filtroMes, filtroDia, filtroCliente }) {
+// Os filtros de RN/GV comparam pelo CÓDIGO (não pelo nome) — assim continuam
+// funcionando mesmo se algum não tiver cadastro em /vendedores.
+function filtrarLinhas(linhas, { excluir, filtroRN, filtroGV, filtroProduto, filtroMes, filtroDia, filtroCliente }, vmap) {
   return linhas.filter(l => {
-    if (excluir !== 'rn'      && filtroRN      && getRN(l)        !== filtroRN)      return false;
-    if (excluir !== 'produto' && filtroProduto && getNome(l)       !== filtroProduto) return false;
-    if (excluir !== 'mes'     && filtroMes     && toMesAno(l.data) !== filtroMes)     return false;
-    if (excluir !== 'dia'     && filtroDia     && toISO(l.data)    !== filtroDia)     return false;
-    if (excluir !== 'cliente' && filtroCliente && getCliente(l)    !== filtroCliente) return false;
+    if (excluir !== 'rn'      && filtroRN      && getRNCodigo(l)        !== filtroRN)      return false;
+    if (excluir !== 'gv'      && filtroGV      && getGVCodigo(l, vmap)  !== filtroGV)      return false;
+    if (excluir !== 'produto' && filtroProduto && getNome(l)            !== filtroProduto) return false;
+    if (excluir !== 'mes'     && filtroMes     && toMesAno(l.data)      !== filtroMes)     return false;
+    if (excluir !== 'dia'     && filtroDia     && toISO(l.data)         !== filtroDia)     return false;
+    if (excluir !== 'cliente' && filtroCliente && getCliente(l)         !== filtroCliente) return false;
     return true;
   });
 }
@@ -103,9 +118,13 @@ function DotDia({ cx, cy, payload, filtroDia }) {
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 export default function TrocaPage() {
-  const { colRevenda } = useDb();
+  const { col, colRevenda, docRef, rid } = useDb();
   const [linhasBase,       setLinhasBase]       = useState([]);
   const [hectoBase,        setHectoBase]        = useState([]);
+  // Mapa código (sem zeros à esquerda) → { nome, codigoGV, nomeGV }
+  const [vendedoresMap,    setVendedoresMap]    = useState({});
+  // Meta R$/HL — vem do cadastro `prejuizo_meta_troca` (fallback 0,20).
+  const [metaPorHL,        setMetaPorHL]        = useState(META_PADRAO.troca);
   const [carregando,       setCarregando]       = useState(true);
   const [erro,             setErro]             = useState('');
 
@@ -114,6 +133,7 @@ export default function TrocaPage() {
   const [filtroDataFim,    setFiltroDataFim]    = useState('');
 
   const [filtroRN,       setFiltroRN]       = useState('');
+  const [filtroGV,       setFiltroGV]       = useState('');
   const [filtroProduto,  setFiltroProduto]  = useState('');
   const [filtroMes,      setFiltroMes]      = useState('');
   const [filtroDia,      setFiltroDia]      = useState('');
@@ -125,9 +145,11 @@ export default function TrocaPage() {
   useEffect(() => {
     async function carregar() {
       try {
-        const [snapTroca, snapHecto] = await Promise.all([
+        const [snapTroca, snapHecto, snapVendedores, meta] = await Promise.all([
           getDocs(colRevenda('relatorio_030237')),
           getDocs(colRevenda('relatorio_030147hecto')),
+          getDocs(col('vendedores')),
+          carregarMeta('troca', docRef, rid),
         ]);
         const todas = [];
         snapTroca.docs.forEach(d => {
@@ -145,6 +167,22 @@ export default function TrocaPage() {
             });
           });
         });
+        // Monta o mapa código → { nome, codigoGV, nomeGV }. A chave usa o
+        // código já normalizado (sem zeros à esquerda), pra bater com o que
+        // sai de getRNCodigo() nas linhas do 03.02.37.
+        const vmap = {};
+        snapVendedores.docs.forEach(d => {
+          const v = d.data();
+          const cod = String(v.codigo || d.id || '').replace(/^0+/, '');
+          if (!cod) return;
+          vmap[cod] = {
+            nome:     v.nome     || '',
+            codigoGV: v.codigoGV || '',
+            nomeGV:   v.nomeGV   || '',
+          };
+        });
+        setVendedoresMap(vmap);
+        setMetaPorHL(meta);
         setLinhasBase(todas);
         setHectoBase(snapHecto.docs.map(d => d.data()));
       } catch (e) {
@@ -154,7 +192,29 @@ export default function TrocaPage() {
       }
     }
     carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Resolve código → label exibido. Se o RN tiver cadastro, usa "código - Nome";
+  // senão usa só o código.
+  const labelRN = (codigo) => {
+    if (!codigo) return '(sem RN)';
+    const v = vendedoresMap[codigo];
+    if (v && v.nome) return `${codigo} - ${v.nome}`;
+    return codigo;
+  };
+
+  // Resolve código do GV → label "código - Nome do GV". A varredura no mapa é
+  // necessária porque o vendedoresMap é indexado por RN (não por GV); pega o
+  // primeiro RN que aponta pro GV pra obter o nome.
+  const labelGV = (codigoGV) => {
+    if (!codigoGV) return '(sem GV)';
+    for (const v of Object.values(vendedoresMap)) {
+      const cod = String(v.codigoGV || '').replace(/^0+/, '');
+      if (cod === codigoGV && v.nomeGV) return `${codigoGV} - ${v.nomeGV}`;
+    }
+    return codigoGV;
+  };
 
   const linhasFiltradas = useMemo(() => {
     return linhasBase.filter(l => {
@@ -185,44 +245,72 @@ export default function TrocaPage() {
     () => linhasFiltradas.reduce((s, l) => s + parseNum(l.valor), 0),
     [linhasFiltradas]
   );
-  const metaTroca = totalHecto * 0.20;
+  const metaTroca = totalHecto * metaPorHL;
   const trocaRsHL = totalHecto > 0 ? totalTroca / totalHecto : 0;
   const saldo     = metaTroca - totalTroca;
   const economia  = saldo >= 0;
 
-  const filtrosInterativos = { filtroRN, filtroProduto, filtroMes, filtroDia, filtroCliente };
+  const filtrosInterativos = { filtroRN, filtroGV, filtroProduto, filtroMes, filtroDia, filtroCliente };
 
   const linhasParaRN = useMemo(
-    () => filtrarLinhas(linhasFiltradas, { excluir: 'rn', ...filtrosInterativos }),
-    [linhasFiltradas, filtroProduto, filtroMes, filtroDia, filtroCliente] // eslint-disable-line
+    () => filtrarLinhas(linhasFiltradas, { excluir: 'rn', ...filtrosInterativos }, vendedoresMap),
+    [linhasFiltradas, filtroGV, filtroProduto, filtroMes, filtroDia, filtroCliente, vendedoresMap] // eslint-disable-line
+  );
+  const linhasParaGV = useMemo(
+    () => filtrarLinhas(linhasFiltradas, { excluir: 'gv', ...filtrosInterativos }, vendedoresMap),
+    [linhasFiltradas, filtroRN, filtroProduto, filtroMes, filtroDia, filtroCliente, vendedoresMap] // eslint-disable-line
   );
   const linhasParaProdutos = useMemo(
-    () => filtrarLinhas(linhasFiltradas, { excluir: 'produto', ...filtrosInterativos }),
-    [linhasFiltradas, filtroRN, filtroMes, filtroDia, filtroCliente] // eslint-disable-line
+    () => filtrarLinhas(linhasFiltradas, { excluir: 'produto', ...filtrosInterativos }, vendedoresMap),
+    [linhasFiltradas, filtroRN, filtroGV, filtroMes, filtroDia, filtroCliente, vendedoresMap] // eslint-disable-line
   );
   const linhasParaMes = useMemo(
-    () => filtrarLinhas(linhasFiltradas, { excluir: 'mes', ...filtrosInterativos }),
-    [linhasFiltradas, filtroRN, filtroProduto, filtroDia, filtroCliente] // eslint-disable-line
+    () => filtrarLinhas(linhasFiltradas, { excluir: 'mes', ...filtrosInterativos }, vendedoresMap),
+    [linhasFiltradas, filtroRN, filtroGV, filtroProduto, filtroDia, filtroCliente, vendedoresMap] // eslint-disable-line
   );
   const linhasParaDia = useMemo(
-    () => filtrarLinhas(linhasFiltradas, { excluir: 'dia', ...filtrosInterativos }),
-    [linhasFiltradas, filtroRN, filtroProduto, filtroMes, filtroCliente] // eslint-disable-line
+    () => filtrarLinhas(linhasFiltradas, { excluir: 'dia', ...filtrosInterativos }, vendedoresMap),
+    [linhasFiltradas, filtroRN, filtroGV, filtroProduto, filtroMes, filtroCliente, vendedoresMap] // eslint-disable-line
   );
   const linhasParaCliente = useMemo(
-    () => filtrarLinhas(linhasFiltradas, { excluir: 'cliente', ...filtrosInterativos }),
-    [linhasFiltradas, filtroRN, filtroProduto, filtroMes, filtroDia] // eslint-disable-line
+    () => filtrarLinhas(linhasFiltradas, { excluir: 'cliente', ...filtrosInterativos }, vendedoresMap),
+    [linhasFiltradas, filtroRN, filtroGV, filtroProduto, filtroMes, filtroDia, vendedoresMap] // eslint-disable-line
   );
 
+  // Agrupa por CÓDIGO do RN (chave única) e usa o NOME como rótulo (YAxis).
+  // Se dois códigos colidirem no mesmo nome, mantém o código no label pra
+  // não esconder a colisão.
   const dadosRN = useMemo(() => {
     const map = {};
     linhasParaRN.forEach(l => {
-      const rn = getRN(l);
-      map[rn] = (map[rn] || 0) + parseNum(l.valor);
+      const cod = getRNCodigo(l) || '(sem RN)';
+      map[cod] = (map[cod] || 0) + parseNum(l.valor);
     });
     return Object.entries(map)
-      .map(([rn, valor]) => ({ rn, valor: Math.round(valor * 100) / 100 }))
+      .map(([codigo, valor]) => ({
+        codigo,
+        label: labelRN(codigo),
+        valor: Math.round(valor * 100) / 100,
+      }))
       .sort((a, b) => b.valor - a.valor);
-  }, [linhasParaRN]);
+  }, [linhasParaRN, vendedoresMap]); // eslint-disable-line
+
+  // Agrupa por CÓDIGO do GV (via vendedoresMap[rn].codigoGV). RNs sem GV
+  // cadastrado caem no balde "(sem GV)" pra não sumirem do total.
+  const dadosGV = useMemo(() => {
+    const map = {};
+    linhasParaGV.forEach(l => {
+      const cod = getGVCodigo(l, vendedoresMap) || '(sem GV)';
+      map[cod] = (map[cod] || 0) + parseNum(l.valor);
+    });
+    return Object.entries(map)
+      .map(([codigo, valor]) => ({
+        codigo,
+        label: labelGV(codigo),
+        valor: Math.round(valor * 100) / 100,
+      }))
+      .sort((a, b) => b.valor - a.valor);
+  }, [linhasParaGV, vendedoresMap]); // eslint-disable-line
 
   const dadosProdutos = useMemo(() => {
     const map = {};
@@ -248,6 +336,11 @@ export default function TrocaPage() {
       .sort((a, b) => mesAnoParaISO(a.mes).localeCompare(mesAnoParaISO(b.mes)));
   }, [linhasParaMes]);
 
+  // Soma R$ Troca por dia + calcula meta diária = (Hecto do dia anterior) × 0,20.
+  // Fórmula igual à do WQI "Perda — Dia a Dia", trocando o coeficiente de R$/HL
+  // (WQI = R$ 0,50/HL · Troca = R$ 0,20/HL).
+  // Fallback: se não houver Hecto em D-1, tenta D-2. Sem Hecto vizinho, meta = null
+  // (a linha tracejada só não desenha o ponto naquele dia).
   const dadosDia = useMemo(() => {
     const map = {};
     linhasParaDia.forEach(l => {
@@ -255,13 +348,35 @@ export default function TrocaPage() {
       if (!iso) return;
       map[iso] = (map[iso] || 0) + parseNum(l.valor);
     });
+    // Mapa Hecto por dia ISO. Não respeita os filtros interativos
+    // (dia/RN/produto/etc), só o range de data da FilterBar — isso bate com
+    // o KPI lateral "Meta Troca R$" da página.
+    const hectoMap = {};
+    hectoBase.forEach(h => {
+      if (filtroDataInicio || filtroDataFim) {
+        const isoH = toISO(h.data);
+        if (!isoH) return;
+        if (filtroDataInicio && isoH < filtroDataInicio) return;
+        if (filtroDataFim   && isoH > filtroDataFim)   return;
+      }
+      const iso = toISO(h.data);
+      if (iso) hectoMap[iso] = (hectoMap[iso] || 0) + parseNum(h.totalHecto);
+    });
+    const isoMenosN = (iso, n) => {
+      const [y, m, d] = iso.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      dt.setDate(dt.getDate() - n);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    };
     return Object.entries(map)
       .map(([iso, valor]) => {
         const [, mm, dd] = iso.split('-');
-        return { dia: `${dd}/${mm}`, iso, valor: Math.round(valor * 100) / 100 };
+        const hectoAnt = hectoMap[isoMenosN(iso, 1)] || hectoMap[isoMenosN(iso, 2)] || 0;
+        const meta     = hectoAnt > 0 ? Math.round(hectoAnt * metaPorHL * 100) / 100 : null;
+        return { dia: `${dd}/${mm}`, iso, valor: Math.round(valor * 100) / 100, meta };
       })
       .sort((a, b) => a.iso.localeCompare(b.iso));
-  }, [linhasParaDia]);
+  }, [linhasParaDia, hectoBase, filtroDataInicio, filtroDataFim, metaPorHL]);
 
   const dadosClientes = useMemo(() => {
     const map = {};
@@ -275,17 +390,18 @@ export default function TrocaPage() {
       .slice(0, topNCliente);
   }, [linhasParaCliente, topNCliente]);
 
-  function handleClickRN(data)      { const rn  = data?.rn;      if (rn)  setFiltroRN(prev      => prev === rn  ? '' : rn);  }
+  function handleClickRN(data)      { const cod = data?.codigo; if (cod) setFiltroRN(prev      => prev === cod ? '' : cod); }
+  function handleClickGV(data)      { const cod = data?.codigo; if (cod) setFiltroGV(prev      => prev === cod ? '' : cod); }
   function handleClickProduto(data) { const nm  = data?.nome;    if (nm)  setFiltroProduto(prev => prev === nm  ? '' : nm);  }
   function handleClickMes(data)     { const mes = data?.mes;     if (mes) setFiltroMes(prev     => prev === mes ? '' : mes); }
   function handleClickDia(_, payload) { const iso = payload?.payload?.iso; if (iso) setFiltroDia(prev => prev === iso ? '' : iso); }
   function handleClickCliente(data) { const cli = data?.cliente; if (cli) setFiltroCliente(prev => prev === cli ? '' : cli); }
   function limparTodosFiltrosGrafico() {
-    setFiltroRN(''); setFiltroProduto(''); setFiltroMes(''); setFiltroDia(''); setFiltroCliente('');
+    setFiltroRN(''); setFiltroGV(''); setFiltroProduto(''); setFiltroMes(''); setFiltroDia(''); setFiltroCliente('');
   }
 
   const filtroBarraAtivo   = filtroRevenda || filtroDataInicio || filtroDataFim;
-  const filtroGraficoAtivo = filtroRN || filtroProduto || filtroMes || filtroDia || filtroCliente;
+  const filtroGraficoAtivo = filtroRN || filtroGV || filtroProduto || filtroMes || filtroDia || filtroCliente;
   const temDados           = linhasBase.length > 0;
 
   // ── Loading ────────────────────────────────────────────────────────────────
@@ -362,7 +478,7 @@ export default function TrocaPage() {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
           <KPICardSecondary label="Hecto"         valor={numFmt(totalHecto)}                    cor={D.blue} />
-          <KPICardSecondary label="Meta Troca R$" valor={brl(metaTroca)}                         cor={D.amber} sub="R$ 0,20 × Hecto" />
+          <KPICardSecondary label="Meta Troca R$" valor={brl(metaTroca)}                         cor={D.amber} sub={`R$ ${metaPorHL.toFixed(2).replace('.', ',')} × Hecto`} />
           <KPICardSecondary label="Troca R$/HL"   valor={totalHecto > 0 ? brl(trocaRsHL) : '—'} cor={D.green} sub="R$ Troca ÷ Hecto" />
         </div>
       </div>
@@ -390,7 +506,8 @@ export default function TrocaPage() {
                 Filtros ativos
               </span>
               <div style={{ width: 1, height: 14, background: D.border }} />
-              {filtroRN      && <Chip label={`RN ${filtroRN}`}              onClear={() => setFiltroRN('')} />}
+              {filtroRN      && <Chip label={`RN ${labelRN(filtroRN)}`}     onClear={() => setFiltroRN('')} />}
+              {filtroGV      && <Chip label={`GV ${labelGV(filtroGV)}`}     onClear={() => setFiltroGV('')} />}
               {filtroProduto && <Chip label={`Produto: ${filtroProduto}`}   onClear={() => setFiltroProduto('')} />}
               {filtroCliente && <Chip label={`Cliente: ${filtroCliente}`}   onClear={() => setFiltroCliente('')} />}
               {filtroMes     && <Chip label={`Mês: ${filtroMes}`}           onClear={() => setFiltroMes('')} />}
@@ -417,11 +534,35 @@ export default function TrocaPage() {
                   <BarChart data={dadosRN} layout="vertical" margin={{ top: 4, right: 78, left: 4, bottom: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={D.borderLight} />
                     <XAxis type="number" tickFormatter={v => brl(v)} tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="rn" width={80} tick={{ fontSize: 10, fill: D.textSec, fontFamily: D.font }} axisLine={false} tickLine={false} tickFormatter={v => v.length > 12 ? v.slice(0, 12) + '…' : v} />
+                    <YAxis
+                      type="category"
+                      dataKey="label"
+                      width={160}
+                      axisLine={false}
+                      tickLine={false}
+                      interval={0}
+                      tick={({ x, y, payload }) => {
+                        const txt = String(payload.value || '');
+                        const trunc = txt.length > 24 ? txt.slice(0, 24) + '…' : txt;
+                        return (
+                          <text
+                            x={x - 156}
+                            y={y}
+                            dy={4}
+                            textAnchor="start"
+                            fontSize={10}
+                            fontFamily={D.font}
+                            fill={D.textSec}
+                          >
+                            {trunc}
+                          </text>
+                        );
+                      }}
+                    />
                     <Tooltip content={<TooltipBRL />} cursor={{ fill: D.blueSoft }} />
                     <Bar dataKey="valor" name="R$ Troca" radius={[0, 5, 5, 0]} label={{ position: 'right', formatter: v => brl(v), fontSize: 10, fill: D.textSec, fontFamily: D.font }} onClick={handleClickRN} style={{ cursor: 'pointer' }}>
                       {dadosRN.map((entry, i) => (
-                        <Cell key={i} fill={D.blue} opacity={filtroRN && filtroRN !== entry.rn ? 0.18 : 1} />
+                        <Cell key={i} fill={D.blue} opacity={filtroRN && filtroRN !== entry.codigo ? 0.18 : 1} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -445,7 +586,31 @@ export default function TrocaPage() {
                   <BarChart data={dadosProdutos} layout="vertical" margin={{ top: 4, right: 78, left: 4, bottom: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={D.borderLight} />
                     <XAxis type="number" tickFormatter={v => brl(v)} tick={{ fontSize: 10, fill: D.textMuted, fontFamily: D.font }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="nome" width={130} tick={{ fontSize: 10, fill: D.textSec, fontFamily: D.font }} axisLine={false} tickLine={false} tickFormatter={v => v.length > 18 ? v.slice(0, 18) + '…' : v} />
+                    <YAxis
+                      type="category"
+                      dataKey="nome"
+                      width={180}
+                      axisLine={false}
+                      tickLine={false}
+                      interval={0}
+                      tick={({ x, y, payload }) => {
+                        const txt = String(payload.value || '');
+                        const trunc = txt.length > 28 ? txt.slice(0, 28) + '…' : txt;
+                        return (
+                          <text
+                            x={x - 176}
+                            y={y}
+                            dy={4}
+                            textAnchor="start"
+                            fontSize={10}
+                            fontFamily={D.font}
+                            fill={D.textSec}
+                          >
+                            {trunc}
+                          </text>
+                        );
+                      }}
+                    />
                     <Tooltip content={<TooltipBRL />} cursor={{ fill: D.redSoft }} />
                     <Bar dataKey="valor" name="R$ Troca" radius={[0, 5, 5, 0]} label={{ position: 'right', formatter: v => brl(v), fontSize: 10, fill: D.textSec, fontFamily: D.font }} onClick={handleClickProduto} style={{ cursor: 'pointer' }}>
                       {dadosProdutos.map((entry, i) => (
@@ -458,6 +623,41 @@ export default function TrocaPage() {
             </ChartCard>
 
           </div>
+
+          {/* ── GV ───────────────────────────────────────────────────── */}
+          <ChartCard titulo="R$ Troca por GV">
+            {dadosGV.length === 0 ? <Vazio /> : (
+              <ResponsiveContainer width="100%" height={Math.min(Math.max(160, dadosGV.length * 38), 420)}>
+                <BarChart data={dadosGV} layout="vertical" margin={{ top: 4, right: 90, left: 8, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={D.borderLight} />
+                  <XAxis type="number" tickFormatter={v => brl(v)} tick={{ fontSize: 11, fill: D.textMuted, fontFamily: D.font }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="label"
+                    width={220}
+                    axisLine={false}
+                    tickLine={false}
+                    interval={0}
+                    tick={({ x, y, payload }) => {
+                      const txt = String(payload.value || '');
+                      const trunc = txt.length > 30 ? txt.slice(0, 30) + '…' : txt;
+                      return (
+                        <text x={x - 216} y={y} dy={4} textAnchor="start" fontSize={11} fontFamily={D.font} fill={D.textSec}>
+                          {trunc}
+                        </text>
+                      );
+                    }}
+                  />
+                  <Tooltip content={<TooltipBRL />} cursor={{ fill: D.amberSoft }} />
+                  <Bar dataKey="valor" name="R$ Troca" radius={[0, 5, 5, 0]} label={{ position: 'right', formatter: v => brl(v), fontSize: 11, fill: D.textSec, fontFamily: D.font }} onClick={handleClickGV} style={{ cursor: 'pointer' }}>
+                    {dadosGV.map((entry, i) => (
+                      <Cell key={i} fill={D.amber} opacity={filtroGV && filtroGV !== entry.codigo ? 0.18 : 1} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
 
           {/* ── Clientes ───────────────────────────────────────────────── */}
           <ChartCard
@@ -476,7 +676,23 @@ export default function TrocaPage() {
                 <BarChart data={dadosClientes} layout="vertical" margin={{ top: 4, right: 110, left: 8, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={D.borderLight} />
                   <XAxis type="number" tickFormatter={v => brl(v)} tick={{ fontSize: 11, fill: D.textMuted, fontFamily: D.font }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="cliente" width={180} tick={{ fontSize: 10.5, fill: D.textSec, fontFamily: D.font }} axisLine={false} tickLine={false} tickFormatter={v => v.length > 26 ? v.slice(0, 26) + '…' : v} />
+                  <YAxis
+                    type="category"
+                    dataKey="cliente"
+                    width={240}
+                    axisLine={false}
+                    tickLine={false}
+                    interval={0}
+                    tick={({ x, y, payload }) => {
+                      const txt = String(payload.value || '');
+                      const trunc = txt.length > 32 ? txt.slice(0, 32) + '…' : txt;
+                      return (
+                        <text x={x - 236} y={y} dy={4} textAnchor="start" fontSize={10.5} fontFamily={D.font} fill={D.textSec}>
+                          {trunc}
+                        </text>
+                      );
+                    }}
+                  />
                   <Tooltip content={<TooltipBRL />} cursor={{ fill: 'rgba(100,116,139,0.06)' }} />
                   <Bar dataKey="valor" name="R$ Troca" radius={[0, 5, 5, 0]} label={{ position: 'right', formatter: v => brl(v), fontSize: 10.5, fill: D.textSec, fontFamily: D.font }} onClick={handleClickCliente} style={{ cursor: 'pointer' }}>
                     {dadosClientes.map((entry, i) => (
@@ -497,7 +713,7 @@ export default function TrocaPage() {
                   <XAxis dataKey="mes" tick={{ fontSize: 12, fill: D.textSec, fontFamily: D.font }} axisLine={false} tickLine={false} />
                   <YAxis tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: D.textMuted, fontFamily: D.font }} axisLine={false} tickLine={false} width={52} />
                   <Tooltip content={<TooltipBRL />} cursor={{ fill: D.amberSoft }} />
-                  <Bar dataKey="valor" name="R$ Troca" radius={[5, 5, 0, 0]} onClick={handleClickMes} style={{ cursor: 'pointer' }}>
+                  <Bar dataKey="valor" name="R$ Troca" radius={[5, 5, 0, 0]} maxBarSize={48} onClick={handleClickMes} style={{ cursor: 'pointer' }}>
                     {dadosMes.map((entry, i) => (
                       <Cell key={i} fill={D.amber} opacity={filtroMes && filtroMes !== entry.mes ? 0.18 : 1} />
                     ))}
@@ -522,6 +738,7 @@ export default function TrocaPage() {
                   />
                   <YAxis tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: D.textMuted, fontFamily: D.font }} axisLine={false} tickLine={false} width={52} />
                   <Tooltip content={<TooltipBRL />} />
+                  <Legend wrapperStyle={{ fontSize: 12, fontFamily: D.font, paddingTop: 8 }} />
                   <Line
                     type="monotone"
                     dataKey="valor"
@@ -530,6 +747,17 @@ export default function TrocaPage() {
                     strokeWidth={2}
                     activeDot={{ r: 6, cursor: 'pointer', onClick: handleClickDia, fill: D.green, stroke: '#fff', strokeWidth: 2 }}
                     dot={props => <DotDia {...props} filtroDia={filtroDia} />}
+                  />
+                  <Line
+                    type="linear"
+                    dataKey="meta"
+                    name={`Meta (R$ ${metaPorHL.toFixed(2).replace('.', ',')} × HL anterior)`}
+                    stroke={D.red}
+                    strokeWidth={2}
+                    strokeDasharray="6 3"
+                    dot={false}
+                    activeDot={{ r: 5 }}
+                    connectNulls={false}
                   />
                 </LineChart>
               </ResponsiveContainer>

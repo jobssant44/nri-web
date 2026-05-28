@@ -1,2 +1,2 @@
-import FasePage from './_FasePage';
-export default function TIPage() { return <FasePage fase="TI" />; }
+import TIBasePage from './_TIBasePage';
+export default function TIPage() { return <TIBasePage tipo="total" />; }

@@ -5,7 +5,7 @@ import {
   Package, RefreshCw, TrendingUp, Warehouse, Map,
   Clock, TrendingDown, ClipboardList, Scale, Truck, Timer,
   DoorOpen, ListChecks,
-  LogOut, Pin, PinOff, Building2, Settings, ChevronDown,
+  LogOut, Pin, PinOff, Building2, Settings, ChevronDown, Upload, Presentation,
 } from 'lucide-react';
 import { auth } from '../firebaseConfig';
 import { useUser, NIVEIS_MULTI_EMPRESA } from '../context/UserContext';
@@ -23,7 +23,8 @@ const TODOS_GRUPOS = [
       { path: '/nris',                  label: 'Consultar NRIs',       todos: true },
       { path: '/nova-nri',              label: 'Nova NRI',             todos: true },
       { path: '/cadastros',             label: 'Cadastros',            supervisor: true },
-      { path: '/importar',              label: 'Importar Base',        supervisor: true },
+      // Importações migradas pro hub central /importacoes em 2026-05-24:
+      // { path: '/importar',              label: 'Importar Base',        supervisor: true },
       { path: '/exportar',              label: 'Exportar CSV',         supervisor: true },
     ],
   },
@@ -40,7 +41,8 @@ const TODOS_GRUPOS = [
       { path: '/reab/vendas',          label: 'Vendas',                todos: true },
       { path: '/reab/prepicking',      label: 'Pré-Picking',           todos: true },
       { path: '/reab/config',          label: 'Configurar Picking',    supervisor: true },
-      { path: '/reab/importar-vendas', label: 'Importar 03.02.36.08',  supervisor: true },
+      // Importação migrada pro hub central /importacoes em 2026-05-24:
+      // { path: '/reab/importar-vendas', label: 'Importar 03.02.36.08',  supervisor: true },
     ],
   },
   {
@@ -49,7 +51,11 @@ const TODOS_GRUPOS = [
     moduloSlug: 'curva-abc',
     itens: [
       { path: '/curva-abc/dashboard', label: 'Dashboard Curva ABC', todos: true },
-      { path: '/curva-abc/importar',  label: 'Importar relatórios', supervisor: true },
+      // Importar Relatório do módulo Curva ABC ocultado em 2026-05-24:
+      // o import unificado vive agora em /reab/importar-vendas (também alimenta
+      // curva_abc_mensal + curva_abc_meta + curva_abc). Rota continua ativa pra
+      // acesso direto se precisar — só não aparece no menu.
+      // { path: '/curva-abc/importar',  label: 'Importar relatórios', supervisor: true },
     ],
   },
   {
@@ -86,7 +92,8 @@ const TODOS_GRUPOS = [
       { path: '/gestao-idade/stock-age',        label: 'Stock Age Index',    todos: true },
       { path: '/gestao-idade/estoque-picking',  label: 'Estoque x Picking',  todos: true },
       { path: '/gestao-idade/estoque-estoque',  label: 'Estoque x Estoque',  todos: true },
-      { path: '/gestao-idade/importar-pzv',     label: 'Importar PZV',       supervisor: true },
+      // Importação migrada pro hub central /importacoes em 2026-05-24:
+      // { path: '/gestao-idade/importar-pzv',     label: 'Importar PZV',       supervisor: true },
     ],
   },
   {
@@ -97,7 +104,8 @@ const TODOS_GRUPOS = [
       { path: '/prejuizo/wqi',       label: 'WQI',                 todos: true },
       { path: '/prejuizo/troca',      label: 'Troca',               todos: true },
       { path: '/prejuizo/reposicao', label: 'Reposição',           todos: true },
-      { path: '/prejuizo/importar',  label: 'Importar relatórios', supervisor: true },
+      // Importação migrada pro hub central /importacoes em 2026-05-24:
+      // { path: '/prejuizo/importar',  label: 'Importar relatórios', supervisor: true },
       { path: '/prejuizo/cadastros', label: 'Cadastros',           supervisor: true },
     ],
   },
@@ -107,7 +115,8 @@ const TODOS_GRUPOS = [
     moduloSlug: 'pavg',
     itens: [
       { path: '/pavg/conciliacao', label: 'Conciliação',         todos: true },
-      { path: '/pavg/importar',    label: 'Importar relatórios', supervisor: true },
+      // Importação migrada pro hub central /importacoes em 2026-05-24:
+      // { path: '/pavg/importar',    label: 'Importar relatórios', supervisor: true },
     ],
   },
   {
@@ -119,7 +128,8 @@ const TODOS_GRUPOS = [
       { path: '/gestao-mpd/efd',        label: 'EFD',                 todos: true },
       { path: '/gestao-mpd/ti',         label: 'TI',                  todos: true },
       { path: '/gestao-mpd/histograma', label: 'Histograma',          todos: true },
-      { path: '/gestao-mpd/importar',   label: 'Importar relatórios', supervisor: true },
+      // Importação migrada pro hub central /importacoes em 2026-05-24:
+      // { path: '/gestao-mpd/importar',   label: 'Importar relatórios', supervisor: true },
       { path: '/gestao-mpd/metas',      label: 'Metas',               supervisor: true },
     ],
   },
@@ -149,7 +159,8 @@ const TODOS_GRUPOS = [
     moduloSlug: 'tma',
     itens: [
       { path: '/tma/dashboard', label: 'Dashboard',          todos: true },
-      { path: '/tma/importar',  label: 'Importar relatório', supervisor: true },
+      // Importação migrada pro hub central /importacoes em 2026-05-24:
+      // { path: '/tma/importar',  label: 'Importar relatório', supervisor: true },
     ],
   },
   {
@@ -158,7 +169,16 @@ const TODOS_GRUPOS = [
     moduloSlug: 'conciliacao',
     itens: [
       { path: '/conciliacao-estoque/diaria',   label: 'Conciliação Diária', todos: true },
-      { path: '/conciliacao-estoque/importar', label: 'Importar 02.05.02',  supervisor: true },
+      // Importação migrada pro hub central /importacoes em 2026-05-24:
+      // { path: '/conciliacao-estoque/importar', label: 'Importar 02.05.02',  supervisor: true },
+    ],
+  },
+  {
+    label: 'Reunião',
+    Icon: Presentation,
+    moduloSlug: null,
+    itens: [
+      { path: '/reuniao', label: 'Gerar Apresentação', todos: true },
     ],
   },
   {
@@ -458,6 +478,16 @@ export default function Sidebar({ fixado, onToggleFixado }) {
 
       {/* ── Footer ─────────────────────────────────────────────── */}
       <div style={{ padding: expandido ? '12px 14px' : '10px 8px', borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
+        {isSupervisor && (
+          <Link to="/importacoes" title="Importações" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, padding: expandido ? '6px 4px' : '6px 0', justifyContent: expandido ? 'flex-start' : 'center', marginBottom: 6, color: loc.pathname === '/importacoes' ? C.red : C.textSec, transition: 'color 0.15s' }}
+            onMouseEnter={e => { e.currentTarget.style.color = C.red; }}
+            onMouseLeave={e => { e.currentTarget.style.color = loc.pathname === '/importacoes' ? C.red : C.textSec; }}
+          >
+            <Upload size={13} strokeWidth={1.75} />
+            {expandido && <span style={{ fontSize: 11, fontWeight: 500, letterSpacing: 0.3 }}>Importações</span>}
+          </Link>
+        )}
+
         {isSupervisor && (
           <Link to="/configuracoes" title="Configurações" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, padding: expandido ? '6px 4px' : '6px 0', justifyContent: expandido ? 'flex-start' : 'center', marginBottom: 10, color: loc.pathname === '/configuracoes' ? C.red : C.textSec, transition: 'color 0.15s' }}
             onMouseEnter={e => { e.currentTarget.style.color = C.red; }}

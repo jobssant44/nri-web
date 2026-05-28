@@ -130,15 +130,23 @@ export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMedi
     ? Math.ceil(quantidadeCx / vendaMediaCxDia)
     : null;
 
-  // Quant. perda
+  // Quant. perda — regra do user:
+  //   prazo ≤ 30 dias (ou vencido): perda = quantidade total
+  //   senão: perda = quantidade − (venda média × (prazo − 30))
+  //          ↑ "vai vender" só até 30 dias antes do vencimento. Se vendaMédia
+  //          escoa tudo nessa janela, perda = 0.
   let quantPerda = 0;
-  if (status === 'vencido' || status === 'segregar') {
-    // Tudo é perda: ja venceu ou ≤ 30 dias (não da pra vender no prazo)
+  if (prazo == null) {
+    quantPerda = 0; // sem vencimento → sem como avaliar perda
+  } else if (prazo <= 30) {
     quantPerda = quantidadeCx;
-  } else if ((status === 'ok' || status === 'atencao') && vendaMediaCxDia > 0 && prazo != null && prazo > 0) {
-    // Só perde se o estoque não der pra escoar dentro do prazo de venda (PZV - 30d)
-    const vendavelNoPrazo = vendaMediaCxDia * prazo;
-    quantPerda = Math.max(0, quantidadeCx - vendavelNoPrazo);
+  } else if (vendaMediaCxDia > 0) {
+    const diasUteis  = prazo - 30;
+    const vendavel   = vendaMediaCxDia * diasUteis;
+    quantPerda       = Math.max(0, quantidadeCx - vendavel);
+  } else {
+    // Sem venda média: assume perda total do excedente (não vai escoar nada)
+    quantPerda = quantidadeCx;
   }
   const hectoPerda = quantPerda * hectoUnit;
 
@@ -304,9 +312,10 @@ export async function carregarVendaMediaMap({ col, diasJanela = 30, dataInicio, 
     inicio.setHours(0, 0, 0, 0);
     fim.setHours(23, 59, 59, 999);
 
-    // Filtra server-side: relatórios importados desde 30 dias ANTES do início
-    // da janela (margem pra cobrir importações tardias contendo essas vendas).
-    const corteImport = new Date(inicio); corteImport.setDate(corteImport.getDate() - 30);
+    // Filtra server-side: relatórios importados desde 90 dias ANTES do início
+    // da janela (margem generosa pra cobrir relatórios importados mais cedo
+    // que contêm vendas dentro da janela escolhida).
+    const corteImport = new Date(inicio); corteImport.setDate(corteImport.getDate() - 90);
     const snap = await getDocs(query(
       col('vendas_relatorio'),
       where('importadoEm', '>=', corteImport),
