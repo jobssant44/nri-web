@@ -87,10 +87,44 @@ function gerarBlocoEtiqueta(nri, produto) {
 }
 
 function imprimirEtiquetas(itens) {
-  const paginas = itens.map(({ nri, produto }) => {
-    const bloco = gerarBlocoEtiqueta(nri, produto);
-    return `<div class="pagina">${bloco}${bloco}${bloco}</div>`;
+  // Regra (definida em 2026-05-28):
+  //   Pra cada produto com qtdPlt=N e qtdCx=M, gera N páginas A4 (uma por
+  //   palete). Cada página = 3 etiquetas idênticas do MESMO palete (padrão
+  //   antigo mantido). As caixas soltas (qtdCx > 0) vão TODAS na etiqueta
+  //   do ÚLTIMO palete — não cria página extra (decisão de negócio: economiza
+  //   papel; o operador colhe palete + caixas avulsas juntos no recebimento).
+  //
+  //   Casos especiais:
+  //     - qtdPlt=0 e qtdCx>0  → 1 página só com as caixas (Qtd PLT=0)
+  //     - qtdPlt=0 e qtdCx=0  → nada gerado (defensivo; a validação principal
+  //                              já bloqueia adicionar produto sem PLT nem CX)
+  const paginas = itens.flatMap(({ nri, produto }) => {
+    const plt = parseInt(produto.qtdPlt || '0') || 0;
+    const cx  = parseInt(produto.qtdCx  || '0') || 0;
+
+    if (plt === 0 && cx === 0) return [];
+
+    // Caso: só caixas soltas, sem palete → 1 página
+    if (plt === 0) {
+      const bloco = gerarBlocoEtiqueta(nri, { ...produto, qtdPlt: '0', qtdCx: String(cx) });
+      return [`<div class="pagina">${bloco}${bloco}${bloco}</div>`];
+    }
+
+    // Caso geral: 1 página por palete, caixas soltas na ÚLTIMA
+    const arr = [];
+    for (let i = 0; i < plt; i++) {
+      const ehUltimo = i === plt - 1;
+      const produtoPalete = {
+        ...produto,
+        qtdPlt: '1',
+        qtdCx: ehUltimo ? String(cx) : '0',
+      };
+      const bloco = gerarBlocoEtiqueta(nri, produtoPalete);
+      arr.push(`<div class="pagina">${bloco}${bloco}${bloco}</div>`);
+    }
+    return arr;
   }).join('');
+
   const html = `<html><head><meta charset="utf-8"/><style>${CSS_ETIQUETA}</style></head><body>${paginas}</body></html>`;
   const janela = window.open('', '_blank');
   janela.document.write(html);
