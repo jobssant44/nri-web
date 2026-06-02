@@ -16,11 +16,14 @@ function calcularData(dataStr, diasSubtrair) {
 
 const CSS_ETIQUETA = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  @page { size: A4; margin: 8mm; }
+  /* Margem reduzida de 8mm pra 4mm — libera ~6mm a mais por página */
+  @page { size: A4; margin: 4mm; }
   body { font-family: Arial, sans-serif; }
-  .pagina { height: 277mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; }
+  /* Altura da página: A4=297mm − 2×4mm margem − 4mm buffer pra page-break = 285mm */
+  .pagina { height: 285mm; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; }
   .pagina:last-child { page-break-after: avoid; }
-  .etiqueta { border: 2px solid #000; width: 100%; flex: 1; display: flex; flex-direction: column; margin-bottom: 4mm; }
+  /* Gap menor entre etiquetas (4mm → 3mm) também aumenta a área útil */
+  .etiqueta { border: 2px solid #000; width: 100%; flex: 1; display: flex; flex-direction: column; margin-bottom: 3mm; }
   .etiqueta:last-child { margin-bottom: 0; }
   .linha1 { display: flex; align-items: stretch; border-bottom: 2px solid #000; flex: 0; }
   .curva { font-size: 80px; font-weight: bold; width: 100px; min-width: 100px; display: flex; align-items: center; justify-content: center; border-right: 2px solid #000; }
@@ -32,8 +35,10 @@ const CSS_ETIQUETA = `
   .revenda { font-size: 13px; font-weight: bold; color: #1a5fa8; text-align: center; }
   .ambev { font-size: 24px; font-weight: bold; color: #1a5fa8; }
   .linha2 { border-bottom: 2px solid #000; padding: 0; text-align: center; flex: 1; display: flex; align-items: center; justify-content: center; }
-  .venc-label { font-size: 28px; font-weight: bold; }
-  .venc-data { font-size: 64px; font-weight: bold; margin-left: 10px; }
+  /* Vencimento — aumentado e font-weight 900 (extra-bold) pra máxima visibilidade.
+     É a informação mais crítica da etiqueta no chão de armazém. */
+  .venc-label { font-size: 36px; font-weight: 900; }
+  .venc-data { font-size: 84px; font-weight: 900; margin-left: 12px; letter-spacing: -1px; }
   .linha3 { display: flex; border-bottom: 2px solid #000; flex: 0; }
   .cel { flex: 1; padding: 8px; text-align: center; border-right: 1px solid #000; }
   .cel:last-child { border-right: none; }
