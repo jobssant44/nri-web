@@ -26,29 +26,31 @@ const CSS_ETIQUETA = `
   .etiqueta { border: 2px solid #000; width: 100%; flex: 1; display: flex; flex-direction: column; margin-bottom: 3mm; }
   .etiqueta:last-child { margin-bottom: 0; }
   .linha1 { display: flex; align-items: stretch; border-bottom: 2px solid #000; flex: 0; }
-  .curva { font-size: 80px; font-weight: bold; width: 100px; min-width: 100px; display: flex; align-items: center; justify-content: center; border-right: 2px solid #000; }
+  /* Aumentos da sessão de 02/06/26: tudo ~+20% pra melhor leitura no chão de armazém.
+     Vencimento mantido (já estava 84px) pra não comer linha 2. */
+  .curva { font-size: 96px; font-weight: bold; width: 116px; min-width: 116px; display: flex; align-items: center; justify-content: center; border-right: 2px solid #000; }
   .centro { flex: 1; padding: 8px; text-align: center; border-right: 2px solid #000; }
-  .cod { font-size: 18px; font-weight: bold; text-decoration: underline; margin-bottom: 6px; }
-  .cod span { font-size: 38px; }
-  .nome { font-size: 16px; font-weight: bold; }
-  .logo { width: 120px; min-width: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px; gap: 4px; }
-  .revenda { font-size: 13px; font-weight: bold; color: #1a5fa8; text-align: center; }
-  .ambev { font-size: 24px; font-weight: bold; color: #1a5fa8; }
+  .cod { font-size: 22px; font-weight: bold; text-decoration: underline; margin-bottom: 6px; }
+  .cod span { font-size: 46px; }
+  .nome { font-size: 20px; font-weight: bold; }
+  .logo { width: 140px; min-width: 140px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px; gap: 4px; }
+  .revenda { font-size: 15px; font-weight: bold; color: #1a5fa8; text-align: center; }
+  .ambev { font-size: 28px; font-weight: bold; color: #1a5fa8; }
   .linha2 { border-bottom: 2px solid #000; padding: 0; text-align: center; flex: 1; display: flex; align-items: center; justify-content: center; }
-  /* Vencimento — aumentado e font-weight 900 (extra-bold) pra máxima visibilidade.
+  /* Vencimento — extra-bold pra máxima visibilidade.
      É a informação mais crítica da etiqueta no chão de armazém. */
   .venc-label { font-size: 36px; font-weight: 900; }
   .venc-data { font-size: 84px; font-weight: 900; margin-left: 12px; letter-spacing: -1px; }
   .linha3 { display: flex; border-bottom: 2px solid #000; flex: 0; }
   .cel { flex: 1; padding: 8px; text-align: center; border-right: 1px solid #000; }
   .cel:last-child { border-right: none; }
-  .cel-label { font-size: 14px; font-weight: bold; }
-  .cel-valor { font-size: 16px; font-weight: bold; text-decoration: underline; }
+  .cel-label { font-size: 17px; font-weight: bold; }
+  .cel-valor { font-size: 20px; font-weight: bold; text-decoration: underline; }
   .linha4 { display: flex; flex: 0; }
   .col { flex: 1; padding: 8px; text-align: center; border-right: 1px solid #000; }
   .col:last-child { border-right: none; }
-  .col-label { font-size: 12px; text-decoration: underline; }
-  .col-valor { font-size: 14px; font-weight: bold; }
+  .col-label { font-size: 14px; text-decoration: underline; }
+  .col-valor { font-size: 17px; font-weight: bold; }
 `;
 
 function gerarBlocoEtiqueta(nri, produto) {
