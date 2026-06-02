@@ -92,6 +92,51 @@ export default function NovaNRI() {
     setParesPorCarreta(mapCarreta);
   }
 
+  // cxPorPlt do produto atualmente selecionado (paletização). Usado pra
+  // sincronizar Qtd PLT ↔ Qtd CX. Retorna 0 se não houver produto ou
+  // se ele não tem paletização cadastrada (auto-sync desativa nesse caso).
+  function getCxPorPltAtual() {
+    if (!codProduto) return 0;
+    const p = baseProdutos.find(x => String(x.codigo).trim() === String(codProduto).trim());
+    return parseInt(p?.paletizacao || p?.cxPorPlt || '0') || 0;
+  }
+
+  // Handlers sincronizados: PLT é a quantidade em paletes (pode ser decimal,
+  // ex: 2,5). CX é a mesma quantidade em caixas (sempre inteiro). Digitar
+  // um auto-preenche o outro via cxPorPlt. PDF imprime sempre CX.
+  function onChangeQtdPlt(texto) {
+    // Aceita dígitos, vírgula ou ponto. Normaliza vírgula → ponto pra parse.
+    const limpo = texto.replace(/[^0-9,.]/g, '');
+    setQtdPlt(limpo);
+    const cxPlt = getCxPorPltAtual();
+    if (cxPlt > 0) {
+      const plt = parseFloat(limpo.replace(',', '.'));
+      if (!isNaN(plt) && plt >= 0) {
+        // Caixas é sempre inteiro (truncamento Math.round dá 0,5 plt × 100 → 50 cx exato)
+        setQtdCx(String(Math.round(plt * cxPlt)));
+      } else if (!limpo) {
+        setQtdCx('');
+      }
+    }
+  }
+
+  function onChangeQtdCx(texto) {
+    const limpo = texto.replace(/[^0-9]/g, '');
+    setQtdCx(limpo);
+    const cxPlt = getCxPorPltAtual();
+    if (cxPlt > 0) {
+      const cx = parseInt(limpo, 10);
+      if (!isNaN(cx) && cx >= 0) {
+        // PLT pode ser decimal (250 cx / 100 cxPorPlt = 2,5 plt).
+        // Mantém até 2 casas decimais e mostra com vírgula (pt-BR).
+        const plt = Math.round((cx / cxPlt) * 100) / 100;
+        setQtdPlt(String(plt).replace('.', ','));
+      } else if (!limpo) {
+        setQtdPlt('');
+      }
+    }
+  }
+
   function buscarProduto(texto, campo) {
     if (campo === 'codigo') {
       setCodProduto(texto.replace(/[^0-9]/g, ''));
@@ -134,7 +179,11 @@ export default function NovaNRI() {
 
     const cxPorPlt = produtoBase.paletizacao || produtoBase.cxPorPlt || '';
     const curva    = curvaMap[String(codProduto)] || null;
-    setProdutos([...produtos, { codProduto, nomeProduto, qtdPlt, qtdCx, validade, cxPorPlt, curva }]);
+    // Flag `modeloNovo: true` indica que qtdPlt e qtdCx são sincronizados
+    // (mesma quantidade em unidades diferentes), em vez de somados como no
+    // modelo antigo. Usado pela função imprimirEtiquetas (NRIs.js) pra
+    // escolher a regra correta de geração de páginas.
+    setProdutos([...produtos, { codProduto, nomeProduto, qtdPlt, qtdCx, validade, cxPorPlt, curva, modeloNovo: true }]);
     setCodProduto(''); setNomeProduto(''); setQtdPlt(''); setQtdCx(''); setValidade(''); setSugestoes([]);
   }
 
@@ -329,7 +378,7 @@ export default function NovaNRI() {
             <input
               style={inp}
               value={qtdPlt}
-              onChange={e => setQtdPlt(e.target.value.replace(/[^0-9]/g,''))}
+              onChange={e => onChangeQtdPlt(e.target.value)}
               placeholder="0"
               onFocus={(e) => { e.target.style.borderColor = '#E31837'; e.target.style.boxShadow = '0 0 0 3px rgba(227, 24, 55, 0.08)'; }}
               onBlur={(e) => { e.target.style.borderColor = '#e0e0e0'; e.target.style.boxShadow = 'none'; }}
@@ -340,7 +389,7 @@ export default function NovaNRI() {
             <input
               style={inp}
               value={qtdCx}
-              onChange={e => setQtdCx(e.target.value.replace(/[^0-9]/g,''))}
+              onChange={e => onChangeQtdCx(e.target.value)}
               placeholder="0"
               onFocus={(e) => { e.target.style.borderColor = '#E31837'; e.target.style.boxShadow = '0 0 0 3px rgba(227, 24, 55, 0.08)'; }}
               onBlur={(e) => { e.target.style.borderColor = '#e0e0e0'; e.target.style.boxShadow = 'none'; }}

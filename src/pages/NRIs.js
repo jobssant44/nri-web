@@ -87,39 +87,71 @@ function gerarBlocoEtiqueta(nri, produto) {
 }
 
 function imprimirEtiquetas(itens) {
-  // Regra (definida em 2026-05-28):
-  //   Pra cada produto com qtdPlt=N e qtdCx=M, gera N páginas A4 (uma por
-  //   palete). Cada página = 3 etiquetas idênticas do MESMO palete (padrão
-  //   antigo mantido). As caixas soltas (qtdCx > 0) vão TODAS na etiqueta
-  //   do ÚLTIMO palete — não cria página extra (decisão de negócio: economiza
-  //   papel; o operador colhe palete + caixas avulsas juntos no recebimento).
+  // Distingue 2 modelos de quantidade no doc do produto:
   //
-  //   Casos especiais:
-  //     - qtdPlt=0 e qtdCx>0  → 1 página só com as caixas (Qtd PLT=0)
-  //     - qtdPlt=0 e qtdCx=0  → nada gerado (defensivo; a validação principal
-  //                              já bloqueia adicionar produto sem PLT nem CX)
+  // MODELO NOVO (02/06/26): qtdPlt e qtdCx representam a MESMA quantidade em
+  // unidades diferentes (sincronizadas via cxPorPlt). qtdCx é fonte da verdade
+  // — qtdPlt = qtdCx / cxPlt, pode ser decimal (ex: 2,5 plt = 250 cx). Salvos
+  // com flag `modeloNovo: true`. PDF imprime SEMPRE com base em qtdCx.
+  //
+  // MODELO ANTIGO: qtdPlt e qtdCx eram SOMADOS → total = qtdPlt × cxPlt + qtdCx
+  // (qtdCx eram "caixas soltas adicionais"). NRIs históricas não têm a flag —
+  // preserva regra antiga pra não imprimir errado em re-impressões legadas.
+  //
+  // Em ambos os modelos: 1 página A4 por palete (3 etiquetas idênticas), +1
+  // página com as caixas que sobram quando não fechar palete inteiro.
   const paginas = itens.flatMap(({ nri, produto }) => {
-    const plt = parseInt(produto.qtdPlt || '0') || 0;
-    const cx  = parseInt(produto.qtdCx  || '0') || 0;
+    const cxPlt = parseInt(produto.cxPorPlt || '0') || 0;
+    const novo  = produto.modeloNovo === true;
 
-    if (plt === 0 && cx === 0) return [];
-
-    // Caso: só caixas soltas, sem palete → 1 página
-    if (plt === 0) {
-      const bloco = gerarBlocoEtiqueta(nri, { ...produto, qtdPlt: '0', qtdCx: String(cx) });
-      return [`<div class="pagina">${bloco}${bloco}${bloco}</div>`];
+    let paletesInteiros, restoCx;
+    if (novo) {
+      // ── Modelo novo: parte de qtdCx (fonte da verdade) ──
+      const cxTotal = parseInt(produto.qtdCx || '0') || 0;
+      if (cxTotal === 0) return [];
+      if (cxPlt === 0) {
+        // Sem paletização cadastrada → 1 página só com qtdCx (sem palete)
+        const bloco = gerarBlocoEtiqueta(nri, { ...produto, qtdPlt: '0', qtdCx: String(cxTotal) });
+        return [`<div class="pagina">${bloco}${bloco}${bloco}</div>`];
+      }
+      paletesInteiros = Math.floor(cxTotal / cxPlt);
+      restoCx         = cxTotal - paletesInteiros * cxPlt;
+    } else {
+      // ── Modelo antigo (legacy): preserva regra histórica ──
+      const plt = parseInt(produto.qtdPlt || '0') || 0;
+      const cx  = parseInt(produto.qtdCx  || '0') || 0;
+      if (plt === 0 && cx === 0) return [];
+      if (plt === 0) {
+        const bloco = gerarBlocoEtiqueta(nri, { ...produto, qtdPlt: '0', qtdCx: String(cx) });
+        return [`<div class="pagina">${bloco}${bloco}${bloco}</div>`];
+      }
+      // No modelo antigo, qtdCx eram caixas soltas que iam na última etiqueta.
+      // Pra unificar o loop abaixo, traduzimos: paletes inteiros = qtdPlt,
+      // resto = qtdCx (que sobra na última).
+      paletesInteiros = plt;
+      restoCx         = cx;
     }
 
-    // Caso geral: 1 página por palete, caixas soltas na ÚLTIMA
+    if (paletesInteiros === 0 && restoCx === 0) return [];
+
+    // Loop unificado: N páginas de palete cheio + (opcional) 1 página de resto.
     const arr = [];
-    for (let i = 0; i < plt; i++) {
-      const ehUltimo = i === plt - 1;
+    for (let i = 0; i < paletesInteiros; i++) {
       const produtoPalete = {
         ...produto,
         qtdPlt: '1',
-        qtdCx: ehUltimo ? String(cx) : '0',
+        // No modelo antigo, mantemos: caixas soltas vão na ÚLTIMA etiqueta de
+        // palete (sem criar página extra) pra preservar o output original.
+        // No modelo novo, cada palete cheio mostra cxPlt; o resto é página extra.
+        qtdCx: (!novo && i === paletesInteiros - 1) ? String(restoCx) : '0',
       };
       const bloco = gerarBlocoEtiqueta(nri, produtoPalete);
+      arr.push(`<div class="pagina">${bloco}${bloco}${bloco}</div>`);
+    }
+    // Modelo NOVO: caixas que sobram ganham página própria (ex: 250 cx com
+    // cxPlt=100 → 2 páginas de palete cheio + 1 página de 50 cx).
+    if (novo && restoCx > 0) {
+      const bloco = gerarBlocoEtiqueta(nri, { ...produto, qtdPlt: '0', qtdCx: String(restoCx) });
       arr.push(`<div class="pagina">${bloco}${bloco}${bloco}</div>`);
     }
     return arr;
