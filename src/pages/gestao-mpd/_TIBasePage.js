@@ -26,10 +26,9 @@
 // Mesmas 3 chaves servem pra % de adesão (metas_mpd.percents).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { getDocs, getDoc } from 'firebase/firestore';
-import { useDb } from '../../utils/db';
+import { useRelatoriosMPD } from '../../context/RelatoriosMPDContext';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine, Brush,
@@ -528,50 +527,33 @@ function TooltipTIPercent({ active, payload, label }) {
 
 // ─── Página principal ─────────────────────────────────────────────────────────
 export default function TIBasePage({ tipo = 'total' }) {
-  const { col, docRef, colRevenda, rid } = useDb();
   const loc = useLocation();
   const faseLabel = LABEL_TI[tipo] || 'TI';
   const metasKeys = METAS_TI[tipo] || METAS_TI.total;
 
-  const [linhas, setLinhas]         = useState([]);
-  const [carregando, setCarregando] = useState(true);
+  // Dados compartilhados entre EFC/EFD/TI×3/Histograma — vêm do Context.
+  // BUG FIX: antes o useEffect tinha `[tipo]` como dep e refazia 3 getDocs
+  // toda vez que o usuário trocava entre TI Total/Físico/Financeiro. Agora
+  // é 1 fetch por sessão e a troca de tipo só re-deriva memos client-side.
+  const { linhas, motoristasMap, metas, pronto } = useRelatoriosMPD();
+  const carregando = !pronto;
+
+  // Estado local de UI (filtros, ordenação, busca) — não vem do servidor
   const [filtros, setFiltros]       = useState(FILTROS_VAZIOS);
-  const [metaPercent, setMetaPercent] = useState(null);
-  const [metaHoraStr, setMetaHoraStr] = useState(null);
   const [busca, setBusca]               = useState('');
   const [ordenacao, setOrdenacao]       = useState({ campo: 'dataEmissao', direcao: 'desc' });
   const [janelaDias, setJanelaDias]     = useState('mes');
-  const [motoristasMap, setMotoristasMap] = useState({});
 
-  // Recarrega ao trocar de tipo (entre /ti, /ti-fisico, /ti-financeiro)
-  useEffect(() => {
-    let mounted = true;
-    setCarregando(true);
-    Promise.all([
-      getDocs(colRevenda('relatorio031120')),
-      getDoc(docRef('metas_mpd', rid || 'global')),
-      getDocs(col('relatoriomotoristas')),
-    ]).then(([snap, metaSnap, snapMot]) => {
-      if (!mounted) return;
-      setLinhas(snap.docs.map(d => d.data()));
-      if (metaSnap.exists()) {
-        const m = metaSnap.data();
-        setMetaPercent(m?.percents?.[metasKeys.percent] ?? null);
-        setMetaHoraStr(m?.horarios?.[metasKeys.hora] ?? null);
-      }
-      const mmap = {};
-      snapMot.docs.forEach(d => {
-        const data = d.data();
-        const cod = String(data.codigoMotorista ?? '').trim().replace(/^0+(?=\d)/, '');
-        if (cod) mmap[cod] = data.nomeMotorista || '';
-        const codBruto = String(data.codigoMotorista ?? '').trim();
-        if (codBruto && codBruto !== cod) mmap[codBruto] = data.nomeMotorista || '';
-      });
-      setMotoristasMap(mmap);
-    }).catch(() => {}).finally(() => { if (mounted) setCarregando(false); });
-    return () => { mounted = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipo]);
+  // Metas derivadas do Context. Memo-derivado em vez de useState+effect —
+  // re-roda quando `metas` ou `tipo` mudam.
+  const metaPercent = useMemo(
+    () => metas?.percents?.[metasKeys.percent] ?? null,
+    [metas, metasKeys.percent]
+  );
+  const metaHoraStr = useMemo(
+    () => metas?.horarios?.[metasKeys.hora] ?? null,
+    [metas, metasKeys.hora]
+  );
 
   // Resolve código de motorista → "código - Nome"
   const labelMotorista = useCallback((cod) => {

@@ -19,10 +19,9 @@
 // MultiSelectDropdown, ChartCard, etc.) pra manter consistência visual com EFC/EFD/TI.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { getDocs } from 'firebase/firestore';
-import { useDb } from '../../utils/db';
+import { useRelatoriosMPD } from '../../context/RelatoriosMPDContext';
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, LabelList, Cell,
@@ -148,26 +147,15 @@ function CardFase({ fase, ativo, onClick }) {
 
 // ─── Página ──────────────────────────────────────────────────────────────────
 export default function HistogramaPage() {
-  const { colRevenda } = useDb();
   const loc = useLocation();
-  const [linhas, setLinhas]         = useState([]);
-  const [carregando, setCarregando] = useState(true);
+  // Dados vêm do Context compartilhado (1 fetch por sessão).
+  const { linhas, pronto } = useRelatoriosMPD();
+  const carregando = !pronto;
   // faseId controla o card ativo. Default: 'carregamento'.
   const [faseId, setFaseId]         = useState('carregamento');
   // Filtros globais: frota (multi), data início/fim. Mesma estrutura usada
   // nas páginas TI/EFC/EFD pra consistência (importado FILTROS_VAZIOS).
   const [filtros, setFiltros]       = useState(FILTROS_VAZIOS);
-
-  useEffect(() => {
-    let mounted = true;
-    setCarregando(true);
-    getDocs(colRevenda('relatorio031120'))
-      .then(snap => { if (mounted) setLinhas(snap.docs.map(d => d.data())); })
-      .catch(() => {})
-      .finally(() => { if (mounted) setCarregando(false); });
-    return () => { mounted = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Fase ativa (objeto completo). Sempre tem 1 — default 'carregamento'.
   const faseAtiva = useMemo(

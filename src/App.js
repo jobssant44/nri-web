@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { UserProvider, useUser } from './context/UserContext';
 import { CatalogosProvider } from './context/CatalogosContext';
+import { RelatoriosMPDProvider } from './context/RelatoriosMPDContext';
 import Login from './pages/Login';
 import Sidebar from './components/Sidebar';
 import HomePage from './pages/Home';
@@ -77,7 +78,9 @@ export default function App() {
   return (
     <UserProvider>
       <CatalogosProvider>
-        <AppInner />
+        <RelatoriosMPDProvider>
+          <AppInner />
+        </RelatoriosMPDProvider>
       </CatalogosProvider>
     </UserProvider>
   );

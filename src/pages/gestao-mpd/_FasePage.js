@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
-import { useDb } from '../../utils/db';
+import { useRelatoriosMPD } from '../../context/RelatoriosMPDContext';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
@@ -1064,70 +1063,41 @@ const tdS     = { padding: '8px 14px', color: D.textSec, borderTop: `1px solid $
 
 // ─── Página da Fase (EFC / EFD / TI) ─────────────────────────────────────────
 export default function FasePage({ fase, faseCodigo: faseCod }) {
-  const { col, docRef, colRevenda, rid } = useDb();
+  // useDb não é mais usado aqui — todos os fetches migraram pro Context.
+  // Mantém-se só pra back-compat se algum código abaixo dependia (e pra outras
+  // queries específicas que não foram migradas).
   const faseCodigo = faseCod ?? fase;
   const loc = useLocation();
-  const [linhas, setLinhas]         = useState([]);
-  const [carregando, setCarregando] = useState(true);
+
+  // Dados compartilhados entre EFC, EFD, TI e Histograma — vêm do Context
+  // que carrega 1× por sessão (ver RelatoriosMPDContext). Antes esta página
+  // fazia 3 getDocs ao montar; agora só lê do cache.
+  const { linhas, motoristasMap, metas, pronto } = useRelatoriosMPD();
+  const carregando = !pronto;
+
+  // Filtros / UI continuam locais (estado de tela, não dado de servidor)
   const [filtros, setFiltros]       = useState(FILTROS_VAZIOS);
-  const [metaPercent, setMetaPercent]   = useState(null);
-  // EFC tem 2 metas distintas: FF (Frota Padronizada) e Spot (demais).
-  // EFD/TI continuam com 1 meta única (carregada em metaHorarioFF e reusada).
-  const [metaHorarioFF,   setMetaHorarioFF]   = useState(null);
-  const [metaHorarioSpot, setMetaHorarioSpot] = useState(null);
-  // Tabela de detalhamento — busca livre + ordenação por coluna
   const [busca, setBusca]               = useState('');
   const [ordenacao, setOrdenacao]       = useState({ campo: 'dataEmissao', direcao: 'desc' });
-  // Janela do gráfico EFC por Dia: 'mes' (todos os dias) | '15' | '7'
   const [janelaDias, setJanelaDias]     = useState('mes');
-  // Mapa código → nome do motorista (vem de relatoriomotoristas, importado via 01.20.01.47)
-  const [motoristasMap, setMotoristasMap] = useState({});
 
-  useEffect(() => {
-    let mounted = true;
-    setCarregando(true);
-    Promise.all([
-      getDocs(colRevenda('relatorio031120')),
-      getDoc(docRef('metas_mpd', rid || 'global')),
-      getDocs(col('relatoriomotoristas')),
-    ]).then(([snap, metaSnap, snapMot]) => {
-      if (!mounted) return;
-      setLinhas(snap.docs.map(d => d.data()));
-      if (metaSnap.exists()) {
-        const m = metaSnap.data();
-        // % global da fase (continua único; back-compat: chave antiga "EFC" → "EFC FF" pro %)
-        if (fase === 'EFC') {
-          setMetaPercent(m?.percents?.['EFC FF'] ?? m?.percents?.['EFC'] ?? null);
-        } else {
-          setMetaPercent(m?.percents?.[fase] ?? null);
-        }
-        // Metas de horário — EFC tem 2 (FF e Spot); outras fases reusam metaFF
-        if (fase === 'EFC') {
-          const ff   = m?.horarios?.['EFC FF']   ?? m?.horarios?.['EFC'] ?? null;
-          const spot = m?.horarios?.['EFC Spot']                         ?? null;
-          setMetaHorarioFF(ff);
-          setMetaHorarioSpot(spot);
-        } else {
-          const h = m?.horarios?.[fase] ?? null;
-          setMetaHorarioFF(h);
-          setMetaHorarioSpot(null);
-        }
-      }
-      // Monta mapa de motoristas: normaliza o código (tira zeros à esquerda)
-      const mmap = {};
-      snapMot.docs.forEach(d => {
-        const m = d.data();
-        const cod = String(m.codigoMotorista ?? '').trim().replace(/^0+(?=\d)/, '');
-        if (cod) mmap[cod] = m.nomeMotorista || '';
-        // Também indexa pelo código bruto pra robustez (sem normalização)
-        const codBruto = String(m.codigoMotorista ?? '').trim();
-        if (codBruto && codBruto !== cod) mmap[codBruto] = m.nomeMotorista || '';
-      });
-      setMotoristasMap(mmap);
-    }).catch(() => {}).finally(() => { if (mounted) setCarregando(false); });
-    return () => { mounted = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fase]);
+  // Metas derivadas de `metas` + `fase`. Antes setávamos em 4 useState dentro
+  // do useEffect do fetch; agora memo-derivado é mais simples e re-roda
+  // automaticamente se o Context atualizar (botão "Atualizar").
+  // % alvo da fase (back-compat: chave antiga "EFC" → "EFC FF" pro %).
+  const metaPercent = useMemo(() => {
+    if (fase === 'EFC') return metas?.percents?.['EFC FF'] ?? metas?.percents?.['EFC'] ?? null;
+    return metas?.percents?.[fase] ?? null;
+  }, [fase, metas]);
+  // EFC tem 2 metas de horário (FF/Spot); EFD/TI reusam a única em metaHorarioFF.
+  const metaHorarioFF = useMemo(() => {
+    if (fase === 'EFC') return metas?.horarios?.['EFC FF'] ?? metas?.horarios?.['EFC'] ?? null;
+    return metas?.horarios?.[fase] ?? null;
+  }, [fase, metas]);
+  const metaHorarioSpot = useMemo(() => {
+    if (fase === 'EFC') return metas?.horarios?.['EFC Spot'] ?? null;
+    return null;
+  }, [fase, metas]);
 
   // Resolve código de motorista → "código - Nome" via mapa. Fallback: só o código.
   const labelMotorista = (cod) => {
