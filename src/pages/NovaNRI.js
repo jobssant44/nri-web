@@ -42,6 +42,10 @@ export default function NovaNRI() {
   const [listaCavalos, setListaCavalos] = useState([]);
   const [listaCarretas, setListaCarretas] = useState([]);
   const [listaOrigens, setListaOrigens] = useState([]);
+  // Lookups bidirecionais Cavalo↔Carreta carregados de `pares_placas`.
+  // Cadastrados em /cadastros → aba "Pares". Vazio = sem auto-puxa.
+  const [paresPorCavalo,  setParesPorCavalo]  = useState({});
+  const [paresPorCarreta, setParesPorCarreta] = useState({});
   const [codProduto, setCodProduto] = useState('');
   const [nomeProduto, setNomeProduto] = useState('');
   const [qtdPlt, setQtdPlt] = useState('');
@@ -55,12 +59,13 @@ export default function NovaNRI() {
 
   async function carregarDados() {
     // produtos vem do Context (cache em memória); demais coleções pequenas
-    const [mSnap, cSnap, crSnap, oSnap, curvaSnap] = await Promise.all([
+    const [mSnap, cSnap, crSnap, oSnap, curvaSnap, paresSnap] = await Promise.all([
       getDocs(col('motoristas')),
       getDocs(col('cavalos')),
       getDocs(col('carretas')),
       getDocs(col('origens')),
       getDocs(col('curva_abc')),
+      getDocs(col('pares_placas')),
     ]);
     setBaseProdutos(produtosCtx || []);
     setListaMotoristas(mSnap.docs.map(d => d.data().valor));
@@ -73,6 +78,18 @@ export default function NovaNRI() {
       if (codigo) curvas[String(codigo)] = curva || null;
     });
     setCurvaMap(curvas);
+    // Mapas bidirecionais pra auto-preencher placa do par no NovaNRI
+    const mapCavalo  = {};
+    const mapCarreta = {};
+    paresSnap.docs.forEach(d => {
+      const { cavalo, carreta } = d.data();
+      if (cavalo && carreta) {
+        mapCavalo[cavalo]   = carreta;
+        mapCarreta[carreta] = cavalo;
+      }
+    });
+    setParesPorCavalo(mapCavalo);
+    setParesPorCarreta(mapCarreta);
   }
 
   function buscarProduto(texto, campo) {
@@ -192,7 +209,14 @@ export default function NovaNRI() {
             <select
               style={inp}
               value={placaCavalo}
-              onChange={e => setPlacaCavalo(e.target.value)}
+              onChange={e => {
+                const v = e.target.value;
+                setPlacaCavalo(v);
+                // Auto-puxa a carreta do par se houver. Sobrescreve qualquer
+                // valor atual (decisão do user em 02/06/26). Selecionar vazio
+                // (apagar) NÃO toca na carreta — fica como estava.
+                if (v && paresPorCavalo[v]) setPlacaCarreta(paresPorCavalo[v]);
+              }}
               onFocus={(e) => { e.target.style.borderColor = '#E31837'; e.target.style.boxShadow = '0 0 0 3px rgba(227, 24, 55, 0.08)'; }}
               onBlur={(e) => { e.target.style.borderColor = '#e0e0e0'; e.target.style.boxShadow = 'none'; }}
             >
@@ -205,7 +229,13 @@ export default function NovaNRI() {
             <select
               style={inp}
               value={placaCarreta}
-              onChange={e => setPlacaCarreta(e.target.value)}
+              onChange={e => {
+                const v = e.target.value;
+                setPlacaCarreta(v);
+                // Lookup recíproco: carreta → cavalo do par. Selecionar vazio
+                // NÃO toca no cavalo (regra simétrica à do campo acima).
+                if (v && paresPorCarreta[v]) setPlacaCavalo(paresPorCarreta[v]);
+              }}
               onFocus={(e) => { e.target.style.borderColor = '#E31837'; e.target.style.boxShadow = '0 0 0 3px rgba(227, 24, 55, 0.08)'; }}
               onBlur={(e) => { e.target.style.borderColor = '#e0e0e0'; e.target.style.boxShadow = 'none'; }}
             >
