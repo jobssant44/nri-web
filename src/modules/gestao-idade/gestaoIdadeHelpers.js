@@ -297,8 +297,17 @@ export async function carregarPZVMap({ col }) {
  *  - Se `dataInicio` e `dataFim` (Date) forem passados, usa esse intervalo.
  *  - Senão, usa `diasJanela` (default 30) — janela móvel terminando hoje.
  *
- * Usa a coleção `vendas_relatorio` do módulo Reab (docs com produtos[] e
- * vendas: { 'DD/MM/AAAA': qtd }).
+ * FONTE DE DADOS (regra de 02/06/26):
+ *   Soma vendas de `vendas_relatorio` (Picking) + `vendas_prepicking`
+ *   (Pré-Picking). Ambas têm a mesma estrutura (`produtos[].vendas: { data: qtd }`)
+ *   e unidade (caixas/dia) — pode somar com segurança.
+ *
+ *   Não inclui `vendas_avulsas` porque essa coleção armazena UNIDADES
+ *   soltas (campo `avulsas`, não `vendas`), unidade diferente que
+ *   distorceria o cálculo de caixas/dia.
+ *
+ *   Antes só lia `vendas_relatorio` — Venda Média ficava vazia em produção
+ *   porque produtos sem cadastro em `picking_config` vão pra `vendas_prepicking`.
  */
 export async function carregarVendaMediaMap({ col, diasJanela = 30, dataInicio, dataFim }) {
   const map = {};
@@ -316,35 +325,52 @@ export async function carregarVendaMediaMap({ col, diasJanela = 30, dataInicio, 
     // da janela (margem generosa pra cobrir relatórios importados mais cedo
     // que contêm vendas dentro da janela escolhida).
     const corteImport = new Date(inicio); corteImport.setDate(corteImport.getDate() - 90);
-    const snap = await getDocs(query(
-      col('vendas_relatorio'),
-      where('importadoEm', '>=', corteImport),
-      orderBy('importadoEm', 'desc'),
-      limit(500),
-    ));
-    if (snap.empty) return map;
+
+    // 2 coleções em paralelo. Ambas têm `produtos[].vendas: { data: qtd }`
+    // em caixas/dia — somáveis. `vendas_avulsas` (unidades) fica de fora.
+    const [snapPicking, snapPrepicking] = await Promise.all([
+      getDocs(query(
+        col('vendas_relatorio'),
+        where('importadoEm', '>=', corteImport),
+        orderBy('importadoEm', 'desc'),
+        limit(500),
+      )),
+      getDocs(query(
+        col('vendas_prepicking'),
+        where('importadoEm', '>=', corteImport),
+        orderBy('importadoEm', 'desc'),
+        limit(500),
+      )),
+    ]);
+
+    if (snapPicking.empty && snapPrepicking.empty) return map;
 
     const acumulado = {};
     const diasComVenda = {};
 
-    snap.docs.forEach(doc => {
-      const d = doc.data();
-      (d.produtos || []).forEach(p => {
-        const cod = String(p.codigo || '').trim();
-        if (!cod) return;
-        Object.entries(p.vendas || {}).forEach(([data, qtd]) => {
-          const dataM = data.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-          if (!dataM) return;
-          const dt = new Date(parseInt(dataM[3]), parseInt(dataM[2]) - 1, parseInt(dataM[1]));
-          if (dt < inicio || dt > fim) return;
-          const q = Number(qtd) || 0;
-          if (q <= 0) return;
-          acumulado[cod] = (acumulado[cod] || 0) + q;
-          if (!diasComVenda[cod]) diasComVenda[cod] = new Set();
-          diasComVenda[cod].add(data);
+    // Mesmo processador pras 2 coleções (estrutura idêntica).
+    function processarSnap(snap) {
+      snap.docs.forEach(doc => {
+        const d = doc.data();
+        (d.produtos || []).forEach(p => {
+          const cod = String(p.codigo || '').trim();
+          if (!cod) return;
+          Object.entries(p.vendas || {}).forEach(([data, qtd]) => {
+            const dataM = data.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+            if (!dataM) return;
+            const dt = new Date(parseInt(dataM[3]), parseInt(dataM[2]) - 1, parseInt(dataM[1]));
+            if (dt < inicio || dt > fim) return;
+            const q = Number(qtd) || 0;
+            if (q <= 0) return;
+            acumulado[cod] = (acumulado[cod] || 0) + q;
+            if (!diasComVenda[cod]) diasComVenda[cod] = new Set();
+            diasComVenda[cod].add(data);
+          });
         });
       });
-    });
+    }
+    processarSnap(snapPicking);
+    processarSnap(snapPrepicking);
 
     Object.entries(acumulado).forEach(([cod, soma]) => {
       // Divide só pelos dias com venda (regra da casa). Mínimo 1 pra não /0.
