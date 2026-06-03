@@ -289,27 +289,31 @@ export async function carregarPZVMap({ col }) {
 }
 
 /**
- * Carrega vendas e devolve mapa codigo → cx/dia (média).
- * Considera apenas dias com venda > 0 (divide a soma pela quantidade de
- * dias com venda, não pela janela toda).
- *
- * Janela:
- *  - Se `dataInicio` e `dataFim` (Date) forem passados, usa esse intervalo.
- *  - Senão, usa `diasJanela` (default 30) — janela móvel terminando hoje.
+ * Carrega venda média e devolve mapa codigo → cx/dia.
  *
  * FONTE DE DADOS (regra de 02/06/26):
- *   Soma vendas de `vendas_relatorio` (Picking) + `vendas_prepicking`
- *   (Pré-Picking). Ambas têm a mesma estrutura (`produtos[].vendas: { data: qtd }`)
- *   e unidade (caixas/dia) — pode somar com segurança.
+ *   Lê de `curva_abc_mensal`, que já tem agregado mensal por produto com:
+ *     - `cxTotal`        = caixas vendidas no mês (palete aberto + fechado)
+ *     - `diasComVendas`  = dias únicos do mês em que houve venda > 0
  *
- *   Não inclui `vendas_avulsas` porque essa coleção armazena UNIDADES
- *   soltas (campo `avulsas`, não `vendas`), unidade diferente que
- *   distorceria o cálculo de caixas/dia.
+ *   Razão da mudança: as coleções `vendas_relatorio` e `vendas_prepicking`
+ *   só guardam vendas de "palete aberto" (o importador IGNORA linhas com
+ *   "Palete Fechado = Sim"). Pra FEFO, faz sentido contar tudo — o produto
+ *   sai do armazém igual, sendo palete inteiro ou caixas avulsas. `curva_abc_mensal`
+ *   inclui tudo (cxTotal = cxAberto + cxFechado).
  *
- *   Antes só lia `vendas_relatorio` — Venda Média ficava vazia em produção
- *   porque produtos sem cadastro em `picking_config` vão pra `vendas_prepicking`.
+ *   Trade-off: granularidade mensal. Se a janela for últimos 30 dias e
+ *   tocar 2 meses, soma cxTotal e diasComVendas dos 2 meses inteiros.
+ *   Aproximação aceitável pra um KPI de "ritmo de saída".
+ *
+ * Cálculo:
+ *   média_cx_dia = Σ cxTotal_dos_meses_da_janela / Σ diasComVendas_dos_meses_da_janela
+ *
+ * Janela:
+ *  - dataInicio + dataFim (Date) → usa esse intervalo
+ *  - Senão → diasJanela (default 30) terminando hoje
  */
-export async function carregarVendaMediaMap({ col, diasJanela = 30, dataInicio, dataFim }) {
+export async function carregarVendaMediaMap({ col, docRef, diasJanela = 30, dataInicio, dataFim }) {
   const map = {};
   try {
     // Resolve janela efetiva
@@ -321,64 +325,43 @@ export async function carregarVendaMediaMap({ col, diasJanela = 30, dataInicio, 
     inicio.setHours(0, 0, 0, 0);
     fim.setHours(23, 59, 59, 999);
 
-    // Filtra server-side: relatórios importados desde 90 dias ANTES do início
-    // da janela (margem generosa pra cobrir relatórios importados mais cedo
-    // que contêm vendas dentro da janela escolhida).
-    const corteImport = new Date(inicio); corteImport.setDate(corteImport.getDate() - 90);
-
-    // 2 coleções em paralelo. Ambas têm `produtos[].vendas: { data: qtd }`
-    // em caixas/dia — somáveis. `vendas_avulsas` (unidades) fica de fora.
-    const [snapPicking, snapPrepicking] = await Promise.all([
-      getDocs(query(
-        col('vendas_relatorio'),
-        where('importadoEm', '>=', corteImport),
-        orderBy('importadoEm', 'desc'),
-        limit(500),
-      )),
-      getDocs(query(
-        col('vendas_prepicking'),
-        where('importadoEm', '>=', corteImport),
-        orderBy('importadoEm', 'desc'),
-        limit(500),
-      )),
-    ]);
-
-    if (snapPicking.empty && snapPrepicking.empty) return map;
-
-    const acumulado = {};
-    const diasComVenda = {};
-
-    // Mesmo processador pras 2 coleções (estrutura idêntica).
-    function processarSnap(snap) {
-      snap.docs.forEach(doc => {
-        const d = doc.data();
-        (d.produtos || []).forEach(p => {
-          const cod = String(p.codigo || '').trim();
-          if (!cod) return;
-          Object.entries(p.vendas || {}).forEach(([data, qtd]) => {
-            const dataM = data.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-            if (!dataM) return;
-            const dt = new Date(parseInt(dataM[3]), parseInt(dataM[2]) - 1, parseInt(dataM[1]));
-            if (dt < inicio || dt > fim) return;
-            const q = Number(qtd) || 0;
-            if (q <= 0) return;
-            acumulado[cod] = (acumulado[cod] || 0) + q;
-            if (!diasComVenda[cod]) diasComVenda[cod] = new Set();
-            diasComVenda[cod].add(data);
-          });
-        });
-      });
+    // Identifica meses únicos que tocam a janela. Ex: 03/05 a 02/06 → ["2026-05", "2026-06"].
+    const meses = [];
+    const cursor = new Date(inicio.getFullYear(), inicio.getMonth(), 1);
+    while (cursor <= fim) {
+      meses.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
+      cursor.setMonth(cursor.getMonth() + 1);
     }
-    processarSnap(snapPicking);
-    processarSnap(snapPrepicking);
+    if (meses.length === 0) return map;
 
-    Object.entries(acumulado).forEach(([cod, soma]) => {
-      // Divide só pelos dias com venda (regra da casa). Mínimo 1 pra não /0.
-      const ndias = (diasComVenda[cod] && diasComVenda[cod].size) || 1;
-      map[cod] = soma / Math.max(1, ndias);
+    // Lê todos os docs em paralelo (1 read por mês — geralmente 1-2).
+    // ID do doc em curva_abc_mensal é "YYYY-MM" (gerado pelo importador).
+    const snaps = await Promise.all(
+      meses.map(id => getDoc(docRef('curva_abc_mensal', id)).catch(() => null))
+    );
+
+    // Acumula por produto: { codigo: { cx, dias } }
+    const acumulado = {};
+    snaps.forEach(snap => {
+      if (!snap || !snap.exists()) return;
+      const d = snap.data();
+      (d.produtos || []).forEach(p => {
+        const cod = String(p.codigo || '').trim();
+        if (!cod) return;
+        const cx   = Number(p.cxTotal)       || 0;
+        const dias = Number(p.diasComVendas) || 0;
+        if (cx <= 0 || dias <= 0) return;
+        if (!acumulado[cod]) acumulado[cod] = { cx: 0, dias: 0 };
+        acumulado[cod].cx   += cx;
+        acumulado[cod].dias += dias;
+      });
     });
-  } catch {
-    // Sem coleção ainda
+
+    Object.entries(acumulado).forEach(([cod, v]) => {
+      map[cod] = v.dias > 0 ? v.cx / v.dias : 0;
+    });
+  } catch (e) {
+    console.warn('[FEFO] erro ao carregar venda média:', e?.message || e);
   }
   return map;
 }

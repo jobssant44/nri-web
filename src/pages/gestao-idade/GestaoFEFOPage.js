@@ -77,6 +77,7 @@ export default function GestaoFEFOPage() {
         carregarPZVMap({ col }),
         carregarVendaMediaMap({
           col,
+          docRef,
           dataInicio: vendaInicio ? parseISODate(vendaInicio) : undefined,
           dataFim:    vendaFim    ? parseISODate(vendaFim)    : undefined,
           diasJanela: 30,
@@ -382,7 +383,7 @@ export default function GestaoFEFOPage() {
                   </td>
                   <td style={{ ...tdStyle, fontFamily: D.mono, textAlign: 'right' }}>
                     {l.vendaMediaCxDia > 0
-                      ? `${l.vendaMediaCxDia.toFixed(2)} cx/dia`
+                      ? `${Math.round(l.vendaMediaCxDia)} cx/dia`
                       : '—'}
                   </td>
                   <td style={{ ...tdStyle, fontFamily: D.mono, textAlign: 'right', color: l.quantPerda > 0 ? D.red : D.textMuted, fontWeight: l.quantPerda > 0 ? 700 : 400 }}>
