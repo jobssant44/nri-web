@@ -10,7 +10,7 @@
  *  - Hecto Perda: quant. Perda × hecto/cx
  */
 
-import { getDocs, query, where, orderBy, limit } from 'firebase/firestore';
+import { getDocs, getDoc, query, where, orderBy, limit } from 'firebase/firestore';
 import { isLogExcluido } from '../gerenciamento-estoque/shared/inventoryLogsFilter';
 
 export const THRESHOLD_SEGREGAR_PCT  = 60;      // % shelf life — usado no Stock Age Index
