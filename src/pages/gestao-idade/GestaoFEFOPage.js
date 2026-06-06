@@ -218,6 +218,72 @@ export default function GestaoFEFOPage() {
     return D.green;
   }
 
+  // Exporta as linhas FILTRADAS (respeita filtros atuais) pra CSV BR-friendly:
+  // separador ';', decimal com vírgula, datas DD/MM/AAAA, UTF-8 com BOM
+  // (pra Excel BR abrir certo). Filtra _ts (campo interno) e expõe data legível.
+  function exportarCSV() {
+    if (filtradas.length === 0) return;
+
+    // Colunas do export — mais completas que a tabela visual (inclui dataContagem).
+    const cols = [
+      { key: 'productCode',     label: 'Codigo' },
+      { key: 'descricao',       label: 'Descricao' },
+      { key: 'local',           label: 'Local' },
+      { key: 'rua',             label: 'Endereco' },
+      { key: 'quantidadeCx',    label: 'Quantidade (cx)' },
+      { key: 'hectoTotal',      label: 'Hecto Total' },
+      { key: 'curva',           label: 'Curva' },
+      { key: 'vencimento',      label: 'Vencimento' },
+      { key: 'dataContagem',    label: 'Data Contagem' },
+      { key: 'prazo',           label: 'Prazo (dias)' },
+      { key: 'status',          label: 'Status' },
+      { key: 'vendaMediaCxDia', label: 'Venda Media (cx/dia)' },
+      { key: 'quantPerda',      label: 'Quant. Perda' },
+      { key: 'hectoPerda',      label: 'Hecto Perda' },
+      { key: 'pzvDias',         label: 'PZV (dias)' },
+      { key: 'pctShelfLife',    label: '% Shelf Life' },
+    ];
+
+    function fmtData(d) {
+      if (!d) return '';
+      const x = d instanceof Date ? d : new Date(d);
+      if (isNaN(x.getTime())) return String(d);
+      return `${String(x.getDate()).padStart(2, '0')}/${String(x.getMonth() + 1).padStart(2, '0')}/${x.getFullYear()}`;
+    }
+    function fmtCelula(v) {
+      if (v == null) return '';
+      if (v instanceof Date) return fmtData(v);
+      if (typeof v === 'number') return String(v).replace('.', ',');
+      const s = String(v);
+      // Escape CSV: se contém ; " ou quebra de linha, encerra em aspas e escapa aspas duplas
+      if (/[;"\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    }
+
+    const header = cols.map(c => c.label).join(';');
+    const linhas = filtradas.map(l => {
+      const linhaComData = {
+        ...l,
+        dataContagem: fmtData(l._ts),
+        vencimento:   l.vencimento ? fmtData(l.vencimento) : '',
+      };
+      return cols.map(c => fmtCelula(linhaComData[c.key])).join(';');
+    });
+
+    // BOM (﻿) → Excel BR abre como UTF-8 sem precisar trocar encoding
+    const csv = '﻿' + [header, ...linhas].join('\r\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const hoje = new Date();
+    const stamp = `${hoje.getFullYear()}${String(hoje.getMonth() + 1).padStart(2, '0')}${String(hoje.getDate()).padStart(2, '0')}`;
+    a.href = url;
+    a.download = `contagens-fefo-${stamp}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <PageContainer maxWidth={1500}>
       <PageHeader
@@ -298,8 +364,30 @@ export default function GestaoFEFOPage() {
         <BotaoClear onClick={limpar} />
       </FilterBar>
 
-      <div style={{ fontSize: 12, color: D.textMuted, marginBottom: 12 }}>
-        Mostrando <strong>{filtradas.length}</strong> de {linhas.length} contagens.
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 12, color: D.textMuted }}>
+          Mostrando <strong>{filtradas.length}</strong> de {linhas.length} contagens.
+        </div>
+        <button
+          onClick={exportarCSV}
+          disabled={filtradas.length === 0}
+          style={{
+            padding: '7px 14px',
+            background: D.surface,
+            border: `1px solid ${D.border}`,
+            borderRadius: 8,
+            cursor: filtradas.length === 0 ? 'not-allowed' : 'pointer',
+            fontSize: 12,
+            color: filtradas.length === 0 ? D.textMuted : D.text,
+            fontFamily: D.font,
+            fontWeight: 600,
+            opacity: filtradas.length === 0 ? 0.5 : 1,
+            transition: D.transition,
+          }}
+          title={filtradas.length === 0 ? 'Nenhuma contagem pra exportar' : `Baixar ${filtradas.length} contagens em CSV`}
+        >
+          📥 Baixar CSV ({filtradas.length})
+        </button>
       </div>
 
       {loading ? (
