@@ -150,13 +150,21 @@ export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMedi
   }
   const hectoPerda = quantPerda * hectoUnit;
 
-  // Situação (severidade da perda em HL — thresholds chutados pra inicio)
+  // Situação (regra de 02/06/26): baseada na QUANTIDADE de perda (caixas),
+  // independente do prazo. Lógica: mesmo um produto com 200 dias até vencer
+  // pode ter perda alta se a quantidade em estoque for muito maior que o
+  // ritmo de saída (ex: 400 cx com venda média 1 cx/dia).
+  //
+  //   status 'vencido'      → sempre 'critico' (perda real, não estimada)
+  //   quantPerda ≥ 10 cx    → 'critico'
+  //   0 < quantPerda < 10   → 'medio'
+  //   quantPerda == 0       → 'baixo' (inclui sem-vencimento e prazo longo
+  //                                     que vai escoar a tempo)
   let situacao = 'baixo';
-  if (hectoPerda >= 40) situacao = 'alto';
-  else if (hectoPerda >= 10) situacao = 'critico';
-  else if (hectoPerda >= 2) situacao = 'medio';
-  else if (hectoPerda > 0) situacao = 'baixo';
-  else situacao = 'baixo'; // 0 → ainda baixo (sem perda)
+  if (status === 'vencido')   situacao = 'critico';
+  else if (quantPerda >= 10)  situacao = 'critico';
+  else if (quantPerda > 0)    situacao = 'medio';
+  else                        situacao = 'baixo';
 
   return {
     productCode: String(log.productCode || ''),
