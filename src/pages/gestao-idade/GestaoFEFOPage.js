@@ -78,6 +78,7 @@ export default function GestaoFEFOPage() {
         carregarVendaMediaMap({
           col,
           docRef,
+          rid,
           dataInicio: vendaInicio ? parseISODate(vendaInicio) : undefined,
           dataFim:    vendaFim    ? parseISODate(vendaFim)    : undefined,
           diasJanela: 30,

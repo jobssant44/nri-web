@@ -313,7 +313,7 @@ export async function carregarPZVMap({ col }) {
  *  - dataInicio + dataFim (Date) → usa esse intervalo
  *  - Senão → diasJanela (default 30) terminando hoje
  */
-export async function carregarVendaMediaMap({ col, docRef, diasJanela = 30, dataInicio, dataFim }) {
+export async function carregarVendaMediaMap({ col, docRef, rid, diasJanela = 30, dataInicio, dataFim }) {
   const map = {};
   try {
     // Resolve janela efetiva
@@ -334,10 +334,12 @@ export async function carregarVendaMediaMap({ col, docRef, diasJanela = 30, data
     }
     if (meses.length === 0) return map;
 
-    // Lê todos os docs em paralelo (1 read por mês — geralmente 1-2).
-    // ID do doc em curva_abc_mensal é "YYYY-MM" (gerado pelo importador).
+    // ID do doc em curva_abc_mensal é "{rid}_{YYYY-MM}" (ver ImportarVendasPage
+    // linha 302). Sem o prefixo do rid, getDoc não acha e o map fica vazio.
+    // Fallback "global" reflete a regra do importador pra quando rid for null.
+    const prefixo = rid || 'global';
     const snaps = await Promise.all(
-      meses.map(id => getDoc(docRef('curva_abc_mensal', id)).catch(() => null))
+      meses.map(id => getDoc(docRef('curva_abc_mensal', `${prefixo}_${id}`)).catch(() => null))
     );
 
     // Acumula por produto: { codigo: { cx, dias } }
