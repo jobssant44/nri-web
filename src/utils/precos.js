@@ -72,3 +72,43 @@ export function getPrecoProdutoDetalhado(codigo, precosMap) {
   if (reg.preco02 != null && Number.isFinite(reg.preco02)) return { valor: reg.preco02, origem: '02' };
   return { valor: null, origem: null };
 }
+
+/**
+ * Sobrescreve `linha.valor` com `qtde × preço cadastrado` quando o produto
+ * existe em `precos_produtos`. Quando não existe, mantém o `linha.valor` que
+ * já veio do relatório (que é o que as páginas WQI/Troca/Reposição usam hoje).
+ *
+ * Regra de negócio (fixada em 08/06/26):
+ *   "Aplique o preço cadastrado em todas as páginas de Prejuízo. Quando o
+ *    produto não tem preço cadastrado, use o valor do próprio relatório
+ *    03.02.37 (campo `valor`) como fallback."
+ *
+ * Por que receber `parseNumFn`: cada página de prejuízo (WQI/Troca/Reposição)
+ * tem sua própria cópia local da função `parseNum` (formato BR). Em vez de
+ * duplicar essa lógica aqui, deixo o caller injetar a sua — assim qualquer
+ * ajuste futuro de parsing fica num lugar só.
+ *
+ * Marca a linha com `_temPrecoCadastrado: true` e guarda o valor original em
+ * `_valorOriginal` pra debug/comparação. O `linha.valor` passa a ser o valor
+ * recalculado, então TODO o resto do código (parseNum(l.valor) em KPIs,
+ * gráficos, tabelas) continua funcionando sem mudança.
+ *
+ * @param {Object}   linha       — linha do relatorio_030237.linhas[]
+ * @param {Object}   precosMap   — mapa carregado por carregarPrecosMap
+ * @param {Function} parseNumFn  — função parseNum local da página
+ * @returns {Object} a mesma linha (sem mudança) ou cópia com valor sobrescrito
+ */
+export function aplicarPrecoCadastrado(linha, precosMap, parseNumFn) {
+  if (!linha || !precosMap) return linha;
+  const codigo = linha.produto || linha.codProduto;
+  const precoUnit = getPrecoProduto(codigo, precosMap);
+  if (precoUnit == null) return linha;                  // fallback: mantém valor do relatório
+  const qtde = parseNumFn(linha.qtde);
+  if (!Number.isFinite(qtde) || qtde <= 0) return linha; // sem qtde válida, mantém original
+  return {
+    ...linha,
+    _valorOriginal:        linha.valor,
+    _temPrecoCadastrado:   true,
+    valor:                 qtde * precoUnit,
+  };
+}

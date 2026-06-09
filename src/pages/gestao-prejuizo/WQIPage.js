@@ -13,6 +13,7 @@ import {
   BotaoVoltar, BotaoNav, BotaoClear, MiniRanking,
 } from '../../design';
 import { carregarMeta, META_PADRAO } from '../../modules/gestao-prejuizo/metasHelpers';
+import { carregarPrecosMap, aplicarPrecoCadastrado } from '../../utils/precos';
 
 // ─── Mapeamento de motivos ─────────────────────────────────────────────────────
 const MOTIVOS_WQI = {
@@ -362,7 +363,7 @@ export default function WQIPage() {
   useEffect(() => {
     async function carregar() {
       try {
-        const [snap030237, snapHecto, snapColabs, snapAreas, snapMotivos, snapClass, meta] = await Promise.all([
+        const [snap030237, snapHecto, snapColabs, snapAreas, snapMotivos, snapClass, meta, precosMap] = await Promise.all([
           getDocs(colRevenda('relatorio_030237')),
           getDocs(colRevenda('relatorio_030147hecto')),
           getDocs(col('prejuizo_colaboradores')),
@@ -370,6 +371,7 @@ export default function WQIPage() {
           getDocs(col('prejuizo_motivos')),
           getDocs(colRevenda('prejuizo_classificacoes')),
           carregarMeta('wqi', docRef, rid),
+          carregarPrecosMap({ col }),
         ]);
         setMetaPorHL(meta);
         const todas = [];
@@ -378,7 +380,9 @@ export default function WQIPage() {
             const op = parseInt(l.operacao, 10);
             if (op < 101 || op > 108) return;
             if (String(l.status ?? '').trim().toUpperCase() === 'C') return;
-            todas.push(l);
+            // Aplica preço cadastrado (precos_produtos). Quando o produto não
+            // tem preço, mantém l.valor original do 03.02.37 como fallback.
+            todas.push(aplicarPrecoCadastrado(l, precosMap, parseNum));
           });
         });
         setLinhasBase(todas);

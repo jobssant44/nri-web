@@ -13,6 +13,7 @@ import {
   BotaoClear,
 } from '../../../design';
 import { carregarMeta, META_PADRAO } from '../../../modules/gestao-prejuizo/metasHelpers';
+import { carregarPrecosMap, aplicarPrecoCadastrado } from '../../../utils/precos';
 
 // ─── Helpers de parsing ───────────────────────────────────────────────────────
 function parseNum(val) {
@@ -145,20 +146,25 @@ export default function TrocaPage() {
   useEffect(() => {
     async function carregar() {
       try {
-        const [snapTroca, snapHecto, snapVendedores, meta] = await Promise.all([
+        const [snapTroca, snapHecto, snapVendedores, meta, precosMap] = await Promise.all([
           getDocs(colRevenda('relatorio_030237')),
           getDocs(colRevenda('relatorio_030147hecto')),
           getDocs(col('vendedores')),
           carregarMeta('troca', docRef, rid),
+          carregarPrecosMap({ col }),
         ]);
         const todas = [];
         snapTroca.docs.forEach(d => {
-          (d.data().linhas || []).forEach(l => {
+          (d.data().linhas || []).forEach(rawL => {
             // Pré-filtros: Operação = 5 · Status = A · Origem = Digitado
-            const opNum  = parseFloat(String(l.operacao     || '').trim().replace(',', '.'));
-            const status = String(l.status                  || '').trim().toUpperCase();
-            const origem = String(l.origemPedido            || '').trim().toLowerCase();
+            const opNum  = parseFloat(String(rawL.operacao     || '').trim().replace(',', '.'));
+            const status = String(rawL.status                  || '').trim().toUpperCase();
+            const origem = String(rawL.origemPedido            || '').trim().toLowerCase();
             if (opNum !== 5 || status !== 'A' || origem !== 'digitado') return;
+            // Aplica preço cadastrado antes do spread — quando o produto tem
+            // preço em precos_produtos, l.valor passa a ser qtde × preço;
+            // senão mantém o valor original do 03.02.37 como fallback.
+            const l = aplicarPrecoCadastrado(rawL, precosMap, parseNum);
             todas.push({
               ...l,
               data:        l.dataOperacao || l.data || '',

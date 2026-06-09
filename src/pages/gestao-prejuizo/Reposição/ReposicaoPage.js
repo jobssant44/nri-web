@@ -14,6 +14,7 @@ import {
   BotaoClear,
 } from '../../../design';
 import { carregarMeta, META_PADRAO } from '../../../modules/gestao-prejuizo/metasHelpers';
+import { carregarPrecosMap, aplicarPrecoCadastrado } from '../../../utils/precos';
 
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 function parseNum(val) {
@@ -190,12 +191,13 @@ export default function ReposicaoPage() {
     async function carregar() {
       try {
         const OPS_REPOSICAO = new Set(['5', '39', '43']);
-        const [snapTroca, snapRep, snapVend, snapHecto, meta] = await Promise.all([
+        const [snapTroca, snapRep, snapVend, snapHecto, meta, precosMap] = await Promise.all([
           getDocs(colRevenda('relatorio_030237')),
           getDocs(colRevenda('relatorio_031805')),
           getDocs(col('vendedores')),
           getDocs(colRevenda('relatorio_030147hecto')),
           carregarMeta('reposicao', docRef, rid),
+          carregarPrecosMap({ col }),
         ]);
         setMetaPorHL(meta);
         setHectoBase(snapHecto.docs.map(d => d.data()));
@@ -229,11 +231,15 @@ export default function ReposicaoPage() {
         // Linhas de venda (Reposição) + enrichment com dados da solicitação
         const todas = [];
         snapTroca.docs.forEach(d => {
-          (d.data().linhas || []).forEach(l => {
-            const op  = String(l.operacao     ?? '').trim();
-            const ori = String(l.origemPedido ?? '').trim().toLowerCase();
+          (d.data().linhas || []).forEach(rawL => {
+            const op  = String(rawL.operacao     ?? '').trim();
+            const ori = String(rawL.origemPedido ?? '').trim().toLowerCase();
             if (!OPS_REPOSICAO.has(op)) return;
             if (ori !== 'palmtop')     return;
+            // Aplica preço cadastrado antes do spread (mesma regra do WQI/Troca):
+            // quando há preço em precos_produtos, l.valor = qtde × preço; senão
+            // mantém o valor original do 03.02.37 como fallback.
+            const l   = aplicarPrecoCadastrado(rawL, precosMap, parseNum);
             const nf  = normNF(l.nota);
             const rep = mapRep[nf];
             todas.push({
