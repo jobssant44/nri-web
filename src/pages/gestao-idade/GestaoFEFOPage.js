@@ -9,9 +9,11 @@ import { GestaoIdadeTabs } from '../../modules/gestao-idade/GestaoIdadeTabs';
 import {
   avaliarPalete, fmtData, fmtNum, fmtPct, tsToDate, resolverPZV, PZV_PADRAO_DIAS,
   carregarLogsContagem, carregarProdutosMap, carregarPZVMap, carregarVendaMediaMap,
+  calcularPerdaFEFOConsolidada,
   COR,
 } from '../../modules/gestao-idade/gestaoIdadeHelpers';
 import { carregarMapaCurvaComFallback } from '../../modules/gerenciamento-estoque/shared/curvaLookup';
+import { carregarPrecosMap, getPrecoProduto } from '../../utils/precos';
 
 // Converte string "YYYY-MM-DD" (input type=date) → Date local
 function parseISODate(s) {
@@ -35,6 +37,7 @@ const COLUNAS = [
   { key: 'status',       label: 'Status' },
   { key: 'vendaMediaCxDia', label: 'Venda Média' },
   { key: 'quantPerda',   label: 'Quant. Perda' },
+  { key: 'rsPerda',      label: 'R$ Perda' },
   { key: 'hectoPerda',   label: 'Hecto Perda' },
   { key: 'situacao',     label: 'Situação' },
   { key: 'pzvDias',      label: 'PZV' },
@@ -71,7 +74,7 @@ export default function GestaoFEFOPage() {
     setLoading(true);
     try {
       const hoje = new Date();
-      const [logs, produtosMap, pzvMap, vendaMap, curvaInfo] = await Promise.all([
+      const [logs, produtosMap, pzvMap, vendaMap, precosMap, curvaInfo] = await Promise.all([
         carregarLogsContagem({ col }),
         carregarProdutosMap({ col }),
         carregarPZVMap({ col }),
@@ -83,6 +86,10 @@ export default function GestaoFEFOPage() {
           dataFim:    vendaFim    ? parseISODate(vendaFim)    : undefined,
           diasJanela: 30,
         }),
+        // Preços importados em /importar/precos. Usado pra calcular R$ Perda
+        // por linha (quantPerda × precoUnit). Regra: prioriza Preço 01;
+        // se vazio, usa Preço 02; se ambos vazios, R$ Perda = null (—).
+        carregarPrecosMap({ col }),
         // Curva ABC ATUAL (não o snapshot do log) — regra do user em 2026-05-24.
         // Mensal do mês corrente com fallback pra curva_abc achatada (último import).
         carregarMapaCurvaComFallback({
@@ -104,6 +111,12 @@ export default function GestaoFEFOPage() {
         setDataContagemSel(datasArr[0]);
       }
 
+      // Calcula perda FEFO CONSOLIDADA (versão 02/06/26): lotes do mesmo
+      // produto compartilham a venda média em cadeia (em vez do cálculo
+      // linha-a-linha que tratava cada lote isoladamente). O map retornado
+      // é por REFERÊNCIA de log, então cada palete recupera seu próprio valor.
+      const perdaFEFOMap = calcularPerdaFEFOConsolidada(logs, produtosMap, vendaMap, hoje);
+
       // Avalia cada palete (e anota timestamp para filtros)
       const linhasAvaliadas = logs.map(log => {
         const cod = String(log.productCode || '').trim();
@@ -119,8 +132,17 @@ export default function GestaoFEFOPage() {
           // Usa curva ABC ATUAL (regra do user). Se o produto não está na
           // curva atual, cai no snapshot do log como fallback.
           curvaProduto: curvaAtualMap[String(log.productCode || '').trim()] || log.productCurva,
+          // Perda FEFO consolidada (sobrescreve cálculo linha-a-linha).
+          quantPerdaPreCalculada: perdaFEFOMap.get(log),
         });
         a._ts = tsToDate(log.timestamp);
+        // R$ Perda — multiplica quantPerda × preço do produto. Helper segue
+        // regra: prioriza Preço 01; se vazio, Preço 02; se ambos vazios, null.
+        const precoUnit = getPrecoProduto(cod, precosMap);
+        a.precoUnit = precoUnit;
+        a.rsPerda = (precoUnit != null && a.quantPerda > 0)
+          ? a.quantPerda * precoUnit
+          : (a.quantPerda > 0 ? null : 0);
         return a;
       });
 
@@ -240,6 +262,7 @@ export default function GestaoFEFOPage() {
       { key: 'status',          label: 'Status' },
       { key: 'vendaMediaCxDia', label: 'Venda Media (cx/dia)' },
       { key: 'quantPerda',      label: 'Quant. Perda' },
+      { key: 'rsPerda',         label: 'R$ Perda' },
       { key: 'hectoPerda',      label: 'Hecto Perda' },
       { key: 'pzvDias',         label: 'PZV (dias)' },
       { key: 'pctShelfLife',    label: '% Shelf Life' },
@@ -477,6 +500,25 @@ export default function GestaoFEFOPage() {
                   </td>
                   <td style={{ ...tdStyle, fontFamily: D.mono, textAlign: 'right', color: l.quantPerda > 0 ? D.red : D.textMuted, fontWeight: l.quantPerda > 0 ? 700 : 400 }}>
                     {fmtNum(l.quantPerda, 0)}
+                  </td>
+                  {/* R$ Perda — null quando produto não tem preço cadastrado (mostra '—'
+                      + tooltip explicativo). Quando sem perda (qtdPerda=0), valor é 0
+                      e fica neutro. Cor vermelha só quando >0. */}
+                  <td
+                    style={{
+                      ...tdStyle, fontFamily: D.mono, textAlign: 'right',
+                      color: l.rsPerda > 0 ? D.red : D.textMuted,
+                      fontWeight: l.rsPerda > 0 ? 700 : 400,
+                    }}
+                    title={
+                      l.rsPerda == null ? 'Produto sem preço cadastrado em /importar/precos'
+                      : l.precoUnit ? `Preço unit. R$ ${l.precoUnit.toFixed(2).replace('.', ',')}`
+                      : ''
+                    }
+                  >
+                    {l.rsPerda == null
+                      ? '—'
+                      : `R$ ${l.rsPerda.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                   </td>
                   <td style={{ ...tdStyle, fontFamily: D.mono, textAlign: 'right', color: l.hectoPerda > 0 ? D.red : D.textMuted, fontWeight: l.hectoPerda > 0 ? 700 : 400 }}>
                     {fmtNum(l.hectoPerda, 2)}

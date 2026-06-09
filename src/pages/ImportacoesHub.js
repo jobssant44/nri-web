@@ -36,6 +36,11 @@ const CATEGORIAS = [
         descricao: 'Mapeamento código → nome do RN (Representante de Negócio). Usado em Reposição, WQI e Troca',
         rota: '/cadastros/importar-vendedores',
       },
+      {
+        titulo: 'Preços',
+        descricao: 'Excel/CSV com Código + Preço 01 + Preço 02 (fallback). Usado em cálculos monetários do sistema',
+        rota: '/importar/precos',
+      },
     ],
   },
   {

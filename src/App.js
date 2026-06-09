@@ -13,6 +13,7 @@ import NovaNRI from './pages/NovaNRI';
 import Cadastros from './pages/Cadastros';
 import Importar from './pages/Importar';
 import ImportacoesHub from './pages/ImportacoesHub';
+import ImportarPrecosPage from './pages/ImportarPrecosPage';
 import Exportar from './pages/Exportar';
 import LancarAbastecimento from './pages/LancarAbastecimento';
 import ImportarVendasPage from './pages/ImportarVendasPage';
@@ -144,6 +145,7 @@ function AppInner() {
             <Route path="/nova-nri"                element={<NovaNRI />} />
             <Route path="/cadastros"               element={guardaSup ? <Navigate to={guardaSup} /> : <Cadastros />} />
             <Route path="/importacoes"            element={guardaSup ? <Navigate to={guardaSup} /> : <ImportacoesHub />} />
+            <Route path="/importar/precos"        element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarPrecosPage />} />
             <Route path="/importar"                element={guardaSup ? <Navigate to={guardaSup} /> : <Importar />} />
             <Route path="/exportar"                element={guardaSup ? <Navigate to={guardaSup} /> : <Exportar />} />
 

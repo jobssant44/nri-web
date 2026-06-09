@@ -93,14 +93,19 @@ export function fmtNum(v, casas = 2) {
  * Avalia um inventory_log contra produtos / vendas / curva e devolve
  * todas as métricas necessárias para a tela de FEFO.
  *
- * @param {Object} log              — doc de inventory_logs
- * @param {Date}   dataReferencia   — data da contagem (ou hoje)
- * @param {Object} produto          — { codigo, descricao, hecto, paletizacao, ... }
- * @param {Number} pzvDias          — Prazo de Validade Total em dias (pode ser null)
- * @param {Number} vendaMediaCxDia  — média diária em caixas (pode ser null)
- * @param {String} curvaProduto     — 'A' | 'B' | 'C' | null
+ * @param {Object} log                     — doc de inventory_logs
+ * @param {Date}   dataReferencia          — data da contagem (ou hoje)
+ * @param {Object} produto                 — { codigo, descricao, hecto, paletizacao, ... }
+ * @param {Number} pzvDias                 — Prazo de Validade Total em dias (pode ser null)
+ * @param {Number} vendaMediaCxDia         — média diária em caixas (pode ser null)
+ * @param {String} curvaProduto            — 'A' | 'B' | 'C' | null
+ * @param {Number} [quantPerdaPreCalculada]— Quando fornecido, sobrescreve o cálculo
+ *                                            linha-a-linha de quantPerda. Usado pelo
+ *                                            cálculo FEFO consolidado, que considera
+ *                                            que lotes do mesmo produto COMPETEM pela
+ *                                            mesma venda média.
  */
-export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMediaCxDia, curvaProduto }) {
+export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMediaCxDia, curvaProduto, quantPerdaPreCalculada }) {
   const vencimento = tsToDate(log.expiryDate);
   const prazo = vencimento ? diasEntre(dataReferencia, vencimento) : null;
   const quantidadeCx = paraCaixas(log, produto);
@@ -130,14 +135,16 @@ export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMedi
     ? Math.ceil(quantidadeCx / vendaMediaCxDia)
     : null;
 
-  // Quant. perda — regra do user:
-  //   prazo ≤ 30 dias (ou vencido): perda = quantidade total
-  //   senão: perda = quantidade − (venda média × (prazo − 30))
-  //          ↑ "vai vender" só até 30 dias antes do vencimento. Se vendaMédia
-  //          escoa tudo nessa janela, perda = 0.
+  // Quant. perda:
+  // - Se `quantPerdaPreCalculada` veio (do cálculo FEFO consolidado), usa.
+  // - Senão, calcula linha-a-linha (lógica histórica):
+  //     prazo ≤ 30: perda = quantidade total
+  //     senão: perda = quantidade − (venda média × (prazo − 30))
   let quantPerda = 0;
-  if (prazo == null) {
-    quantPerda = 0; // sem vencimento → sem como avaliar perda
+  if (quantPerdaPreCalculada != null) {
+    quantPerda = Number(quantPerdaPreCalculada) || 0;
+  } else if (prazo == null) {
+    quantPerda = 0;
   } else if (prazo <= 30) {
     quantPerda = quantidadeCx;
   } else if (vendaMediaCxDia > 0) {
@@ -145,7 +152,6 @@ export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMedi
     const vendavel   = vendaMediaCxDia * diasUteis;
     quantPerda       = Math.max(0, quantidadeCx - vendavel);
   } else {
-    // Sem venda média: assume perda total do excedente (não vai escoar nada)
     quantPerda = quantidadeCx;
   }
   const hectoPerda = quantPerda * hectoUnit;
@@ -191,6 +197,98 @@ export function avaliarPalete({ log, dataReferencia, produto, pzvDias, vendaMedi
     pzvDias: pzvDias || null,
     vendaMediaCxDia: vendaMediaCxDia || null,
   };
+}
+
+/**
+ * Calcula quantPerda em modo FEFO CONSOLIDADO (versão 02/06/26).
+ *
+ * Diferença vs cálculo linha-a-linha:
+ *   Linha-a-linha trata cada lote isoladamente — assume que TODA a venda média
+ *   do produto vai escoar AQUELE lote. Se há 8 lotes do mesmo produto, cada um
+ *   "consome" a venda média inteira no cálculo. Resultado: subestima a perda.
+ *
+ *   Consolidado simula FEFO real: lotes do mesmo produto compartilham a venda
+ *   média ao longo do tempo. Lote 1 (vence primeiro) vende até esgotar OU
+ *   chegar à segregação (30 dias antes do venc). Só DEPOIS o lote 2 começa a
+ *   vender. E assim por diante. Mais realista.
+ *
+ * Algoritmo por produto:
+ *   1. Ordena lotes por vencimento ASC
+ *   2. diasConsumidos = 0
+ *   3. Pra cada lote em ordem:
+ *      prazoUtil    = max(0, prazo − 30)         // dias até segregar
+ *      prazoEfetivo = max(0, prazoUtil − diasConsumidos)  // janela real desse lote
+ *      cxVendaveis  = prazoEfetivo × vendaMédia
+ *      quantPerda   = max(0, cx − cxVendaveis)
+ *      tempoEscoar  = cx / vendaMédia            // tempo p/ esvaziar o lote
+ *      diasConsumidos += min(prazoEfetivo, tempoEscoar)
+ *
+ * @param {Array<Object>} logs           — logs ATIVOS (já filtrados via filtrarLogsAtivos)
+ * @param {Object}        produtosMap    — mapa { codigo → produto } pra paraCaixas
+ * @param {Object}        vendaMap       — mapa { codigo → cx/dia média }
+ * @param {Date}          dataReferencia — geralmente new Date() ou data da contagem
+ *
+ * @returns {Map<Object, Number>} Map por REFERÊNCIA do log → quantPerda em caixas.
+ *   Uso: `perdaMap.get(log)` retorna o valor (ou undefined se sem cálculo).
+ */
+export function calcularPerdaFEFOConsolidada(logs, produtosMap, vendaMap, dataReferencia) {
+  const perdaMap = new Map();
+  if (!Array.isArray(logs) || logs.length === 0) return perdaMap;
+
+  // Agrupa logs por productCode
+  const porProduto = {};
+  logs.forEach(log => {
+    const cod = String(log.productCode || '').trim();
+    if (!cod) return;
+    (porProduto[cod] = porProduto[cod] || []).push(log);
+  });
+
+  Object.entries(porProduto).forEach(([cod, lotes]) => {
+    const vendaMedia = Number(vendaMap?.[cod]) || 0;
+    const produto    = produtosMap?.[cod];
+
+    // Ordena por vencimento ASC (FEFO). Lotes sem vencimento vão pro final.
+    const ordenados = lotes.slice().sort((a, b) => {
+      const va = tsToDate(a.expiryDate);
+      const vb = tsToDate(b.expiryDate);
+      if (!va && !vb) return 0;
+      if (!va) return 1;
+      if (!vb) return -1;
+      return va - vb;
+    });
+
+    let diasConsumidos = 0;
+    ordenados.forEach(log => {
+      const venc = tsToDate(log.expiryDate);
+      const cx   = paraCaixas(log, produto);
+
+      // Sem vencimento: não dá pra avaliar perda — fica 0.
+      if (!venc) { perdaMap.set(log, 0); return; }
+
+      const prazo = diasEntre(dataReferencia, venc);
+      if (prazo == null) { perdaMap.set(log, 0); return; }
+
+      // Prazo ≤ 30 (segregado ou vencido): perda total. Não consome tempo.
+      if (prazo <= 30) { perdaMap.set(log, cx); return; }
+
+      // Sem venda média: assume perda total. Não consome tempo.
+      if (vendaMedia <= 0) { perdaMap.set(log, cx); return; }
+
+      // Janela útil desse lote dentro do cronograma FEFO
+      const prazoUtilAbs = prazo - 30;
+      const prazoEfetivo = Math.max(0, prazoUtilAbs - diasConsumidos);
+      const cxVendaveis  = prazoEfetivo * vendaMedia;
+      const quantPerda   = Math.max(0, cx - cxVendaveis);
+
+      // Tempo necessário pra esgotar este lote (caixas vendíveis ÷ venda média)
+      const tempoEscoar = cx / vendaMedia;
+      diasConsumidos += Math.min(prazoEfetivo, tempoEscoar);
+
+      perdaMap.set(log, quantPerda);
+    });
+  });
+
+  return perdaMap;
 }
 
 // Converte qualquer unidade (palete/lastro/caixa/unidade) para caixas, usando
