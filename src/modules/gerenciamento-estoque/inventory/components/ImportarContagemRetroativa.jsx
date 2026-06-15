@@ -77,12 +77,23 @@ export function ImportarContagemRetroativa({ onSuccess }) {
   }
   function parseValidade(cell) {
     if (cell == null || cell === '') return null;
+    // Quando vem objeto Date (alguns fluxos do xlsx fazem coerção interna)
+    if (cell instanceof Date && !isNaN(cell.getTime())) {
+      // Mesmo padrão do excelSerialToDate: extrair em UTC (porque a Date que
+      // o xlsx produz vem como UTC midnight) e reconstruir como BRT local.
+      return new Date(cell.getUTCFullYear(), cell.getUTCMonth(), cell.getUTCDate());
+    }
     if (typeof cell === 'number' && Number.isFinite(cell)) return excelSerialToDate(cell);
     const s = String(cell).trim();
-    const m1 = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (m1) return new Date(parseInt(m1[3]), parseInt(m1[2]) - 1, parseInt(m1[1]));
-    const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (m2) return new Date(parseInt(m2[1]), parseInt(m2[2]) - 1, parseInt(m2[3]));
+    // DD/MM/YYYY ou D/M/YYYY (regex flexível: 1-2 dígitos no dia/mês)
+    const mBR = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (mBR) return new Date(parseInt(mBR[3]), parseInt(mBR[2]) - 1, parseInt(mBR[1]));
+    // DD/MM/YY (ano com 2 dígitos — assume 20XX)
+    const mBRshort = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+    if (mBRshort) return new Date(2000 + parseInt(mBRshort[3]), parseInt(mBRshort[2]) - 1, parseInt(mBRshort[1]));
+    // ISO: YYYY-MM-DD
+    const mISO = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (mISO) return new Date(parseInt(mISO[1]), parseInt(mISO[2]) - 1, parseInt(mISO[3]));
     return null;
   }
   // ─── Parse de UM arquivo ─────────────────────────────────────────────
@@ -95,7 +106,11 @@ export function ImportarContagemRetroativa({ onSuccess }) {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    // raw: true → datas chegam como SERIAL NUMBER (não como string formatada
+    // pelo numFmt da célula, que pode vir "6/15/2026" em US ou "15/06/2026"
+    // em BR — ambiguidade que estava causando off-by-one). Com raw:true o
+    // serial vai direto pra excelSerialToDate (que usa UTC corretamente).
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
     if (!rows || rows.length === 0) throw new Error('Arquivo vazio.');
 
     const primeira = rows[0];
