@@ -7,16 +7,19 @@ import { useUser } from '../../context/UserContext';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 
 // Switch único pra reativar as abas "Importar retroativa" e "Importações"
-// (ocultadas a pedido em 2026-05-19). Trocar pra true exibe novamente os
-// botões + conteúdo. Lógica das duas abas continua intacta no projeto.
-const MOSTRAR_IMPORTACOES = false;
+// (ocultadas a pedido em 2026-05-19, reexibidas em 2026-06-15). Trocar pra
+// false oculta de novo os botões + conteúdo. Lógica das abas continua intacta.
+const MOSTRAR_IMPORTACOES = true;
 
 export default function CountingPage() {
   const { usuario } = useUser();
   const [abaRaw, setAba] = useSessionFilter('count:aba', 'manual');
-  // Abas visíveis hoje: 'manual' (Coleta de validade) e 'estoque' (Contagem de Estoque).
-  // Se a aba salva na sessão for inválida ou uma das ocultadas, cai pra 'manual'.
-  const ABAS_VISIVEIS = ['manual', 'estoque'];
+  // Abas visíveis dependem do switch acima. Se a aba salva na sessão não
+  // estiver na lista (ex: usuário visitou 'retroativa' e o switch voltou
+  // pra false depois), cai pra 'manual' como fallback seguro.
+  const ABAS_VISIVEIS = MOSTRAR_IMPORTACOES
+    ? ['manual', 'estoque', 'retroativa', 'historico']
+    : ['manual', 'estoque'];
   const aba = ABAS_VISIVEIS.includes(abaRaw) ? abaRaw : 'manual';
 
   const containerStyle = { maxWidth: '1100px', margin: '0 auto' };
