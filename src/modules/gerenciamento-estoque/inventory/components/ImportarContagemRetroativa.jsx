@@ -64,9 +64,16 @@ export function ImportarContagemRetroativa({ onSuccess }) {
     return parseFloat(s);
   }
   function excelSerialToDate(serial) {
-    const ms = (serial - 25569) * 86400 * 1000;
+    // Serial Excel é número de dias desde 1900-01-01. Convertido pra ms,
+    // gera uma Date no instant UTC midnight do dia "verdadeiro" (ex: serial
+    // 46186 → 2026-06-15T00:00:00Z). No Brasil (UTC-3) esse instant é
+    // 2026-06-14T21:00 — então getFullYear/getMonth/getDate (LOCAL) retornam
+    // 14/06 e a Date reconstruída cai 1 dia atrás. Usar getUTC* extrai o dia
+    // correto (15/06) antes de reconstruir como BRT local midnight, ficando
+    // consistente com o resto do código (tsToDate, parseValidade text branch).
+    const ms = Math.round((serial - 25569) * 86400 * 1000);
     const d = new Date(ms);
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
   }
   function parseValidade(cell) {
     if (cell == null || cell === '') return null;
