@@ -697,7 +697,7 @@ const result = await registerCounting(input,
 
 **Qtde TT formula (NRI label):** `(qtdPlt × cxPorPlt) + qtdCx`
 
-**Label PDF:** Generated client-side as HTML printed to A4. 3 labels per sheet. Pre-bloqueio = validade − 45 days; Bloqueio = validade − 30 days.
+**Label PDF:** Generated client-side as HTML printed to A4. **2 labels per sheet**, and each full pallet emits **2 duplicate sheets** (so 4 labels per palete físico). Leftover boxes (non-pallet) get 1 sheet only. Pre-bloqueio = validade − 45 days; Bloqueio = validade − 30 days.
 
 **WMS Module Imports:**
 ```js

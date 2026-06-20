@@ -105,8 +105,16 @@ function imprimirEtiquetas(itens) {
   // (qtdCx eram "caixas soltas adicionais"). NRIs históricas não têm a flag —
   // preserva regra antiga pra não imprimir errado em re-impressões legadas.
   //
-  // Em ambos os modelos: 1 página A4 por palete (3 etiquetas idênticas), +1
-  // página com as caixas que sobram quando não fechar palete inteiro.
+  // LAYOUT (15/06/26): cada folha A4 tem 2 etiquetas idênticas (antes eram 3).
+  // Cada PALETE INTEIRO gera 2 folhas A4 duplicadas — total 4 etiquetas por
+  // palete físico (2 lados × 2 cópias). RESTO de caixas (quando não fecha
+  // palete) gera só 1 folha (2 etiquetas) — não duplica.
+  const pagDePalete = bloco =>
+    `<div class="pagina">${bloco}${bloco}</div>` +
+    `<div class="pagina">${bloco}${bloco}</div>`; // 2 folhas, 2 etiquetas cada
+  const pagDeResto = bloco =>
+    `<div class="pagina">${bloco}${bloco}</div>`; // 1 folha, 2 etiquetas
+
   const paginas = itens.flatMap(({ nri, produto }) => {
     const cxPlt = parseInt(produto.cxPorPlt || '0') || 0;
     const novo  = produto.modeloNovo === true;
@@ -117,9 +125,9 @@ function imprimirEtiquetas(itens) {
       const cxTotal = parseInt(produto.qtdCx || '0') || 0;
       if (cxTotal === 0) return [];
       if (cxPlt === 0) {
-        // Sem paletização cadastrada → 1 página só com qtdCx (sem palete)
+        // Sem paletização cadastrada → trata como resto (1 folha)
         const bloco = gerarBlocoEtiqueta(nri, { ...produto, qtdPlt: '0', qtdCx: String(cxTotal) });
-        return [`<div class="pagina">${bloco}${bloco}${bloco}</div>`];
+        return [pagDeResto(bloco)];
       }
       paletesInteiros = Math.floor(cxTotal / cxPlt);
       restoCx         = cxTotal - paletesInteiros * cxPlt;
@@ -130,7 +138,7 @@ function imprimirEtiquetas(itens) {
       if (plt === 0 && cx === 0) return [];
       if (plt === 0) {
         const bloco = gerarBlocoEtiqueta(nri, { ...produto, qtdPlt: '0', qtdCx: String(cx) });
-        return [`<div class="pagina">${bloco}${bloco}${bloco}</div>`];
+        return [pagDeResto(bloco)];
       }
       // No modelo antigo, qtdCx eram caixas soltas que iam na última etiqueta.
       // Pra unificar o loop abaixo, traduzimos: paletes inteiros = qtdPlt,
@@ -141,7 +149,8 @@ function imprimirEtiquetas(itens) {
 
     if (paletesInteiros === 0 && restoCx === 0) return [];
 
-    // Loop unificado: N páginas de palete cheio + (opcional) 1 página de resto.
+    // Loop unificado: pra CADA palete inteiro empurra 2 folhas duplicadas.
+    // Resto (modelo novo) ganha 1 folha extra ao final.
     const arr = [];
     for (let i = 0; i < paletesInteiros; i++) {
       const produtoPalete = {
@@ -153,13 +162,13 @@ function imprimirEtiquetas(itens) {
         qtdCx: (!novo && i === paletesInteiros - 1) ? String(restoCx) : '0',
       };
       const bloco = gerarBlocoEtiqueta(nri, produtoPalete);
-      arr.push(`<div class="pagina">${bloco}${bloco}${bloco}</div>`);
+      arr.push(pagDePalete(bloco));
     }
     // Modelo NOVO: caixas que sobram ganham página própria (ex: 250 cx com
-    // cxPlt=100 → 2 páginas de palete cheio + 1 página de 50 cx).
+    // cxPlt=100 → 2 paletes inteiros [4 folhas] + 1 folha de 50 cx).
     if (novo && restoCx > 0) {
       const bloco = gerarBlocoEtiqueta(nri, { ...produto, qtdPlt: '0', qtdCx: String(restoCx) });
-      arr.push(`<div class="pagina">${bloco}${bloco}${bloco}</div>`);
+      arr.push(pagDeResto(bloco));
     }
     return arr;
   }).join('');
