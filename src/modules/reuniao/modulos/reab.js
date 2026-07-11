@@ -4,7 +4,7 @@
  *   codProduto, nomeProduto, tipo ('reabastecimento'|'ressuprimento'),
  *   qtdPaletes, dataOperacional (DD/MM/AAAA), hora, conferente, criadoEm.
  */
-import { getDocs, query, where, orderBy } from 'firebase/firestore';
+import { getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import {
   CORES, adicionarKPIs, adicionarSlideGraficoBarras,
   formatarPeriodoBR,
@@ -16,21 +16,22 @@ async function buscarDados(opts, onProgress) {
   const log = msg => onProgress && onProgress(msg);
 
   log('Reabastecimento — buscando dados…');
-  // Filtra por `criadoEm` (mesmo padrão usado em DashboardIV)
-  let docs = [];
-  try {
-    const corte = new Date();
-    corte.setMonth(corte.getMonth() - 12);
-    const snap = await getDocs(query(
-      col('abastecimentos'),
-      where('criadoEm', '>=', corte.toISOString()),
-      orderBy('criadoEm', 'desc'),
-    ));
-    docs = snap.docs.map(d => d.data());
-  } catch {
-    const snap = await getDocs(col('abastecimentos'));
-    docs = snap.docs.map(d => d.data());
-  }
+  // Lê SÓ a janela do período da reunião por criadoEm (com folga de 7 dias pra a
+  // defasagem entre criadoEm e dataOperacional), com teto de segurança. Antes: 12
+  // meses fixos numa coleção que cresce a cada operação, e o catch caía num
+  // getDocs(col) SEM filtro (varria tudo). Removido — query single-field (criadoEm),
+  // usa índice automático. O recorte fino por dataOperacional segue no cliente.
+  const iniMs = Date.parse(dataInicio), fimMs = Date.parse(dataFim), DIA = 86400000;
+  const loISO = new Date((Number.isNaN(iniMs) ? Date.now() - 365 * DIA : iniMs) - 7 * DIA).toISOString();
+  const hiISO = new Date((Number.isNaN(fimMs) ? Date.now() : fimMs) + 8 * DIA).toISOString();
+  const snap = await getDocs(query(
+    col('abastecimentos'),
+    where('criadoEm', '>=', loISO),
+    where('criadoEm', '<=', hiISO),
+    orderBy('criadoEm', 'desc'),
+    limit(10000),
+  ));
+  const docs = snap.docs.map(d => d.data());
 
   log('Reabastecimento — agregando…');
 
