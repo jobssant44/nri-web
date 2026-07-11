@@ -27,30 +27,39 @@ const CSS_ETIQUETA = `
   .etiqueta:last-child { margin-bottom: 0; }
   .linha1 { display: flex; align-items: stretch; border-bottom: 2px solid #000; flex: 0; }
   /* Aumentos da sessão de 02/06/26: tudo ~+20% pra melhor leitura no chão de armazém.
-     Vencimento mantido (já estava 84px) pra não comer linha 2. */
-  .curva { font-size: 96px; font-weight: bold; width: 116px; min-width: 116px; display: flex; align-items: center; justify-content: center; border-right: 2px solid #000; }
+     Bump de 11/07/26: com o layout de 2 etiquetas/folha (antes 3) sobrou ~50% de
+     altura por etiqueta — quase toda ela virava espaço em branco na linha do
+     vencimento. Fontes ~+25% pra ocupar esse espaço e ficar mais legível de longe. */
+  .curva { font-size: 130px; font-weight: bold; width: 150px; min-width: 150px; display: flex; align-items: center; justify-content: center; border-right: 2px solid #000; }
   .centro { flex: 1; padding: 8px; text-align: center; border-right: 2px solid #000; }
-  .cod { font-size: 22px; font-weight: bold; text-decoration: underline; margin-bottom: 6px; }
-  .cod span { font-size: 46px; }
-  .nome { font-size: 20px; font-weight: bold; }
-  .logo { width: 140px; min-width: 140px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px; gap: 4px; }
-  .revenda { font-size: 15px; font-weight: bold; color: #1a5fa8; text-align: center; }
-  .ambev { font-size: 28px; font-weight: bold; color: #1a5fa8; }
+  .cod { font-size: 31px; font-weight: bold; text-decoration: underline; margin-bottom: 6px; }
+  .cod span { font-size: 66px; }
+  /* Nome limitado a 3 linhas (line-clamp) pra a etiqueta nunca estourar a folha:
+     com fontes grandes, um nome muito longo (75+ chars) empurraria as 2 etiquetas
+     do palete além dos 285mm. 3 linhas cobrem qualquer SKU real; acima disso corta
+     com reticências (o Cód. em destaque continua identificando o produto). */
+  .nome { font-size: 28px; font-weight: bold; line-height: 1.1; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .logo { width: 168px; min-width: 168px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px; gap: 4px; }
+  .revenda { font-size: 20px; font-weight: bold; color: #1a5fa8; text-align: center; }
+  .ambev { font-size: 38px; font-weight: bold; color: #1a5fa8; }
   .linha2 { border-bottom: 2px solid #000; padding: 0; text-align: center; flex: 1; display: flex; align-items: center; justify-content: center; }
   /* Vencimento — extra-bold pra máxima visibilidade.
      É a informação mais crítica da etiqueta no chão de armazém. */
-  .venc-label { font-size: 36px; font-weight: 900; }
-  .venc-data { font-size: 84px; font-weight: 900; margin-left: 12px; letter-spacing: -1px; }
+  .venc-label { font-size: 46px; font-weight: 900; }
+  /* venc-data limitado a ~100px: acima disso a data (DD/MM/AAAA, 10 chars) encosta na
+     borda da linha 2 e arrisca quebrar em impressoras com escala diferente.
+     É a única fonte perto do teto — as demais ainda têm folga vertical. */
+  .venc-data { font-size: 100px; font-weight: 900; margin-left: 12px; letter-spacing: -1px; }
   .linha3 { display: flex; border-bottom: 2px solid #000; flex: 0; }
   .cel { flex: 1; padding: 8px; text-align: center; border-right: 1px solid #000; }
   .cel:last-child { border-right: none; }
-  .cel-label { font-size: 17px; font-weight: bold; }
-  .cel-valor { font-size: 20px; font-weight: bold; text-decoration: underline; }
+  .cel-label { font-size: 24px; font-weight: bold; }
+  .cel-valor { font-size: 29px; font-weight: bold; text-decoration: underline; }
   .linha4 { display: flex; flex: 0; }
   .col { flex: 1; padding: 8px; text-align: center; border-right: 1px solid #000; }
   .col:last-child { border-right: none; }
-  .col-label { font-size: 14px; text-decoration: underline; }
-  .col-valor { font-size: 17px; font-weight: bold; }
+  .col-label { font-size: 19px; text-decoration: underline; }
+  .col-valor { font-size: 23px; font-weight: bold; }
 `;
 
 function gerarBlocoEtiqueta(nri, produto) {
