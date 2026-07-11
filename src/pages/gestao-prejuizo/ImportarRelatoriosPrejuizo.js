@@ -298,7 +298,7 @@ function HistoricoImportacoes({ colName, campoData, labelPeriodo = 'Dt. Operaç�
       const snap = await getDocs(query(col(colName), orderBy('importadoEm', 'desc'), limit(300)));
       const lista = snap.docs.map(d => {
         const dt = d.data();
-        const { min, max } = periodoDe(dt.linhas, campoData);
+        const { min, max } = campoData ? periodoDe(dt.linhas, campoData) : { min: null, max: null };
         return {
           id: d.id,
           nomeArquivo: (dt.nomeArquivo || '(sem nome)').trim(),
@@ -328,7 +328,7 @@ function HistoricoImportacoes({ colName, campoData, labelPeriodo = 'Dt. Operaç�
       'Excluir esta importação?\n\n' +
       `Arquivo: ${item.nomeArquivo}\n` +
       `Importado em: ${fmtDataHora(item.importadoEm)}\n` +
-      `Período: ${periodoTexto(item.min, item.max)}\n` +
+      (campoData ? `Período: ${periodoTexto(item.min, item.max)}\n` : '') +
       `Linhas: ${intFmt(item.total)}\n\n` +
       'Os dados desta importação serão removidos do Firebase. Não dá pra desfazer.'
     );
@@ -378,7 +378,7 @@ function HistoricoImportacoes({ colName, campoData, labelPeriodo = 'Dt. Operaç�
                   <tr>
                     <th style={th}>Arquivo</th>
                     <th style={th}>Importado em</th>
-                    <th style={th}>Período ({labelPeriodo})</th>
+                    {campoData && <th style={th}>Período ({labelPeriodo})</th>}
                     <th style={{ ...th, textAlign: 'right' }}>Linhas</th>
                     <th style={{ ...th, textAlign: 'center' }}>Ação</th>
                   </tr>
@@ -395,7 +395,7 @@ function HistoricoImportacoes({ colName, campoData, labelPeriodo = 'Dt. Operaç�
                         )}
                       </td>
                       <td style={td}>{fmtDataHora(it.importadoEm)}</td>
-                      <td style={td}>{periodoTexto(it.min, it.max)}</td>
+                      {campoData && <td style={td}>{periodoTexto(it.min, it.max)}</td>}
                       <td style={{ ...td, textAlign: 'right', fontFamily: D.mono }}>{intFmt(it.total)}</td>
                       <td style={{ ...td, textAlign: 'center' }}>
                         <button
@@ -783,6 +783,7 @@ function Card031805() {
   const [fase, setFase] = useState('idle');
   const [mensagem, setMensagem] = useState('');
   const [dados, setDados] = useState(null);
+  const [reloadHist, setReloadHist] = useState(0);
   const inputRef = useRef(null);
 
   function lerExcel(arquivo) {
@@ -876,6 +877,7 @@ function Card031805() {
       setFase('salvo');
       setMensagem(`${intFmt(dados.total)} linha(s) salvas com sucesso.`);
       setDados(null);
+      setReloadHist(k => k + 1);
       if (inputRef.current) inputRef.current.value = '';
     } catch (err) {
       setFase('erro');
@@ -941,6 +943,9 @@ function Card031805() {
       )}
 
       {fase === 'idle' && <Placeholder />}
+
+      {/* 03.18.05 não tem coluna de data → período omitido (campoData ausente) */}
+      <HistoricoImportacoes colName="relatorio_031805" reloadKey={reloadHist} />
     </CardBase>
   );
 }
