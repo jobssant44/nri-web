@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { collection, getDocs, getDoc, addDoc, setDoc, doc, writeBatch } from 'firebase/firestore';
 import { useDb } from '../utils/db';
 import { invalidarCache } from '../utils/cache';
+import { useCatalogos } from '../context/CatalogosContext';
 import { calcularABC, escolherMesParaCurvaAchatada } from './curva-abc/ImportarRelatorio';
 import * as XLSX from 'xlsx';
 
@@ -80,6 +81,7 @@ function ordenarDatas(datas) {
 
 export default function ImportarVendasPage() {
   const { col, docRef, db, rid, stamp } = useDb();
+  const { invalidarCurvaAbc } = useCatalogos();
   const [pickingCodes, setPickingCodes] = useState(new Set());
   const [dados, setDados] = useState(null);
   const [mensagem, setMensagem] = useState('');
@@ -347,6 +349,7 @@ export default function ImportarVendasPage() {
           batchIdxWr++;
           setProgresso(85 + Math.round((batchIdxWr / totalBatchesWrite) * 14));
         }
+        invalidarCurvaAbc();  // curva mudou → força releitura no cache do NovaNRI
       }
 
       // Invalida todos os caches relacionados para forçar releitura do Firebase

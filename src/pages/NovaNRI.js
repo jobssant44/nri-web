@@ -26,7 +26,7 @@ function validarData(data) {
 
 export default function NovaNRI() {
   const { col, docRef, stamp } = useDb();
-  const { produtos: produtosCtx } = useCatalogos();
+  const { produtos: produtosCtx, obterCurvaAbc } = useCatalogos();
   const { usuario } = useUser();
   const navigate = useNavigate();
   const [notaFiscal, setNotaFiscal] = useState('');
@@ -58,13 +58,14 @@ export default function NovaNRI() {
   useEffect(() => { carregarDados(); }, [produtosCtx]);
 
   async function carregarDados() {
-    // produtos vem do Context (cache em memória); demais coleções pequenas
-    const [mSnap, cSnap, crSnap, oSnap, curvaSnap, paresSnap] = await Promise.all([
+    // produtos e curva_abc vêm do Context (cache em memória — evita reler
+    // milhares de docs da curva a cada abertura). Demais coleções são pequenas.
+    const [mSnap, cSnap, crSnap, oSnap, curvaMapCache, paresSnap] = await Promise.all([
       getDocs(col('motoristas')),
       getDocs(col('cavalos')),
       getDocs(col('carretas')),
       getDocs(col('origens')),
-      getDocs(col('curva_abc')),
+      obterCurvaAbc(),
       getDocs(col('pares_placas')),
     ]);
     setBaseProdutos(produtosCtx || []);
@@ -72,12 +73,7 @@ export default function NovaNRI() {
     setListaCavalos(cSnap.docs.map(d => d.data().valor));
     setListaCarretas(crSnap.docs.map(d => d.data().valor));
     setListaOrigens(oSnap.docs.map(d => d.data().valor));
-    const curvas = {};
-    curvaSnap.docs.forEach(d => {
-      const { codigo, curva } = d.data();
-      if (codigo) curvas[String(codigo)] = curva || null;
-    });
-    setCurvaMap(curvas);
+    setCurvaMap(curvaMapCache || {});
     // Mapas bidirecionais pra auto-preencher placa do par no NovaNRI
     const mapCavalo  = {};
     const mapCarreta = {};

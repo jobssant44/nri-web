@@ -6,6 +6,7 @@
  *   - locations        (eager: carrega 1x quando o usuário loga)
  *   - picking_config   (lazy:  carrega na primeira chamada)
  *   - locations_mensal (lazy:  carrega por chaveMes, mantém mapa em cache)
+ *   - curva_abc        (lazy:  mapa { codigo: curva }, achatado, usado no NovaNRI)
  *
  * Por que isso? Cada uma dessas é lida em várias páginas. Sem cache, navegar
  * entre 5 telas pode disparar 5 fetches da mesma coleção (e até 5×16.940
@@ -64,6 +65,8 @@ export function CatalogosProvider({ children }) {
   const [produtos,        setProdutos]        = useState(null);
   const [locations,       setLocations]       = useState(null);
   const [pickingConfig,   setPickingConfig]   = useState(null);
+  // curva_abc vira um mapa { codigo: 'A'|'B'|'C' } (achatado, consumido no NovaNRI)
+  const [curvaAbc,        setCurvaAbc]        = useState(null);
   // locations_mensal vira um mapa: { [chaveMes]: docs[] }
   const [locationsMensal, setLocationsMensal] = useState({});
 
@@ -82,6 +85,7 @@ export function CatalogosProvider({ children }) {
     setProdutos(null);
     setLocations(null);
     setPickingConfig(null);
+    setCurvaAbc(null);
     setLocationsMensal({});
     fetchingRef.current = {};
   }, [empresaAtualId, rid]);
@@ -154,10 +158,32 @@ export function CatalogosProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationsMensal]);
 
+  // curva_abc = mapa achatado { codigo: curva } consumido pelo NovaNRI. Coleção
+  // "fria" (só muda quando o supervisor reimporta a curva) mas grande (1 doc por
+  // produto) — cachear evita reler milhares de docs a cada abertura do NovaNRI.
+  const obterCurvaAbc = useCallback(async () => {
+    if (curvaAbc !== null) return curvaAbc;
+    if (fetchingRef.current.curvaAbc) return fetchingRef.current.curvaAbc;
+    fetchingRef.current.curvaAbc = (async () => {
+      const lista = await getAllDocsPaged(col('curva_abc'));
+      const mapa = {};
+      lista.forEach(d => {
+        const cod = String(d.codigo ?? '').trim();
+        if (cod) mapa[cod] = d.curva || null;
+      });
+      setCurvaAbc(mapa);
+      delete fetchingRef.current.curvaAbc;
+      return mapa;
+    })();
+    return fetchingRef.current.curvaAbc;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [curvaAbc]);
+
   // ─── Invalidações (chamar após importação/edição) ──────────────────────
   const invalidarProdutos        = useCallback(() => setProdutos(null), []);
   const invalidarLocations       = useCallback(() => setLocations(null), []);
   const invalidarPickingConfig   = useCallback(() => setPickingConfig(null), []);
+  const invalidarCurvaAbc        = useCallback(() => setCurvaAbc(null), []);
   const invalidarLocationsMensal = useCallback((chaveMes) => {
     if (chaveMes) {
       setLocationsMensal(prev => {
@@ -196,19 +222,19 @@ export function CatalogosProvider({ children }) {
 
   const value = useMemo(() => ({
     // Valores (podem ser null enquanto carrega)
-    produtos, locations, pickingConfig, locationsMensal,
+    produtos, locations, pickingConfig, locationsMensal, curvaAbc,
     produtosMap, cxPorPltMap,
     // Loaders lazy
-    obterPickingConfig, obterLocationsMensal,
+    obterPickingConfig, obterLocationsMensal, obterCurvaAbc,
     // Invalidações
-    invalidarProdutos, invalidarLocations, invalidarPickingConfig, invalidarLocationsMensal,
+    invalidarProdutos, invalidarLocations, invalidarPickingConfig, invalidarLocationsMensal, invalidarCurvaAbc,
     // Estado de carregamento (true até os eager terminarem)
     carregandoCatalogos: produtos === null || locations === null,
   }), [
-    produtos, locations, pickingConfig, locationsMensal,
+    produtos, locations, pickingConfig, locationsMensal, curvaAbc,
     produtosMap, cxPorPltMap,
-    obterPickingConfig, obterLocationsMensal,
-    invalidarProdutos, invalidarLocations, invalidarPickingConfig, invalidarLocationsMensal,
+    obterPickingConfig, obterLocationsMensal, obterCurvaAbc,
+    invalidarProdutos, invalidarLocations, invalidarPickingConfig, invalidarLocationsMensal, invalidarCurvaAbc,
   ]);
 
   return (

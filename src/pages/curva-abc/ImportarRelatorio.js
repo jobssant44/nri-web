@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 import { doc, getDoc, getDocs, setDoc, writeBatch, deleteDoc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
+import { useCatalogos } from '../../context/CatalogosContext';
 import * as XLSX from 'xlsx';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -177,6 +178,7 @@ export default function ImportarRelatorio() {
 
 function Importar030236() {
   const { col, colRevenda, docRef, db, stamp, rid } = useDb();
+  const { invalidarCurvaAbc } = useCatalogos();
   const [analise,    setAnalise]    = useState(null);   // dados processados do arquivo
   const [mesesSel,   setMesesSel]   = useState({});     // { 'YYYY-MM': true/false }
   const [buscaVerif, setBuscaVerif] = useSessionFilter('imprlt:busca', '');
@@ -442,6 +444,7 @@ function Importar030236() {
         prog(95 + Math.round(((i / curvaPorCx.length) * 4)), 'Gravando curva ABC...');
       }
 
+      invalidarCurvaAbc();  // curva mudou → força releitura no cache do NovaNRI
       prog(100, '✅ Importação concluída!');
       setResultado({ meses: chaves.length, total: chaves.reduce((s, k) => s + analise[k].totalProdutos, 0) });
       setAnalise(null);
