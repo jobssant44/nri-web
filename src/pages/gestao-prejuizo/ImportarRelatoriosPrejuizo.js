@@ -8,10 +8,12 @@ import {
 } from '../../design';
 
 // ─── Mapeamento de colunas do 03.02.37 (letra Excel → índice 0-based) ────────
+// `zeros: true` → remove zeros à esquerda no parse (código "00005" vira "5"),
+// pra os códigos baterem com os cadastros (vendedores etc.) e ficarem limpos.
 const CAMPOS_030237 = [
-  { idx: 2,  campo: 'operacao',      label: 'Operação' },
-  { idx: 3,  campo: 'vendedor',      label: 'Vendedor' },
-  { idx: 4,  campo: 'motorista',     label: 'Motorista' },
+  { idx: 2,  campo: 'operacao',      label: 'Operação',     zeros: true },
+  { idx: 3,  campo: 'vendedor',      label: 'Vendedor',     zeros: true },
+  { idx: 4,  campo: 'motorista',     label: 'Motorista',    zeros: true },
   { idx: 5,  campo: 'dataOperacao',  label: 'Dt. Operação' },
   { idx: 6,  campo: 'emissao',       label: 'Emissão' },
   { idx: 7,  campo: 'nota',          label: 'Nota' },
@@ -59,8 +61,10 @@ function parsearCSV030237(texto) {
   for (let i = 1; i < linhas.length; i++) {
     const cols = splitLinha(linhas[i], sep);
     const obj = {};
-    CAMPOS_030237.forEach(({ idx, campo }) => {
-      obj[campo] = (cols[idx] ?? '').replace(/^"|"$/g, '').trim();
+    CAMPOS_030237.forEach(({ idx, campo, zeros }) => {
+      let v = (cols[idx] ?? '').replace(/^"|"$/g, '').trim();
+      if (zeros) v = v.replace(/^0+(?=\d)/, ''); // "00005" → "5", "0" → "0"
+      obj[campo] = v;
     });
     const vazia = CAMPOS_030237.every(({ campo }) => !obj[campo]);
     if (!vazia) dados.push(obj);
