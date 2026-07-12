@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getDocs } from 'firebase/firestore';
 import { useDb } from '../../../utils/db';
-import { useSessionFilter } from '../../../hooks/useSessionFilter';
+import { useLocalFilter } from '../../../hooks/useLocalFilter';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, LineChart, Line, Cell,
@@ -136,19 +136,19 @@ export default function TrocaPage() {
   const [carregando,       setCarregando]       = useState(true);
   const [erro,             setErro]             = useState('');
 
-  const [filtroRevenda,    setFiltroRevenda]    = useSessionFilter('prejuizo:troca:filtroRevenda', '');
-  const [filtroDataInicio, setFiltroDataInicio] = useSessionFilter('prejuizo:troca:filtroDataInicio', '');
-  const [filtroDataFim,    setFiltroDataFim]    = useSessionFilter('prejuizo:troca:filtroDataFim', '');
+  const [filtroRevenda,    setFiltroRevenda]    = useLocalFilter('prejuizo:troca:filtroRevenda', '');
+  const [filtroDataInicio, setFiltroDataInicio] = useLocalFilter('prejuizo:troca:filtroDataInicio', '');
+  const [filtroDataFim,    setFiltroDataFim]    = useLocalFilter('prejuizo:troca:filtroDataFim', '');
 
-  const [filtroRN,       setFiltroRN]       = useSessionFilter('prejuizo:troca:filtroRN', '');
-  const [filtroGV,       setFiltroGV]       = useSessionFilter('prejuizo:troca:filtroGV', '');
-  const [filtroProduto,  setFiltroProduto]  = useSessionFilter('prejuizo:troca:filtroProduto', '');
-  const [filtroMes,      setFiltroMes]      = useSessionFilter('prejuizo:troca:filtroMes', '');
-  const [filtroDia,      setFiltroDia]      = useSessionFilter('prejuizo:troca:filtroDia', '');
-  const [filtroCliente,  setFiltroCliente]  = useSessionFilter('prejuizo:troca:filtroCliente', '');
+  const [filtroRN,       setFiltroRN]       = useLocalFilter('prejuizo:troca:filtroRN', '');
+  const [filtroGV,       setFiltroGV]       = useLocalFilter('prejuizo:troca:filtroGV', '');
+  const [filtroProduto,  setFiltroProduto]  = useLocalFilter('prejuizo:troca:filtroProduto', '');
+  const [filtroMes,      setFiltroMes]      = useLocalFilter('prejuizo:troca:filtroMes', '');
+  const [filtroDia,      setFiltroDia]      = useLocalFilter('prejuizo:troca:filtroDia', '');
+  const [filtroCliente,  setFiltroCliente]  = useLocalFilter('prejuizo:troca:filtroCliente', '');
 
-  const [topN,        setTopN]        = useSessionFilter('prejuizo:troca:topNProduto', 10);
-  const [topNCliente, setTopNCliente] = useSessionFilter('prejuizo:troca:topNCliente', 10);
+  const [topN,        setTopN]        = useLocalFilter('prejuizo:troca:topNProduto', 10);
+  const [topNCliente, setTopNCliente] = useLocalFilter('prejuizo:troca:topNCliente', 10);
 
   useEffect(() => {
     async function carregar() {
