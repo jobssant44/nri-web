@@ -23,6 +23,10 @@ import {
   BotaoClear,
 } from '../../design';
 
+// "Conferente pra cima" (segue a ordem oficial do NIVEIS): pode ver a aba
+// Validação de BO e dar OK nos itens registrados.
+const NIVEIS_VALIDACAO_BO = ['conferente', 'analista', ...NIVEIS_SUPERVISOR];
+
 // ─── Helpers de data ─────────────────────────────────────────────────────────
 function tsToDate(t) {
   if (!t) return null;
@@ -51,6 +55,7 @@ const COLUNAS = [
   { key: 'motivo',       label: 'Motivo' },
   { key: 'colaborador',  label: 'Colaborador' },
   { key: 'registradoPor', label: 'Registrado por' },
+  { key: 'validadoPor',  label: 'Validação' },
 ];
 
 // ─── Dropdown do autocomplete ────────────────────────────────────────────────
@@ -595,6 +600,7 @@ function HistoricoBOs({ baseProdutos, areas, motivos, colaboradores }) {
       { key: 'motivo',        label: 'Motivo' },
       { key: 'colaborador',   label: 'Colaborador' },
       { key: 'registradoPor', label: 'Registrado por' },
+      { key: 'validadoPor',   label: 'Validado por' },
     ];
     function fmtCelula(v) {
       if (v == null) return '';
@@ -764,6 +770,17 @@ function HistoricoBOs({ baseProdutos, areas, motivos, colaboradores }) {
                   <td style={tdStyle}>{b.motivo || '—'}</td>
                   <td style={tdStyle}>{b.colaborador || '—'}</td>
                   <td style={tdStyle}>{b.registradoPor || '—'}</td>
+                  <td style={tdStyle}>
+                    {b.validado ? (
+                      <span style={{ padding: '3px 9px', borderRadius: 6, backgroundColor: D.greenSoft, border: `1px solid ${D.greenBorder}`, color: D.green, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        ✓ {b.validadoPor || '—'}
+                      </span>
+                    ) : (
+                      <span style={{ padding: '3px 9px', borderRadius: 6, backgroundColor: D.amberSoft, border: `1px solid ${D.amberBorder}`, color: D.amber, fontSize: 10.5, fontWeight: 700 }}>
+                        Pendente
+                      </span>
+                    )}
+                  </td>
                   {isSup && (
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: 6 }}>
@@ -813,11 +830,150 @@ function HistoricoBOs({ baseProdutos, areas, motivos, colaboradores }) {
   );
 }
 
+// ─── Aba: Validação de BO ────────────────────────────────────────────────────
+// Lista os BOs ainda não validados; o conferente+ dá OK item por item
+// confirmando que o produto está avariado de verdade. O OK grava
+// validado/validadoPor/validadoEm no doc — o Histórico mostra quem validou.
+function ValidacaoBO() {
+  const { col, docRef } = useDb();
+  const { usuario } = useUser();
+
+  const [pendentes, setPendentes] = useState(null); // null = carregando
+  const [validando, setValidando] = useState({});   // { [id]: true } enquanto grava
+
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      const corte = new Date();
+      corte.setMonth(corte.getMonth() - 6);
+      const snap = await getDocs(query(
+        col('prejuizo_bos'),
+        where('timestamp', '>=', Timestamp.fromDate(corte)),
+        orderBy('timestamp', 'desc'),
+        limit(2000),
+      ));
+      if (!ativo) return;
+      setPendentes(snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(b => b.excluido !== true && b.validado !== true)
+        .map(b => ({ ...b, _data: tsToDate(b.timestamp) })));
+    })();
+    return () => { ativo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function validar(bo) {
+    setValidando(prev => ({ ...prev, [bo.id]: true }));
+    try {
+      await updateDoc(docRef('prejuizo_bos', bo.id), {
+        validado:    true,
+        validadoPor: usuario?.nome || '',
+        validadoEm:  new Date(),
+      });
+      setPendentes(prev => prev.filter(b => b.id !== bo.id));
+    } catch (e) {
+      alert('Erro ao validar: ' + (e?.message || e));
+    } finally {
+      setValidando(prev => {
+        const novo = { ...prev };
+        delete novo[bo.id];
+        return novo;
+      });
+    }
+  }
+
+  if (pendentes === null) {
+    return (
+      <div>
+        <Skeleton height={60} radius={D.radius} style={{ marginBottom: 16 }} />
+        <Skeleton height={320} radius={D.radius} />
+      </div>
+    );
+  }
+
+  if (pendentes.length === 0) {
+    return (
+      <div style={{ background: D.surface, border: `1px solid ${D.border}`, borderRadius: D.radius, boxShadow: D.shadow }}>
+        <EmptyState
+          titulo="Nenhum BO pendente de validação"
+          descricao="Todos os BOs registrados já foram validados."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ animation: 'wjs-fadeUp 0.3s ease both' }}>
+      <div style={{ fontSize: 12, color: D.textMuted, fontFamily: D.font, marginBottom: 12 }}>
+        <strong>{pendentes.length}</strong> BO(s) aguardando validação.
+      </div>
+      <div style={{
+        background: D.surface, border: `1px solid ${D.border}`,
+        borderRadius: D.radius, overflow: 'hidden', boxShadow: D.shadow,
+        overflowX: 'auto',
+      }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: D.font }}>
+          <thead>
+            <tr>
+              {['Data', 'Código', 'Descrição', 'Quant.', 'Unid.', 'Local', 'Motivo', 'Colaborador', 'Registrado por', 'Validar'].map(c => (
+                <th key={c} style={{ background: D.text, color: '#fff', padding: '8px 12px', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 11 }}>
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pendentes.map((b, i) => (
+              <tr key={b.id} style={{ background: i % 2 ? D.bg : D.surface }}>
+                <td style={{ ...tdStyle, fontFamily: D.mono }}>{fmtDataBR(b._data)}</td>
+                <td style={{ ...tdStyle, fontFamily: D.mono, fontWeight: 700 }}>{b.productCode || '—'}</td>
+                <td style={{ ...tdStyle, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis' }} title={b.productName}>{b.productName || '—'}</td>
+                <td style={{ ...tdStyle, fontFamily: D.mono, textAlign: 'right' }}>{b.quantidade ?? '—'}</td>
+                <td style={tdStyle}>{b.unidade === 'unidade' ? 'Unidade' : 'Caixa'}</td>
+                <td style={tdStyle}>{b.local || '—'}</td>
+                <td style={tdStyle}>{b.motivo || '—'}</td>
+                <td style={tdStyle}>{b.colaborador || '—'}</td>
+                <td style={tdStyle}>{b.registradoPor || '—'}</td>
+                <td style={tdStyle}>
+                  <button
+                    onClick={() => validar(b)}
+                    disabled={!!validando[b.id]}
+                    title="Confirmar que o produto está avariado"
+                    style={{
+                      padding: '5px 14px',
+                      background: validando[b.id] ? D.textMuted : D.green,
+                      border: 'none', borderRadius: 6,
+                      cursor: validando[b.id] ? 'not-allowed' : 'pointer',
+                      fontSize: 12, color: '#fff', fontFamily: D.font, fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {validando[b.id] ? '…' : 'OK'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Página ──────────────────────────────────────────────────────────────────
 export default function BOPerdaPage() {
   const { col } = useDb();
+  const { usuario } = useUser();
   const { produtos: produtosCtx, carregandoCatalogos } = useCatalogos();
-  const [aba, setAba] = useSessionFilter('boperda:aba', 'registrar');
+  const [abaRaw, setAba] = useSessionFilter('boperda:aba', 'registrar');
+
+  // Validação de BO: só conferente pra cima vê a aba. Se a aba salva na
+  // sessão não estiver disponível pro nível, cai pra 'registrar'.
+  const podeValidar = NIVEIS_VALIDACAO_BO.includes(usuario?.nivel);
+  const ABAS_VISIVEIS = podeValidar
+    ? ['registrar', 'validacao', 'historico']
+    : ['registrar', 'historico'];
+  const aba = ABAS_VISIVEIS.includes(abaRaw) ? abaRaw : 'registrar';
 
   // Cadastros (colaboradores / áreas / motivos) — 1 fetch por mount
   const [colaboradores, setColaboradores] = useState([]);
@@ -870,6 +1026,11 @@ export default function BOPerdaPage() {
         <button style={tabStyle(aba === 'registrar')} onClick={() => setAba('registrar')}>
           Registrar perda
         </button>
+        {podeValidar && (
+          <button style={tabStyle(aba === 'validacao')} onClick={() => setAba('validacao')}>
+            Validação de BO
+          </button>
+        )}
         <button style={tabStyle(aba === 'historico')} onClick={() => setAba('historico')}>
           Histórico de BOs
         </button>
@@ -884,6 +1045,7 @@ export default function BOPerdaPage() {
           colaboradores={colaboradores}
         />
       )}
+      {aba === 'validacao' && podeValidar && <ValidacaoBO />}
       {aba === 'historico' && (
         <HistoricoBOs
           baseProdutos={baseProdutos}
