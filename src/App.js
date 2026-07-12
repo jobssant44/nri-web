@@ -39,6 +39,7 @@ import LayoutArmazem from './pages/LayoutArmazem';
 import ImportarRelatoriosPrejuizo from './pages/gestao-prejuizo/ImportarRelatoriosPrejuizo';
 import WQIPage from './pages/gestao-prejuizo/WQIPage';
 import CadastrosPrejuizoPage from './pages/gestao-prejuizo/CadastrosPrejuizoPage';
+import BOPerdaPage from './pages/gestao-prejuizo/BOPerdaPage';
 import TrocaPage from './pages/gestao-prejuizo/Troca/TrocaPage';
 import ReposicaoPage from './pages/gestao-prejuizo/Reposição/ReposicaoPage';
 import PrePickingPage from './pages/PrePickingPage';
@@ -177,6 +178,7 @@ function AppInner() {
             <Route path="/prejuizo/wqi"            element={<WQIPage />} />
             <Route path="/prejuizo/troca"          element={<TrocaPage />} />
             <Route path="/prejuizo/reposicao"      element={<ReposicaoPage />} />
+            <Route path="/prejuizo/bo-perda"       element={<BOPerdaPage />} />
             <Route path="/prejuizo/importar"       element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarRelatoriosPrejuizo />} />
             <Route path="/prejuizo/cadastros"      element={guardaSup ? <Navigate to={guardaSup} /> : <CadastrosPrejuizoPage />} />
 

@@ -105,6 +105,7 @@ const TODOS_GRUPOS = [
       { path: '/prejuizo/wqi',       label: 'WQI',                 todos: true },
       { path: '/prejuizo/troca',      label: 'Troca',               todos: true },
       { path: '/prejuizo/reposicao', label: 'Reposição',           todos: true },
+      { path: '/prejuizo/bo-perda',  label: 'BO de Perda',         todos: true },
       // Importação migrada pro hub central /importacoes em 2026-05-24:
       // { path: '/prejuizo/importar',  label: 'Importar relatórios', supervisor: true },
       { path: '/prejuizo/cadastros', label: 'Cadastros',           supervisor: true },
