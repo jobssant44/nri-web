@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getDocs } from 'firebase/firestore';
 import { useDb } from '../../../utils/db';
+import { useSessionFilter } from '../../../hooks/useSessionFilter';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, LineChart, Line, Cell,
@@ -135,19 +136,19 @@ export default function TrocaPage() {
   const [carregando,       setCarregando]       = useState(true);
   const [erro,             setErro]             = useState('');
 
-  const [filtroRevenda,    setFiltroRevenda]    = useState('');
-  const [filtroDataInicio, setFiltroDataInicio] = useState('');
-  const [filtroDataFim,    setFiltroDataFim]    = useState('');
+  const [filtroRevenda,    setFiltroRevenda]    = useSessionFilter('prejuizo:troca:filtroRevenda', '');
+  const [filtroDataInicio, setFiltroDataInicio] = useSessionFilter('prejuizo:troca:filtroDataInicio', '');
+  const [filtroDataFim,    setFiltroDataFim]    = useSessionFilter('prejuizo:troca:filtroDataFim', '');
 
-  const [filtroRN,       setFiltroRN]       = useState('');
-  const [filtroGV,       setFiltroGV]       = useState('');
-  const [filtroProduto,  setFiltroProduto]  = useState('');
-  const [filtroMes,      setFiltroMes]      = useState('');
-  const [filtroDia,      setFiltroDia]      = useState('');
-  const [filtroCliente,  setFiltroCliente]  = useState('');
+  const [filtroRN,       setFiltroRN]       = useSessionFilter('prejuizo:troca:filtroRN', '');
+  const [filtroGV,       setFiltroGV]       = useSessionFilter('prejuizo:troca:filtroGV', '');
+  const [filtroProduto,  setFiltroProduto]  = useSessionFilter('prejuizo:troca:filtroProduto', '');
+  const [filtroMes,      setFiltroMes]      = useSessionFilter('prejuizo:troca:filtroMes', '');
+  const [filtroDia,      setFiltroDia]      = useSessionFilter('prejuizo:troca:filtroDia', '');
+  const [filtroCliente,  setFiltroCliente]  = useSessionFilter('prejuizo:troca:filtroCliente', '');
 
-  const [topN,        setTopN]        = useState(10);
-  const [topNCliente, setTopNCliente] = useState(10);
+  const [topN,        setTopN]        = useSessionFilter('prejuizo:troca:topNProduto', 10);
+  const [topNCliente, setTopNCliente] = useSessionFilter('prejuizo:troca:topNCliente', 10);
 
   useEffect(() => {
     async function carregar() {

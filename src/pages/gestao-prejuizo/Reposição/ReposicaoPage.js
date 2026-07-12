@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getDocs } from 'firebase/firestore';
 import { useDb } from '../../../utils/db';
+import { useSessionFilter } from '../../../hooks/useSessionFilter';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, LineChart, Line, Cell,
@@ -167,30 +168,30 @@ export default function ReposicaoPage() {
   const [erro,       setErro]       = useState('');
 
   // Filtros barra (escopo geral)
-  const [filtroDataInicio,        setFiltroDataInicio]        = useState('');
-  const [filtroDataFim,           setFiltroDataFim]           = useState('');
-  const [filtroAprovador,         setFiltroAprovador]         = useState('');
-  const [filtroSolicitante,       setFiltroSolicitante]       = useState('');
-  const [filtroStatusSolicitacao, setFiltroStatusSolicitacao] = useState('');
-  const [filtroStatusNF,          setFiltroStatusNF]          = useState('');
+  const [filtroDataInicio,        setFiltroDataInicio]        = useSessionFilter('prejuizo:reposicao:filtroDataInicio', '');
+  const [filtroDataFim,           setFiltroDataFim]           = useSessionFilter('prejuizo:reposicao:filtroDataFim', '');
+  const [filtroAprovador,         setFiltroAprovador]         = useSessionFilter('prejuizo:reposicao:filtroAprovador', '');
+  const [filtroSolicitante,       setFiltroSolicitante]       = useSessionFilter('prejuizo:reposicao:filtroSolicitante', '');
+  const [filtroStatusSolicitacao, setFiltroStatusSolicitacao] = useSessionFilter('prejuizo:reposicao:filtroStatusSolicitacao', '');
+  const [filtroStatusNF,          setFiltroStatusNF]          = useSessionFilter('prejuizo:reposicao:filtroStatusNF', '');
 
   // Filtros interativos (via clique em gráfico)
-  const [filtroRN,        setFiltroRN]        = useState('');
-  const [filtroProduto,   setFiltroProduto]   = useState('');
-  const [filtroCliente,   setFiltroCliente]   = useState('');
-  const [filtroMotorista, setFiltroMotorista] = useState('');
-  const [filtroPlaca,     setFiltroPlaca]     = useState('');
-  const [filtroAjudante,  setFiltroAjudante]  = useState('');
-  const [filtroMotivo,    setFiltroMotivo]    = useState('');
-  const [filtroMes,       setFiltroMes]       = useState('');
-  const [filtroDia,       setFiltroDia]       = useState('');
+  const [filtroRN,        setFiltroRN]        = useSessionFilter('prejuizo:reposicao:filtroRN', '');
+  const [filtroProduto,   setFiltroProduto]   = useSessionFilter('prejuizo:reposicao:filtroProduto', '');
+  const [filtroCliente,   setFiltroCliente]   = useSessionFilter('prejuizo:reposicao:filtroCliente', '');
+  const [filtroMotorista, setFiltroMotorista] = useSessionFilter('prejuizo:reposicao:filtroMotorista', '');
+  const [filtroPlaca,     setFiltroPlaca]     = useSessionFilter('prejuizo:reposicao:filtroPlaca', '');
+  const [filtroAjudante,  setFiltroAjudante]  = useSessionFilter('prejuizo:reposicao:filtroAjudante', '');
+  const [filtroMotivo,    setFiltroMotivo]    = useSessionFilter('prejuizo:reposicao:filtroMotivo', '');
+  const [filtroMes,       setFiltroMes]       = useSessionFilter('prejuizo:reposicao:filtroMes', '');
+  const [filtroDia,       setFiltroDia]       = useSessionFilter('prejuizo:reposicao:filtroDia', '');
 
   // Top N
-  const [topN,           setTopN]           = useState(10);
-  const [topNCliente,    setTopNCliente]    = useState(10);
-  const [topNMotorista,  setTopNMotorista]  = useState(10);
-  const [topNPlaca,      setTopNPlaca]      = useState(10);
-  const [topNAjudante,   setTopNAjudante]   = useState(10);
+  const [topN,           setTopN]           = useSessionFilter('prejuizo:reposicao:topNProduto', 10);
+  const [topNCliente,    setTopNCliente]    = useSessionFilter('prejuizo:reposicao:topNCliente', 10);
+  const [topNMotorista,  setTopNMotorista]  = useSessionFilter('prejuizo:reposicao:topNMotorista', 10);
+  const [topNPlaca,      setTopNPlaca]      = useSessionFilter('prejuizo:reposicao:topNPlaca', 10);
+  const [topNAjudante,   setTopNAjudante]   = useSessionFilter('prejuizo:reposicao:topNAjudante', 10);
 
   // ── Carga ────────────────────────────────────────────────────────────────
   useEffect(() => {

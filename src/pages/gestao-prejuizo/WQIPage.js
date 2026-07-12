@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getDocs, setDoc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
+import { useSessionFilter } from '../../hooks/useSessionFilter';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, Legend, Cell,
@@ -80,8 +81,8 @@ function toMesAno(str) {
 
 function RegistroDeQuebras({ onVoltar, linhasBase, colaboradores, areas, motivos, classificacoes, onSalvar }) {
   const { docRef, stamp } = useDb();
-  const [filtroDataInicio, setFiltroDataInicio] = useState('');
-  const [filtroDataFim,    setFiltroDataFim]    = useState('');
+  const [filtroDataInicio, setFiltroDataInicio] = useSessionFilter('prejuizo:wqi:registro:filtroDataInicio', '');
+  const [filtroDataFim,    setFiltroDataFim]    = useSessionFilter('prejuizo:wqi:registro:filtroDataFim', '');
   const [salvando,         setSalvando]         = useState({});
 
   async function salvar(chave, campo, valor) {
@@ -193,11 +194,11 @@ function RegistroDeQuebras({ onVoltar, linhasBase, colaboradores, areas, motivos
 // ─── Sub-página: Quebra por Ajudante ──────────────────────────────────────────
 
 function QuebraPorAjudante({ onVoltar, linhasBase, classificacoes, colaboradores, areas, motivos }) {
-  const [filtroDataInicio, setFiltroDataInicio] = useState('');
-  const [filtroDataFim,    setFiltroDataFim]    = useState('');
-  const [filtroColab,      setFiltroColab]      = useState('');
-  const [filtroArea,       setFiltroArea]       = useState('');
-  const [filtroMotivo,     setFiltroMotivo]     = useState('');
+  const [filtroDataInicio, setFiltroDataInicio] = useSessionFilter('prejuizo:wqi:ajudante:filtroDataInicio', '');
+  const [filtroDataFim,    setFiltroDataFim]    = useSessionFilter('prejuizo:wqi:ajudante:filtroDataFim', '');
+  const [filtroColab,      setFiltroColab]      = useSessionFilter('prejuizo:wqi:ajudante:filtroColab', '');
+  const [filtroArea,       setFiltroArea]       = useSessionFilter('prejuizo:wqi:ajudante:filtroArea', '');
+  const [filtroMotivo,     setFiltroMotivo]     = useSessionFilter('prejuizo:wqi:ajudante:filtroMotivo', '');
 
   const linhasEnriquecidas = useMemo(() =>
     linhasBase.map(l => ({ ...l, ...(classificacoes[gerarChave(l)] || {}) })),
@@ -353,13 +354,13 @@ export default function WQIPage() {
   const [classificacoes,   setClassificacoes]   = useState({});
   // Meta R$/HL — vem do cadastro `prejuizo_meta_wqi` (com fallback 0,50).
   const [metaPorHL,        setMetaPorHL]        = useState(META_PADRAO.wqi);
-  const [topN,             setTopN]             = useState(10);
+  const [topN,             setTopN]             = useSessionFilter('prejuizo:wqi:principal:topN', 10);
   const [subPagina,        setSubPagina]        = useState('wqi');
   const [carregando,       setCarregando]       = useState(true);
   const [erro,             setErro]             = useState('');
-  const [filtroDataInicio, setFiltroDataInicio] = useState('');
-  const [filtroDataFim,    setFiltroDataFim]    = useState('');
-  const [filtroMotivo,     setFiltroMotivo]     = useState('');
+  const [filtroDataInicio, setFiltroDataInicio] = useSessionFilter('prejuizo:wqi:principal:filtroDataInicio', '');
+  const [filtroDataFim,    setFiltroDataFim]    = useSessionFilter('prejuizo:wqi:principal:filtroDataFim', '');
+  const [filtroMotivo,     setFiltroMotivo]     = useSessionFilter('prejuizo:wqi:principal:filtroMotivo', '');
 
   useEffect(() => {
     async function carregar() {
