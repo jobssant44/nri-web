@@ -151,6 +151,7 @@ export default function GestaoFEFOPage() {
   // Catálogo (produtos + curva ABC atual) da última carga — usado pra resolver
   // nome/curva do produto quando o código é alterado numa edição.
   const catalogoRef = useRef({ produtos: {}, curva: {} });
+  const [modoEdicao, setModoEdicao] = useState(false); // toggle do topo: mostra ações (editar/excluir) por linha
 
   // Filtros
   const [dataContagemSel, setDataContagemSel] = useSessionFilter('fefo:data', '');
@@ -302,6 +303,30 @@ export default function GestaoFEFOPage() {
       await carregar();
     } catch (e) {
       alert('Erro ao salvar edição: ' + (e?.message || e));
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  // Soft delete (excluido:true): some de TODAS as telas que filtram isLogExcluido
+  // (Gestão de Idade + Reunião). Recuperável só via script admin, por design.
+  async function excluirLinha(linha) {
+    if (!linha?._logId) return;
+    const ok = window.confirm(
+      `Excluir esta contagem?\n\n${linha.productCode} — ${linha.descricao || ''}\n\n` +
+      `Ela sai de todos os relatórios.`
+    );
+    if (!ok) return;
+    setSalvando(true);
+    try {
+      await updateDoc(docRef('inventory_logs', linha._logId), {
+        excluido:    true,
+        excluidoEm:  new Date(),
+        excluidoPor: usuario?.nome || '',
+      });
+      await carregar();
+    } catch (e) {
+      alert('Erro ao excluir: ' + (e?.message || e));
     } finally {
       setSalvando(false);
     }
@@ -465,6 +490,27 @@ export default function GestaoFEFOPage() {
         kicker="Gestão de Idade"
         titulo="Gestão de FEFO"
         sub="Planificador de vencimento/shelf life — produtos contados, status de segregação e estimativa de perda."
+        acoes={isSup && (
+          <button
+            onClick={() => setModoEdicao(v => !v)}
+            title={modoEdicao ? 'Sair do modo edição' : 'Editar linhas (editar / excluir)'}
+            aria-label="Modo edição"
+            style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 36, flexShrink: 0,
+              background: modoEdicao ? D.red : D.surface,
+              border: `1px solid ${modoEdicao ? D.red : D.border}`,
+              borderRadius: 8, cursor: 'pointer',
+              color: modoEdicao ? '#fff' : D.textMuted,
+              boxShadow: D.shadow, transition: D.transition,
+            }}
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 5.25L18.75 9" />
+            </svg>
+          </button>
+        )}
       />
 
       <GestaoIdadeTabs />
@@ -578,8 +624,8 @@ export default function GestaoFEFOPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: D.font, minWidth: 1300 }}>
             <thead>
               <tr>
-                {isSup && (
-                  <th style={{ background: D.text, color: '#fff', padding: '8px 10px', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 11 }}>Editar</th>
+                {isSup && modoEdicao && (
+                  <th style={{ background: D.text, color: '#fff', padding: '8px 10px', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 11 }}>Ações</th>
                 )}
                 {COLUNAS.map(c => {
                   const ativo = sortKey === c.key;
@@ -611,15 +657,28 @@ export default function GestaoFEFOPage() {
             <tbody>
               {filtradas.map((l, i) => (
                 <tr key={i} style={{ background: i % 2 ? D.bg : '#fff' }}>
-                  {isSup && (
+                  {isSup && modoEdicao && (
                     <td style={tdStyle}>
-                      <button
-                        onClick={() => setEditando(l)}
-                        title="Editar esta contagem"
-                        style={{ padding: '4px 8px', background: D.surface, border: `1px solid ${D.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, color: D.text, fontFamily: D.font, whiteSpace: 'nowrap' }}
-                      >
-                        ✎ Editar
-                      </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => setEditando(l)}
+                          title="Editar esta contagem"
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, background: D.surface, border: `1px solid ${D.border}`, borderRadius: 6, cursor: 'pointer', color: D.textSec }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => excluirLinha(l)}
+                          title="Excluir esta linha"
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, background: D.redSoft, border: `1px solid ${D.redBorder}`, borderRadius: 6, cursor: 'pointer', color: D.red }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.02-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                          </svg>
+                        </button>
+                      </div>
                     </td>
                   )}
                   <td style={{ ...tdStyle, fontFamily: D.mono, fontWeight: 700 }}>{l.productCode}</td>
