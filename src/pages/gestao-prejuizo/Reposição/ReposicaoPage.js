@@ -84,7 +84,10 @@ const getNome    = l => {
   const c = l.codProduto || l.produto, d = l.descricao;
   return c ? (d ? `${c} - ${d}` : String(c)) : (d || '—');
 };
-const getCliente = l => l.nomeCliente || l.cliente || '—';
+const getCliente = l => {
+  const c = l.cliente, n = l.nomeCliente;
+  return c ? (n ? `${c} - ${n}` : String(c)) : (n || '—');
+};
 const getRN = l => {
   const rn = String(l.rn || '').trim();
   if (!rn) return '(sem RN)';

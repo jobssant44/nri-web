@@ -71,7 +71,10 @@ const getNome    = l => {
   const c = l.codProduto || l.produto, d = l.descricao;
   return c ? (d ? `${c} - ${d}` : String(c)) : (d || '—');
 };
-const getCliente = l => l.nomeCliente || l.cliente || '—';
+const getCliente = l => {
+  const c = l.cliente, n = l.nomeCliente;
+  return c ? (n ? `${c} - ${n}` : String(c)) : (n || '—');
+};
 // Código do RN bruto (sem zeros à esquerda). Aceita tanto `rn` quanto `vendedor`
 // (relatorio_030237 grava como `vendedor`; mapeamentos antigos usavam `rn`).
 const getRNCodigo = l => {

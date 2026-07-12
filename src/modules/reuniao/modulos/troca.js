@@ -75,8 +75,11 @@ async function buscarDados(opts, onProgress) {
     const c = l.codProduto || l.produto, d = l.descricao;
     return c ? (d ? `${c} - ${d}` : String(c)) : (d || '—');
   }, 10);
-  // Por Clientes
-  const porClientes = topNPor(linhas, l => l.nomeCliente || l.cliente || '—', 10);
+  // Por Clientes (rótulo "código - nome")
+  const porClientes = topNPor(linhas, l => {
+    const c = l.cliente, n = l.nomeCliente;
+    return c ? (n ? `${c} - ${n}` : String(c)) : (n || '—');
+  }, 10);
 
   // Por GV — agregação especial via lookup no snapVend
   const vmapPorGV = {};

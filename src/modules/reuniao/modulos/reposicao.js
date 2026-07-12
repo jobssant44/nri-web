@@ -108,7 +108,10 @@ async function buscarDados(opts, onProgress) {
     const c = l.produto, d = l.descricao;  // reposicao: código real é l.produto (não codProduto)
     return c ? (d ? `${c} - ${d}` : String(c)) : (d || '—');
   }, 10);
-  const porClientes  = topNPor(linhas, l => l.nomeCliente || l.cliente || '—',      10);
+  const porClientes  = topNPor(linhas, l => {
+    const c = l.cliente, n = l.nomeCliente;
+    return c ? (n ? `${c} - ${n}` : String(c)) : (n || '—');
+  }, 10);
 
   return {
     periodo: formatarPeriodoBR(dataInicio, dataFim),
