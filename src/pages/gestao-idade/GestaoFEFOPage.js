@@ -87,8 +87,8 @@ export default function GestaoFEFOPage() {
           diasJanela: 30,
         }),
         // Preços importados em /importar/precos. Usado pra calcular R$ Perda
-        // por linha (quantPerda × precoUnit). Regra: prioriza Preço 01;
-        // se vazio, usa Preço 02; se ambos vazios, R$ Perda = null (—).
+        // por linha (quantPerda × preço de caixa — coletas são em caixa).
+        // Sem preço cadastrado → R$ Perda = null (—).
         carregarPrecosMap({ col }),
         // Curva ABC ATUAL (não o snapshot do log) — regra do user em 2026-05-24.
         // Mensal do mês corrente com fallback pra curva_abc achatada (último import).
@@ -136,9 +136,9 @@ export default function GestaoFEFOPage() {
           quantPerdaPreCalculada: perdaFEFOMap.get(log),
         });
         a._ts = tsToDate(log.timestamp);
-        // R$ Perda — multiplica quantPerda × preço do produto. Helper segue
-        // regra: prioriza Preço 01; se vazio, Preço 02; se ambos vazios, null.
-        const precoUnit = getPrecoProduto(cod, precosMap);
+        // R$ Perda — multiplica quantPerda × preço de caixa do produto (coletas
+        // são em caixa). Sem preço cadastrado → null.
+        const precoUnit = getPrecoProduto(cod, precosMap, 'caixa'); // coletas FEFO são em caixa
         a.precoUnit = precoUnit;
         a.rsPerda = (precoUnit != null && a.quantPerda > 0)
           ? a.quantPerda * precoUnit

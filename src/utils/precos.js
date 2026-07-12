@@ -1,24 +1,38 @@
 /**
  * Helpers de leitura de preços (coleção `precos_produtos`).
  *
- * Regra (definida em 02/06/26):
- *   Sempre prioriza Preço 01. Se vazio/null, usa Preço 02. Se ambos
- *   vazios, retorna null (preço indisponível).
+ * Formato (11/07/26): cada produto tem DOIS preços — por caixa e por unidade.
+ * O preço aplicado depende da UNIDADE da linha do relatório (03.02.37, col Q):
+ *   - "cx" / "caixa"    → precoCaixa
+ *   - "un" / "unidade"  → precoUnidade
+ *   - qualquer outro / em branco / preço da unidade ausente → fallback
+ *     (mantém o valor que já veio do próprio relatório)
  *
  * Uso esperado:
- *   1. Telas que precisam de preço chamam `carregarPrecosMap({ col })` 1× no
- *      mount (ou usam Context com cache).
- *   2. Pra cada produto exibido: `getPrecoProduto(codigo, precosMap)`.
- *   3. Pra cálculos monetários: multiplica preço × quantidade.
+ *   1. carregarPrecosMap({ col }) 1× no mount (ou via cache).
+ *   2. Cálculo por linha do 03.02.37: aplicarPrecoCadastrado(linha, map, parseNum).
+ *   3. Preço avulso (ex.: FEFO, sempre em caixa): getPrecoProduto(cod, map, 'caixa').
  */
 import { getDocs } from 'firebase/firestore';
 
 /**
- * Retorna mapa { codigo: { preco01, preco02 } } pra todos os produtos com
- * preço cadastrado. Fonte: coleção `precos_produtos`.
+ * Normaliza a unidade da linha do relatório → 'caixa' | 'unidade' | null.
+ * Só reconhece cx/caixa e un/unidade (case-insensitive). Qualquer outra coisa
+ * (ou em branco) vira null → cai no fallback (valor do relatório).
+ */
+export function normalizarUnidade(u) {
+  const s = String(u ?? '').trim().toLowerCase();
+  if (s === 'cx' || s === 'caixa')   return 'caixa';
+  if (s === 'un' || s === 'unidade') return 'unidade';
+  return null;
+}
+
+/**
+ * Retorna mapa { codigo: { precoCaixa, precoUnidade, descricao } } pra todos os
+ * produtos com preço cadastrado. Fonte: coleção `precos_produtos`.
  *
  * @param {Function} col — helper do useDb()
- * @returns {Promise<Object>} mapa codigo → { preco01, preco02 }
+ * @returns {Promise<Object>} mapa codigo → { precoCaixa, precoUnidade, descricao }
  */
 export async function carregarPrecosMap({ col }) {
   const map = {};
@@ -29,8 +43,9 @@ export async function carregarPrecosMap({ col }) {
       const codigo = String(data.codigo ?? d.id).trim();
       if (!codigo) return;
       map[codigo] = {
-        preco01: data.preco01 != null ? Number(data.preco01) : null,
-        preco02: data.preco02 != null ? Number(data.preco02) : null,
+        precoCaixa:   data.precoCaixa   != null ? Number(data.precoCaixa)   : null,
+        precoUnidade: data.precoUnidade != null ? Number(data.precoUnidade) : null,
+        descricao:    data.descricao ?? '',
       };
     });
   } catch (e) {
@@ -40,75 +55,68 @@ export async function carregarPrecosMap({ col }) {
 }
 
 /**
- * Retorna o preço efetivo do produto seguindo a regra:
- *   - preco01 se existir
- *   - senão preco02 se existir
- *   - senão null
- *
- * @param {String} codigo     — código do produto
- * @param {Object} precosMap  — mapa retornado por carregarPrecosMap
- * @returns {Number|null}
+ * Preço de um registro { precoCaixa, precoUnidade } pra uma unidade normalizada
+ * ('caixa' | 'unidade'). Retorna o preço aplicável ou null (unidade não
+ * reconhecida ou preço daquela unidade em branco → fallback).
  */
-export function getPrecoProduto(codigo, precosMap) {
-  if (!codigo || !precosMap) return null;
-  const reg = precosMap[String(codigo).trim()];
-  if (!reg) return null;
-  if (reg.preco01 != null && Number.isFinite(reg.preco01)) return reg.preco01;
-  if (reg.preco02 != null && Number.isFinite(reg.preco02)) return reg.preco02;
-  return null;
+function precoDaUnidade(reg, unidadeNorm) {
+  if (!reg || !unidadeNorm) return null;
+  const p = unidadeNorm === 'caixa' ? reg.precoCaixa : reg.precoUnidade;
+  return (p != null && Number.isFinite(p)) ? p : null;
 }
 
 /**
- * Variante que retorna { valor, origem } — útil quando você quer mostrar
- * pro usuário de onde veio o preço (Preço 01 ou Preço 02).
+ * Retorna o preço efetivo do produto pra uma unidade (default 'caixa').
+ * Aceita a unidade normalizada ('caixa'/'unidade') ou o valor bruto do relatório
+ * ('cx'/'Un'). Retorna null se não houver preço aplicável.
  *
- * @returns {{ valor: Number|null, origem: '01'|'02'|null }}
+ * @param {String} codigo
+ * @param {Object} precosMap  — mapa de carregarPrecosMap
+ * @param {String} [unidade='caixa']
+ * @returns {Number|null}
  */
-export function getPrecoProdutoDetalhado(codigo, precosMap) {
-  if (!codigo || !precosMap) return { valor: null, origem: null };
+export function getPrecoProduto(codigo, precosMap, unidade = 'caixa') {
+  if (!codigo || !precosMap) return null;
   const reg = precosMap[String(codigo).trim()];
-  if (!reg) return { valor: null, origem: null };
-  if (reg.preco01 != null && Number.isFinite(reg.preco01)) return { valor: reg.preco01, origem: '01' };
-  if (reg.preco02 != null && Number.isFinite(reg.preco02)) return { valor: reg.preco02, origem: '02' };
-  return { valor: null, origem: null };
+  if (!reg) return null;
+  const norm = (unidade === 'caixa' || unidade === 'unidade') ? unidade : normalizarUnidade(unidade);
+  return precoDaUnidade(reg, norm);
 }
 
 /**
  * Sobrescreve `linha.valor` com `qtde × preço cadastrado` quando o produto
- * existe em `precos_produtos`. Quando não existe, mantém o `linha.valor` que
- * já veio do relatório (que é o que as páginas WQI/Troca/Reposição usam hoje).
+ * existe em `precos_produtos` E há preço pra unidade daquela linha. Senão,
+ * mantém o `linha.valor` que já veio do relatório (03.02.37) como fallback.
  *
- * Regra de negócio (fixada em 08/06/26):
- *   "Aplique o preço cadastrado em todas as páginas de Prejuízo. Quando o
- *    produto não tem preço cadastrado, use o valor do próprio relatório
- *    03.02.37 (campo `valor`) como fallback."
+ * A unidade vem de `linha.unidade` (coluna Q do 03.02.37): "cx"→precoCaixa,
+ * "Un"→precoUnidade. Regra confirmada pelo user (11/07/26): unidade não
+ * reconhecida OU preço daquela unidade em branco → usa o valor do relatório.
  *
- * Por que receber `parseNumFn`: cada página de prejuízo (WQI/Troca/Reposição)
- * tem sua própria cópia local da função `parseNum` (formato BR). Em vez de
- * duplicar essa lógica aqui, deixo o caller injetar a sua — assim qualquer
- * ajuste futuro de parsing fica num lugar só.
- *
- * Marca a linha com `_temPrecoCadastrado: true` e guarda o valor original em
- * `_valorOriginal` pra debug/comparação. O `linha.valor` passa a ser o valor
- * recalculado, então TODO o resto do código (parseNum(l.valor) em KPIs,
- * gráficos, tabelas) continua funcionando sem mudança.
+ * Marca a linha com `_temPrecoCadastrado: true`, `_unidadePreco` e guarda o
+ * valor original em `_valorOriginal`. O `linha.valor` passa a ser o recalculado,
+ * então o resto do código (parseNum(l.valor) em KPIs/gráficos) segue igual.
  *
  * @param {Object}   linha       — linha do relatorio_030237.linhas[]
  * @param {Object}   precosMap   — mapa carregado por carregarPrecosMap
- * @param {Function} parseNumFn  — função parseNum local da página
- * @returns {Object} a mesma linha (sem mudança) ou cópia com valor sobrescrito
+ * @param {Function} parseNumFn  — função parseNum local da página (formato BR)
+ * @returns {Object} a mesma linha (fallback) ou cópia com valor recalculado
  */
 export function aplicarPrecoCadastrado(linha, precosMap, parseNumFn) {
   if (!linha || !precosMap) return linha;
   const codigo = linha.produto || linha.codProduto;
-  const precoUnit = getPrecoProduto(codigo, precosMap);
-  if (precoUnit == null) return linha;                  // fallback: mantém valor do relatório
+  if (!codigo) return linha;
+  const reg = precosMap[String(codigo).trim()];
+  if (!reg) return linha;                                   // produto sem preço cadastrado
+  const unidadeNorm = normalizarUnidade(linha.unidade);
+  const precoUnit = precoDaUnidade(reg, unidadeNorm);
+  if (precoUnit == null) return linha;                      // unidade desconhecida ou preço em branco → valor do relatório
   const qtde = parseNumFn(linha.qtde);
-  if (!Number.isFinite(qtde) || qtde <= 0) return linha; // sem qtde válida, mantém original
+  if (!Number.isFinite(qtde) || qtde <= 0) return linha;    // sem qtde válida, mantém original
   return {
     ...linha,
-    _valorOriginal:        linha.valor,
-    _temPrecoCadastrado:   true,
-    valor:                 qtde * precoUnit,
+    _valorOriginal:      linha.valor,
+    _temPrecoCadastrado: true,
+    _unidadePreco:       unidadeNorm,
+    valor:               qtde * precoUnit,
   };
 }

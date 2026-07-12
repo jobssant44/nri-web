@@ -3,16 +3,17 @@
  *
  * Lê Excel/CSV com colunas:
  *   A = Código do produto
- *   B = Preço 01 (prioritário)
- *   C = Preço 02 (fallback)
+ *   B = Descrição do produto
+ *   C = Preço da caixa
+ *   D = Preço da unidade
  *
  * Salva em `precos_produtos` (doc ID = código). MERGE: não apaga preços
  * antigos — só sobrescreve o que veio no arquivo. Produtos não presentes
  * no arquivo mantêm os preços anteriores.
  *
- * Helpers `getPrecoProduto` (em `src/utils/precos.js`) consomem isso:
- * sempre prioriza preco01; se vazio/null, cai em preco02; se ambos vazios,
- * retorna null.
+ * Consumo (em `src/utils/precos.js`): o preço aplicado depende da UNIDADE da
+ * linha do relatório (03.02.37, col Q): "cx"→precoCaixa, "Un"→precoUnidade.
+ * Sem preço aplicável → mantém o valor do próprio relatório.
  */
 import { useState, useRef } from 'react';
 import { writeBatch, setDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -96,13 +97,14 @@ export default function ImportarPrecosPage() {
           ignoradas.push({ linha: idx + (temHeader ? 2 : 1), motivo: 'sem código' });
           return;
         }
-        const preco01 = parsePreco(row[1]);
-        const preco02 = parsePreco(row[2]);
-        if (preco01 == null && preco02 == null) {
-          ignoradas.push({ linha: idx + (temHeader ? 2 : 1), motivo: 'sem preço 01 nem preço 02' });
+        const descricao    = String(row[1] ?? '').trim();
+        const precoCaixa   = parsePreco(row[2]);
+        const precoUnidade = parsePreco(row[3]);
+        if (precoCaixa == null && precoUnidade == null) {
+          ignoradas.push({ linha: idx + (temHeader ? 2 : 1), motivo: 'sem preço de caixa nem de unidade' });
           return;
         }
-        dados.push({ codigo, preco01, preco02 });
+        dados.push({ codigo, descricao, precoCaixa, precoUnidade });
       });
 
       if (dados.length === 0) {
@@ -131,15 +133,19 @@ export default function ImportarPrecosPage() {
         const batch = writeBatch(db);
         const slice = preview.dados.slice(i, i + CHUNK);
         slice.forEach(p => {
-          // MERGE: não apaga campos não enviados (regra do user em 02/06/26).
-          // Se uma importação só tem preco01, o preco02 antigo permanece intacto.
-          batch.set(doc(col('precos_produtos'), String(p.codigo)), {
+          // MERGE: preço em branco no arquivo NÃO entra no payload — assim um
+          // import que só traz o preço de caixa preserva o preço de unidade já
+          // cadastrado (e vice-versa). Firestore só ignora campos AUSENTES no
+          // merge; gravar `null` apagaria o preço anterior daquela unidade.
+          const payload = {
             codigo: p.codigo,
-            preco01: p.preco01,
-            preco02: p.preco02,
             atualizadoEm: serverTimestamp(),
             atualizadoPor: usuario?.nome || '',
-          }, { merge: true });
+          };
+          if (p.descricao)            payload.descricao    = p.descricao;
+          if (p.precoCaixa   != null) payload.precoCaixa   = p.precoCaixa;
+          if (p.precoUnidade != null) payload.precoUnidade = p.precoUnidade;
+          batch.set(doc(col('precos_produtos'), String(p.codigo)), payload, { merge: true });
         });
         await batch.commit();
         salvos += slice.length;
@@ -172,8 +178,8 @@ export default function ImportarPrecosPage() {
     <div style={{ maxWidth: 900, margin: '0 auto', padding: 20 }}>
       <h1 style={{ color: '#E31837', marginBottom: 8 }}>💰 Importar Preços</h1>
       <p style={{ color: '#666', marginBottom: 24, fontSize: 13 }}>
-        Excel/CSV com colunas: <strong>A = Código</strong> · <strong>B = Preço 01</strong> · <strong>C = Preço 02</strong>.
-        Preço 01 é prioritário; Preço 02 é fallback quando o 01 não existe.
+        Excel/CSV com colunas: <strong>A = Código</strong> · <strong>B = Descrição</strong> · <strong>C = Preço caixa</strong> · <strong>D = Preço unidade</strong>.
+        O preço aplicado depende da unidade da linha do relatório (cx → caixa, Un → unidade).
         A importação faz <strong>merge</strong>: produtos não presentes no arquivo mantêm os preços antigos.
       </p>
 
@@ -231,19 +237,21 @@ export default function ImportarPrecosPage() {
               <thead>
                 <tr style={{ backgroundColor: '#f8f8f8' }}>
                   <th style={{ padding: '8px 12px', textAlign: 'left',  borderBottom: '1px solid #ddd' }}>Código</th>
-                  <th style={{ padding: '8px 12px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Preço 01</th>
-                  <th style={{ padding: '8px 12px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Preço 02</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left',  borderBottom: '1px solid #ddd' }}>Descrição</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Preço caixa</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Preço unidade</th>
                 </tr>
               </thead>
               <tbody>
                 {preview.dados.slice(0, 20).map((p, i) => (
                   <tr key={i} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#fafafa' }}>
                     <td style={{ padding: '6px 12px', fontFamily: 'monospace' }}>{p.codigo}</td>
-                    <td style={{ padding: '6px 12px', textAlign: 'right', fontFamily: 'monospace', color: p.preco01 != null ? '#000' : '#bbb' }}>
-                      {p.preco01 != null ? `R$ ${p.preco01.toFixed(2).replace('.', ',')}` : '—'}
+                    <td style={{ padding: '6px 12px' }}>{p.descricao || '—'}</td>
+                    <td style={{ padding: '6px 12px', textAlign: 'right', fontFamily: 'monospace', color: p.precoCaixa != null ? '#000' : '#bbb' }}>
+                      {p.precoCaixa != null ? `R$ ${p.precoCaixa.toFixed(2).replace('.', ',')}` : '—'}
                     </td>
-                    <td style={{ padding: '6px 12px', textAlign: 'right', fontFamily: 'monospace', color: p.preco02 != null ? '#000' : '#bbb' }}>
-                      {p.preco02 != null ? `R$ ${p.preco02.toFixed(2).replace('.', ',')}` : '—'}
+                    <td style={{ padding: '6px 12px', textAlign: 'right', fontFamily: 'monospace', color: p.precoUnidade != null ? '#000' : '#bbb' }}>
+                      {p.precoUnidade != null ? `R$ ${p.precoUnidade.toFixed(2).replace('.', ',')}` : '—'}
                     </td>
                   </tr>
                 ))}
