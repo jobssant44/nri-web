@@ -136,7 +136,6 @@ export default function TrocaPage() {
   const [carregando,       setCarregando]       = useState(true);
   const [erro,             setErro]             = useState('');
 
-  const [filtroRevenda,    setFiltroRevenda]    = useLocalFilter('prejuizo:troca:filtroRevenda', '');
   const [filtroDataInicio, setFiltroDataInicio] = useLocalFilter('prejuizo:troca:filtroDataInicio', '');
   const [filtroDataFim,    setFiltroDataFim]    = useLocalFilter('prejuizo:troca:filtroDataFim', '');
 
@@ -413,7 +412,7 @@ export default function TrocaPage() {
     setFiltroRN(''); setFiltroGV(''); setFiltroProduto(''); setFiltroMes(''); setFiltroDia(''); setFiltroCliente('');
   }
 
-  const filtroBarraAtivo   = filtroRevenda || filtroDataInicio || filtroDataFim;
+  const filtroBarraAtivo   = filtroDataInicio || filtroDataFim;
   const filtroGraficoAtivo = filtroRN || filtroGV || filtroProduto || filtroMes || filtroDia || filtroCliente;
   const temDados           = linhasBase.length > 0;
 
@@ -459,13 +458,6 @@ export default function TrocaPage() {
       )}
 
       <FilterBar>
-        <FilterField label="Revenda">
-          <select value={filtroRevenda} onChange={e => setFiltroRevenda(e.target.value)} style={sInput}>
-            <option value="">Todas</option>
-            <option value="Carpina">Carpina</option>
-            <option value="Palmares">Palmares</option>
-          </select>
-        </FilterField>
         <FilterField label="Data de">
           <input type="date" value={filtroDataInicio} onChange={e => setFiltroDataInicio(e.target.value)} style={sInput} />
         </FilterField>
@@ -473,7 +465,7 @@ export default function TrocaPage() {
           <input type="date" value={filtroDataFim} onChange={e => setFiltroDataFim(e.target.value)} style={sInput} />
         </FilterField>
         {filtroBarraAtivo && (
-          <BotaoClear onClick={() => { setFiltroRevenda(''); setFiltroDataInicio(''); setFiltroDataFim(''); }} />
+          <BotaoClear onClick={() => { setFiltroDataInicio(''); setFiltroDataFim(''); }} />
         )}
       </FilterBar>
 
