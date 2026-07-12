@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { updateDoc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
+import { useUser } from '../../context/UserContext';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 import {
   D, PageContainer, PageHeader, EmptyState, FilterBar, FilterField,
@@ -23,6 +25,18 @@ function parseISODate(s) {
   return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
 }
 
+// Date → "YYYY-MM-DD" (pra prefill do <input type=date>)
+function toISOInput(d) {
+  if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Date → "DD/MM/AAAA" (campos legados `validade`/`validadeStr` lidos pela Reunião)
+function fmtBR(d) {
+  if (!d || !(d instanceof Date) || isNaN(d.getTime())) return null;
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+}
+
 // Definição das colunas da tabela com chave de ordenação
 const COLUNAS = [
   { key: 'productCode',  label: 'Item' },
@@ -44,13 +58,97 @@ const COLUNAS = [
   { key: 'pctShelfLife', label: '% Shelf Life' },
 ];
 
+// ─── Modal de edição de uma contagem (inventory_logs) ──────────────────────────
+function ModalEditar({ linha, salvando, onSalvar, onFechar }) {
+  const [productCode, setProductCode] = useState(linha.productCode || '');
+  const [quantidade, setQuantidade]   = useState(linha._quantidade ?? '');
+  const [unidade, setUnidade]         = useState(linha._unidade || 'caixa');
+  const [endereco, setEndereco]       = useState(linha.endereco || '');
+  const [validade, setValidade]       = useState(toISOInput(linha.vencimento));
+
+  const campo = { marginBottom: 14 };
+  const label = { display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: D.textMuted, marginBottom: 5, fontFamily: D.font };
+
+  return (
+    <div
+      onClick={onFechar}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: '#fff', borderRadius: 14, boxShadow: D.shadowMd, padding: 24, width: '100%', maxWidth: 440, fontFamily: D.font }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <div style={{ width: 3, height: 16, background: D.red, borderRadius: 2 }} />
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: D.text }}>Editar contagem</h2>
+        </div>
+        <p style={{ margin: '0 0 18px', fontSize: 12, color: D.textMuted }}>
+          {linha.descricao || linha.productCode} · a alteração reflete em todos os relatórios.
+        </p>
+
+        <div style={campo}>
+          <label style={label}>Código do produto</label>
+          <input style={sInput} value={productCode} onChange={e => setProductCode(e.target.value)} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={campo}>
+            <label style={label}>Quantidade</label>
+            <input style={sInput} type="number" step="any" value={quantidade} onChange={e => setQuantidade(e.target.value)} />
+          </div>
+          <div style={campo}>
+            <label style={label}>Unidade</label>
+            <select style={sInput} value={unidade} onChange={e => setUnidade(e.target.value)}>
+              <option value="caixa">Caixa</option>
+              <option value="palete">Palete</option>
+              <option value="lastro">Lastro</option>
+              <option value="unidade">Unidade</option>
+            </select>
+          </div>
+        </div>
+        <div style={campo}>
+          <label style={label}>Endereço / Local</label>
+          <input style={sInput} value={endereco} onChange={e => setEndereco(e.target.value)} placeholder="Ex: A-1-007, PNC-01…" />
+        </div>
+        <div style={campo}>
+          <label style={label}>Validade</label>
+          <input style={sInput} type="date" value={validade} onChange={e => setValidade(e.target.value)} />
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+          <button
+            onClick={onFechar}
+            disabled={salvando}
+            style={{ padding: '9px 16px', background: D.surface, border: `1px solid ${D.border}`, borderRadius: 8, cursor: salvando ? 'not-allowed' : 'pointer', fontSize: 13, color: D.textSec, fontFamily: D.font, fontWeight: 600 }}
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={() => onSalvar({ productCode, quantidade, unidade, endereco, validade })}
+            disabled={salvando}
+            style={{ padding: '9px 18px', background: salvando ? D.textMuted : D.red, border: 'none', borderRadius: 8, cursor: salvando ? 'not-allowed' : 'pointer', fontSize: 13, color: '#fff', fontFamily: D.font, fontWeight: 700 }}
+          >
+            {salvando ? 'Salvando…' : 'Salvar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function GestaoFEFOPage() {
   const { col, docRef, colRevenda, rid } = useDb();
+  const { usuario } = useUser();
+  const isSup = ['admin', 'supervisor', 'supervisor-filial'].includes(usuario?.nivel);
 
   const [linhas, setLinhas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [contagens, setContagens] = useState([]); // datas únicas de contagem
   const [resumo, setResumo] = useState({ pzv: 0, venda: 0 });
+  const [editando, setEditando] = useState(null); // linha em edição (ou null)
+  const [salvando, setSalvando] = useState(false);
+  // Catálogo (produtos + curva ABC atual) da última carga — usado pra resolver
+  // nome/curva do produto quando o código é alterado numa edição.
+  const catalogoRef = useRef({ produtos: {}, curva: {} });
 
   // Filtros
   const [dataContagemSel, setDataContagemSel] = useSessionFilter('fefo:data', '');
@@ -98,6 +196,7 @@ export default function GestaoFEFOPage() {
         }),
       ]);
       const curvaAtualMap = curvaInfo?.mapa || {};
+      catalogoRef.current = { produtos: produtosMap, curva: curvaAtualMap };
 
       // Datas distintas de contagem (yyyy-mm-dd)
       const setDatas = new Set();
@@ -136,6 +235,10 @@ export default function GestaoFEFOPage() {
           quantPerdaPreCalculada: perdaFEFOMap.get(log),
         });
         a._ts = tsToDate(log.timestamp);
+        // Campos crus do log (pra edição): id do doc + quantidade/unidade originais.
+        a._logId = log.id;
+        a._quantidade = log.quantidade ?? '';
+        a._unidade = log.unidade || 'caixa';
         // R$ Perda — multiplica quantPerda × preço de caixa do produto (coletas
         // são em caixa). Sem preço cadastrado → null.
         const precoUnit = getPrecoProduto(cod, precosMap, 'caixa'); // coletas FEFO são em caixa
@@ -153,6 +256,52 @@ export default function GestaoFEFOPage() {
       });
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Salva a edição de uma contagem direto no doc de inventory_logs (fonte única).
+  // Como todas as telas de Gestão de Idade + a Reunião lêem essa mesma coleção,
+  // a correção reflete em todos os relatórios onde essa linha aparece.
+  async function salvarEdicao(form) {
+    if (!editando?._logId) return;
+    setSalvando(true);
+    try {
+      const novoCod  = String(form.productCode || '').trim();
+      const codMudou = novoCod !== String(editando.productCode || '').trim();
+      const dtVenc   = form.validade ? parseISODate(form.validade) : null;
+      const vencBR   = fmtBR(dtVenc);
+
+      const update = {
+        productCode: novoCod,
+        quantidade:  Number(form.quantidade) || 0,
+        unidade:     form.unidade || 'caixa',
+        endereco:    String(form.endereco || '').trim().toUpperCase() || null,
+        // Validade em TODAS as representações que os relatórios leem:
+        //  - expiryDate (Timestamp/Date) → telas de Gestão de Idade
+        //  - validade / validadeStr (string DD/MM/AAAA) → módulo FEFO da Reunião
+        expiryDate:  dtVenc,
+        validade:    vencBR,
+        validadeStr: vencBR,
+        editadoEm:   new Date(),
+        editadoPor:  usuario?.nome || '',
+      };
+
+      // Se o código do produto mudou, atualiza os snapshots nome/curva — que são
+      // lidos direto (sem lookup) por Stock Age, Estoque x Picking/Estoque,
+      // Coletas e Reunião. Sem isso, a linha apareceria com o produto ANTIGO lá.
+      if (codMudou) {
+        const cat = catalogoRef.current;
+        update.productName  = cat.produtos[novoCod]?.descricao ?? '';
+        update.productCurva = cat.curva[novoCod] ?? null;
+      }
+
+      await updateDoc(docRef('inventory_logs', editando._logId), update);
+      setEditando(null);
+      await carregar();
+    } catch (e) {
+      alert('Erro ao salvar edição: ' + (e?.message || e));
+    } finally {
+      setSalvando(false);
     }
   }
 
@@ -427,6 +576,9 @@ export default function GestaoFEFOPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: D.font, minWidth: 1300 }}>
             <thead>
               <tr>
+                {isSup && (
+                  <th style={{ background: D.text, color: '#fff', padding: '8px 10px', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 11 }}>Editar</th>
+                )}
                 {COLUNAS.map(c => {
                   const ativo = sortKey === c.key;
                   return (
@@ -457,6 +609,17 @@ export default function GestaoFEFOPage() {
             <tbody>
               {filtradas.map((l, i) => (
                 <tr key={i} style={{ background: i % 2 ? D.bg : '#fff' }}>
+                  {isSup && (
+                    <td style={tdStyle}>
+                      <button
+                        onClick={() => setEditando(l)}
+                        title="Editar esta contagem"
+                        style={{ padding: '4px 8px', background: D.surface, border: `1px solid ${D.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 11, color: D.text, fontFamily: D.font, whiteSpace: 'nowrap' }}
+                      >
+                        ✎ Editar
+                      </button>
+                    </td>
+                  )}
                   <td style={{ ...tdStyle, fontFamily: D.mono, fontWeight: 700 }}>{l.productCode}</td>
                   <td style={tdStyle}>{l.local || '—'}</td>
                   <td style={{ ...tdStyle, fontFamily: D.mono }}>{l.rua || '—'}</td>
@@ -548,6 +711,15 @@ export default function GestaoFEFOPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {editando && (
+        <ModalEditar
+          linha={editando}
+          salvando={salvando}
+          onSalvar={salvarEdicao}
+          onFechar={() => setEditando(null)}
+        />
       )}
     </PageContainer>
   );
