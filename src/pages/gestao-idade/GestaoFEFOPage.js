@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { updateDoc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
 import { useUser } from '../../context/UserContext';
+import { NIVEIS_SUPERVISOR } from '../admin/ConfigurarEmpresaPage';
 import { useSessionFilter } from '../../hooks/useSessionFilter';
 import {
   D, PageContainer, PageHeader, EmptyState, FilterBar, FilterField,
@@ -138,7 +139,8 @@ function ModalEditar({ linha, salvando, onSalvar, onFechar }) {
 export default function GestaoFEFOPage() {
   const { col, docRef, colRevenda, rid } = useDb();
   const { usuario } = useUser();
-  const isSup = ['admin', 'supervisor', 'supervisor-filial'].includes(usuario?.nivel);
+  // "Supervisor pra cima" = mesma lista canônica dos route guards (guardaSup).
+  const isSup = NIVEIS_SUPERVISOR.includes(usuario?.nivel);
 
   const [linhas, setLinhas] = useState([]);
   const [loading, setLoading] = useState(true);
