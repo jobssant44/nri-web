@@ -22,6 +22,9 @@ import { wqiModulo }       from './modulos/wqi';
 import { trocaModulo }     from './modulos/troca';
 import { reposicaoModulo } from './modulos/reposicao';
 import { fefoModulo }      from './modulos/fefo';
+import { stockAgeModulo }       from './modulos/stockage';
+import { estoquePickingModulo } from './modulos/estoque_picking';
+import { estoqueEstoqueModulo } from './modulos/estoque_estoque';
 import { curvaABCModulo }  from './modulos/curva_abc';
 import { reabModulo }      from './modulos/reab';
 import { tmaModulo }       from './modulos/tma';
@@ -34,6 +37,9 @@ export const MODULOS_DISPONIVEIS = [
   { ...trocaModulo,     disponivel: true },
   { ...reposicaoModulo, disponivel: true },
   { ...fefoModulo,      disponivel: true },
+  { ...stockAgeModulo,       disponivel: true },
+  { ...estoquePickingModulo, disponivel: true },
+  { ...estoqueEstoqueModulo, disponivel: true },
   { ...curvaABCModulo,  disponivel: true },
   { ...reabModulo,      disponivel: true },
   { ...tmaModulo,       disponivel: true },
