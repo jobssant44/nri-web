@@ -60,7 +60,7 @@ const FONTE_MONO = 'JetBrains Mono';
 // ═════════════════════════════════════════════════════════════════════════════
 // CAPA PRINCIPAL
 // ═════════════════════════════════════════════════════════════════════════════
-export function adicionarCapaPrincipal(pptx, { titulo, periodo, empresa, gerador }) {
+export function adicionarCapaPrincipal(pptx, { titulo, periodo, empresa }) {
   const slide = pptx.addSlide();
   slide.background = { color: CORES.bgGrafite };
 
@@ -90,9 +90,9 @@ export function adicionarCapaPrincipal(pptx, { titulo, periodo, empresa, gerador
     fill: { color: CORES.red }, line: { type: 'none' },
   });
 
-  // ── Kicker "REUNIÃO OPERACIONAL" ──
-  slide.addText('— REUNIÃO OPERACIONAL', {
-    x: 0.7, y: 2.4, w: 9, h: 0.5,
+  // ── Kicker (nome do encontro por extenso) ──
+  slide.addText('— REUNIÃO DE PLANEJAMENTO SEMANAL', {
+    x: 0.7, y: 2.4, w: 11, h: 0.5,
     fontFace: FONTE, fontSize: 13, color: CORES.red,
     bold: true, charSpacing: 6,
   });
@@ -123,10 +123,17 @@ export function adicionarCapaPrincipal(pptx, { titulo, periodo, empresa, gerador
     fontFace: FONTE, fontSize: 16, color: CORES.textSec,
   });
 
-  // ── Rodapé com timestamp ──
-  slide.addText(`Gerado em ${gerador}`, {
-    x: 0.7, y: 6.8, w: 9, h: 0.4,
-    fontFace: FONTE_MONO, fontSize: 10, color: CORES.textMuted,
+  // ── Rodapé: responsável (canto inferior esquerdo) ──
+  slide.addText('Sup. Jobson Rafaell', {
+    x: 0.7, y: 6.8, w: 6, h: 0.4,
+    fontFace: FONTE, fontSize: 12, color: CORES.textSec,
+  });
+
+  // ── Marca discreta no canto inferior direito ──
+  slide.addText('WJS - Warehouse Job System', {
+    x: 6.5, y: 6.9, w: 6.4, h: 0.35,
+    fontFace: FONTE, fontSize: 11, color: CORES.textMuted,
+    align: 'right',
   });
 }
 
@@ -138,13 +145,8 @@ export function adicionarSumario(pptx, { itens }) {
   slide.background = { color: CORES.bgGrafite };
   adicionarHeaderSlide(pptx, slide);
 
-  slide.addText('SUMÁRIO', {
-    x: 0.7, y: 0.55, w: 12, h: 0.5,
-    fontFace: FONTE, fontSize: 13, color: CORES.red,
-    bold: true, charSpacing: 5,
-  });
-  slide.addText('Módulos incluídos', {
-    x: 0.7, y: 1.0, w: 12, h: 0.7,
+  slide.addText('Indicadores', {
+    x: 0.7, y: 0.55, w: 12, h: 0.7,
     fontFace: FONTE, fontSize: 38, color: CORES.text, bold: true,
   });
 
@@ -200,12 +202,6 @@ function adicionarHeaderSlide(pptx, slide) {
 function adicionarHeaderModulo(pptx, slide, { modulo, subtitulo, periodo }) {
   adicionarHeaderSlide(pptx, slide);
 
-  // Título "MÓDULO" pequenininho (kicker)
-  slide.addText('MÓDULO', {
-    x: 0.5, y: 0.35, w: 3, h: 0.3,
-    fontFace: FONTE, fontSize: 9, color: CORES.red,
-    bold: true, charSpacing: 4,
-  });
   // Nome do módulo + subtítulo
   slide.addText([
     { text: modulo, options: { color: CORES.text, bold: true } },

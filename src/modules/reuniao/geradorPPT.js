@@ -17,7 +17,6 @@ import {
   adicionarCapaPrincipal,
   adicionarSumario,
   formatarPeriodoBR,
-  dataHoraAtualBR,
 } from './templates';
 import { wqiModulo }       from './modulos/wqi';
 import { trocaModulo }     from './modulos/troca';
@@ -86,27 +85,22 @@ export async function gerarReuniaoPPT({
   log('Inicializando apresentação…');
   const pptx = new PptxGenJS();
   pptx.layout  = 'LAYOUT_WIDE';   // 13.333 x 7.5 in (widescreen 16:9)
-  pptx.title   = 'Reunião Operacional WJS';
+  pptx.title   = 'RPS - Reunião de Planejamento Semanal · WJS';
   pptx.author  = 'WJS';
   pptx.company = empresa || 'WJS';
   pptx.subject = `Reunião · ${formatarPeriodoBR(dataInicio, dataFim)}`;
 
   const periodo = formatarPeriodoBR(dataInicio, dataFim);
-  const agora   = dataHoraAtualBR();
 
   // Capa principal
   adicionarCapaPrincipal(pptx, {
-    titulo: 'WJS',
+    titulo: 'RPS',
     periodo,
     empresa: empresa || 'WJS',
-    gerador: agora,
   });
 
-  // Sumário (lista de módulos com qtd de blocos)
-  const itensSumario = ativos.map(m => {
-    const qtd = selecao[m.key].length;
-    return `${m.label}  (${qtd} slide${qtd === 1 ? '' : 's'})`;
-  });
+  // Sumário: só os nomes dos indicadores (sem contagem de slides)
+  const itensSumario = ativos.map(m => m.label);
   adicionarSumario(pptx, { itens: itensSumario });
 
   // Cada módulo
