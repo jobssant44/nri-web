@@ -19,8 +19,11 @@ import {
   adicionarKPIs,
   adicionarSlideGraficoBarras,
   adicionarSlideGraficoLinha,
+  adicionarSlideImagem,
   formatarPeriodoBR,
 } from '../templates';
+import { capturarParaPNG } from '../captura';
+import { elementoWqiSlide } from '../slides/WqiSlide';
 
 // ─── Helpers (replica os helpers do WQIPage pra independência) ───────────────
 const MOTIVOS_WQI = {
@@ -189,6 +192,28 @@ async function buscarDados(opts, onProgress) {
 }
 
 // ─── Funções por bloco (cada uma adiciona 1 slide) ───────────────────────────
+
+// "Tela completa": renderiza a cara do app (design system + Recharts) fora da
+// tela, captura como PNG e embute como imagem — 1 slide idêntico ao dashboard.
+// Se a captura falhar, NÃO derruba o deck: cai pros slides nativos do WQI.
+async function blocoTela(pptx, d) {
+  try {
+    const { dataUrl, largura, altura } = await capturarParaPNG(elementoWqiSlide(d), { largura: 1280 });
+    if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image')) {
+      adicionarSlideImagem(pptx, { dataUrl, imgW: largura, imgH: altura });
+      return;
+    }
+    throw new Error('captura retornou vazia');
+  } catch (e) {
+    console.warn('WQI: captura da tela falhou — usando slides nativos como fallback.', e);
+    blocoKPIs(pptx, d);
+    blocoMotivos(pptx, d);
+    blocoEmbalagens(pptx, d);
+    blocoMes(pptx, d);
+    blocoDia(pptx, d);
+  }
+}
+
 function blocoKPIs(pptx, d) {
   adicionarKPIs(pptx, {
     modulo: 'WQI',
@@ -245,10 +270,11 @@ export const wqiModulo = {
   cor:   'red',
   buscarDados,
   blocos: {
-    kpis:       { label: 'Resumo Executivo (KPIs)',       padrao: true, exportar: blocoKPIs },
-    mes:        { label: 'R$ Perda — Mês a Mês',          padrao: true, exportar: blocoMes },
-    dia:        { label: 'R$ Perda — Dia a Dia',          padrao: true, exportar: blocoDia },
-    motivos:    { label: 'Top 10 Motivos',                padrao: true, exportar: blocoMotivos },
-    embalagens: { label: 'Top 10 Embalagens',             padrao: true, exportar: blocoEmbalagens },
+    tela:       { label: 'Tela completa (print do app)',      padrao: true,  exportar: blocoTela },
+    kpis:       { label: 'Resumo Executivo (KPIs) · nativo',  padrao: false, exportar: blocoKPIs },
+    mes:        { label: 'R$ Perda — Mês a Mês · nativo',     padrao: false, exportar: blocoMes },
+    dia:        { label: 'R$ Perda — Dia a Dia · nativo',     padrao: false, exportar: blocoDia },
+    motivos:    { label: 'Top 10 Motivos · nativo',           padrao: false, exportar: blocoMotivos },
+    embalagens: { label: 'Top 10 Embalagens · nativo',        padrao: false, exportar: blocoEmbalagens },
   },
 };

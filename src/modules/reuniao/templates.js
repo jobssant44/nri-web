@@ -313,6 +313,40 @@ export function adicionarSlideGraficoLinha(pptx, { modulo, subtitulo, periodo, s
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// SLIDE DE IMAGEM (print da tela do app — "híbrido")
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Adiciona 1 slide contendo uma imagem (PNG dataURL) que "printa" a cara do app.
+ * A imagem é encaixada em 13.333×7.5in preservando a proporção (aspect-fit),
+ * centralizada, com fundo claro igual ao do app (evita moldura escura ao redor).
+ *
+ * @param {PptxGenJS} pptx
+ * @param {Object} params
+ * @param {string} params.dataUrl - 'data:image/png;base64,...'
+ * @param {number} params.imgW    - largura da imagem em px
+ * @param {number} params.imgH    - altura da imagem em px
+ * @param {string} [params.fundo] - cor de fundo do slide (hex sem #). Padrão: F8FAFC (D.bg)
+ */
+export function adicionarSlideImagem(pptx, { dataUrl, imgW, imgH, fundo = 'F8FAFC' }) {
+  const slide = pptx.addSlide();
+  slide.background = { color: fundo };
+
+  const SLIDE_W = 13.333, SLIDE_H = 7.5, MARGEM = 0.12;
+  const dispW = SLIDE_W - MARGEM * 2;
+  const dispH = SLIDE_H - MARGEM * 2;
+  const aspImg  = (imgW && imgH) ? imgW / imgH : dispW / dispH;
+  const aspDisp = dispW / dispH;
+
+  let w, h;
+  if (aspImg > aspDisp) { w = dispW; h = dispW / aspImg; }   // limitado pela largura
+  else                  { h = dispH; w = dispH * aspImg; }   // limitado pela altura
+  const x = (SLIDE_W - w) / 2;
+  const y = (SLIDE_H - h) / 2;
+
+  slide.addImage({ data: dataUrl, x, y, w, h });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // SLIDE "SPLIT" (2 gráficos lado a lado — usado se quiser layouts compostos)
 // ═════════════════════════════════════════════════════════════════════════════
 export function adicionarSlideSplit(pptx, { modulo, subtitulo, periodo, esquerda, direita }) {

@@ -6,9 +6,11 @@
 import { getDocs } from 'firebase/firestore';
 import {
   CORES, adicionarKPIs, adicionarSlideGraficoBarras,
-  formatarPeriodoBR,
+  adicionarSlideImagem, formatarPeriodoBR,
 } from '../templates';
-import { toISO, parseNum, intFmt, montarSerieMensal } from './_helpers';
+import { toISO, parseNum, intFmt } from './_helpers';
+import { capturarParaPNG } from '../captura';
+import { elementoTmaSlide } from '../slides/TmaSlide';
 
 // Formata ms como HH:MM:SS
 function formatarTMA(ms) {
@@ -118,13 +120,34 @@ const blocoMes = (pptx, d) => adicionarSlideGraficoBarras(pptx, {
   dados: d.porMes, corBarra: CORES.blue, tipoBarra: 'bar',
 });
 
+// "Tela completa": renderiza a cara do app (design system + Recharts) fora da
+// tela, captura como PNG e embute como imagem — 1 slide idêntico ao dashboard.
+// Se a captura falhar, NÃO derruba o deck: cai pros slides nativos do TMA.
+async function blocoTela(pptx, d) {
+  try {
+    const { dataUrl, largura, altura } = await capturarParaPNG(elementoTmaSlide(d), { largura: 1280 });
+    if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image')) {
+      adicionarSlideImagem(pptx, { dataUrl, imgW: largura, imgH: altura });
+      return;
+    }
+    throw new Error('captura retornou vazia');
+  } catch (e) {
+    console.warn('TMA: captura da tela falhou — usando slides nativos como fallback.', e);
+    blocoKPIs(pptx, d);
+    blocoMotoristas(pptx, d);
+    blocoLocais(pptx, d);
+    blocoMes(pptx, d);
+  }
+}
+
 export const tmaModulo = {
   key: 'tma', label: 'TMA', cor: 'amber',
   buscarDados,
   blocos: {
-    kpis:       { label: 'Resumo Executivo (KPIs)',          padrao: true, exportar: blocoKPIs },
-    motoristas: { label: 'Top 10 Motoristas — pior TMA',      padrao: true, exportar: blocoMotoristas },
-    locais:     { label: 'Top 10 Locais — pior TMA',          padrao: true, exportar: blocoLocais },
-    mes:        { label: 'TMA Médio — Mês a Mês',             padrao: true, exportar: blocoMes },
+    tela:       { label: 'Tela completa (print do app)',      padrao: true,  exportar: blocoTela },
+    kpis:       { label: 'Resumo Executivo (KPIs) · nativo',  padrao: false, exportar: blocoKPIs },
+    motoristas: { label: 'Top 10 Motoristas — pior TMA · nativo', padrao: false, exportar: blocoMotoristas },
+    locais:     { label: 'Top 10 Locais — pior TMA · nativo',  padrao: false, exportar: blocoLocais },
+    mes:        { label: 'TMA Médio — Mês a Mês · nativo',     padrao: false, exportar: blocoMes },
   },
 };

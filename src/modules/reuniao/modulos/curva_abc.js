@@ -6,9 +6,11 @@
 import { getDocs } from 'firebase/firestore';
 import {
   CORES, adicionarKPIs, adicionarSlideGraficoBarras,
-  formatarPeriodoBR,
+  adicionarSlideImagem, formatarPeriodoBR,
 } from '../templates';
 import { intFmt } from './_helpers';
+import { capturarParaPNG } from '../captura';
+import { elementoCurvaABCSlide } from '../slides/CurvaABCSlide';
 
 // Pareto: classifica produtos em A (≤80%), B (≤95%), C (>95%) por cxTotal
 function calcularABC(produtos) {
@@ -100,6 +102,26 @@ async function buscarDados(opts, onProgress) {
   };
 }
 
+// "Tela completa": renderiza a cara do app (design system + Recharts) fora da
+// tela, captura como PNG e embute como imagem — 1 slide idêntico ao dashboard.
+// Se a captura falhar, NÃO derruba o deck: cai pros slides nativos da Curva ABC.
+async function blocoTela(pptx, d) {
+  try {
+    const { dataUrl, largura, altura } = await capturarParaPNG(elementoCurvaABCSlide(d), { largura: 1280 });
+    if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image')) {
+      adicionarSlideImagem(pptx, { dataUrl, imgW: largura, imgH: altura });
+      return;
+    }
+    throw new Error('captura retornou vazia');
+  } catch (e) {
+    console.warn('Curva ABC: captura da tela falhou — usando slides nativos como fallback.', e);
+    blocoKPIs(pptx, d);
+    blocoTop(pptx, d);
+    blocoAberto(pptx, d);
+    blocoFechado(pptx, d);
+  }
+}
+
 const blocoKPIs = (pptx, d) => adicionarKPIs(pptx, {
   modulo: 'Curva ABC',
   subtitulo: d.mesUsado ? `Resumo Executivo  ·  Mês: ${d.mesUsado}` : 'Resumo Executivo',
@@ -129,9 +151,10 @@ export const curvaABCModulo = {
   key: 'curva_abc', label: 'Curva ABC', cor: 'red',
   buscarDados,
   blocos: {
-    kpis:    { label: 'Resumo Executivo (KPIs)',                  padrao: true, exportar: blocoKPIs },
-    top:     { label: 'Top 20 Produtos por Caixas Totais',         padrao: true, exportar: blocoTop },
-    aberto:  { label: 'Top 10 Produtos — Picking (cx aberto)',     padrao: true, exportar: blocoAberto },
-    fechado: { label: 'Top 10 Produtos — Estoque (cx fechado)',    padrao: true, exportar: blocoFechado },
+    tela:    { label: 'Tela completa (print do app)',              padrao: true,  exportar: blocoTela },
+    kpis:    { label: 'Resumo Executivo (KPIs) · nativo',          padrao: false, exportar: blocoKPIs },
+    top:     { label: 'Top 20 Produtos por Caixas Totais · nativo', padrao: false, exportar: blocoTop },
+    aberto:  { label: 'Top 10 Produtos — Picking (cx aberto) · nativo',  padrao: false, exportar: blocoAberto },
+    fechado: { label: 'Top 10 Produtos — Estoque (cx fechado) · nativo', padrao: false, exportar: blocoFechado },
   },
 };

@@ -7,8 +7,10 @@
 import { getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import {
   CORES, adicionarKPIs, adicionarSlideGraficoBarras,
-  formatarPeriodoBR,
+  adicionarSlideImagem, formatarPeriodoBR,
 } from '../templates';
+import { capturarParaPNG } from '../captura';
+import { elementoReabSlide } from '../slides/ReabSlide';
 import { toISO, intFmt, parseNum } from './_helpers';
 
 async function buscarDados(opts, onProgress) {
@@ -96,6 +98,26 @@ async function buscarDados(opts, onProgress) {
   };
 }
 
+// "Tela completa": renderiza a cara do módulo (design system + Recharts) fora da
+// tela, captura como PNG e embute como imagem — 1 slide coerente com o dashboard.
+// Se a captura falhar, NÃO derruba o deck: cai pros slides nativos do Reab.
+async function blocoTela(pptx, d) {
+  try {
+    const { dataUrl, largura, altura } = await capturarParaPNG(elementoReabSlide(d), { largura: 1280 });
+    if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image')) {
+      adicionarSlideImagem(pptx, { dataUrl, imgW: largura, imgH: altura });
+      return;
+    }
+    throw new Error('captura retornou vazia');
+  } catch (e) {
+    console.warn('Reabastecimento: captura da tela falhou — usando slides nativos como fallback.', e);
+    blocoKPIs(pptx, d);
+    blocoProdutos(pptx, d);
+    blocoConferentes(pptx, d);
+    blocoMes(pptx, d);
+  }
+}
+
 const blocoKPIs = (pptx, d) => adicionarKPIs(pptx, {
   modulo: 'Reabastecimento', subtitulo: 'Resumo Executivo', periodo: d.periodo,
   kpis: [
@@ -123,9 +145,10 @@ export const reabModulo = {
   key: 'reab', label: 'Reabastecimento', cor: 'blue',
   buscarDados,
   blocos: {
-    kpis:        { label: 'Resumo Executivo (KPIs)',                padrao: true, exportar: blocoKPIs },
-    produtos:    { label: 'Top 10 Produtos (qtd de operações)',     padrao: true, exportar: blocoProdutos },
-    conferentes: { label: 'Top 10 Conferentes',                      padrao: true, exportar: blocoConferentes },
-    mes:         { label: 'Operações — Mês a Mês',                   padrao: true, exportar: blocoMes },
+    tela:        { label: 'Tela completa (print do app)',            padrao: true,  exportar: blocoTela },
+    kpis:        { label: 'Resumo Executivo (KPIs) · nativo',        padrao: false, exportar: blocoKPIs },
+    produtos:    { label: 'Top 10 Produtos (qtd de operações) · nativo', padrao: false, exportar: blocoProdutos },
+    conferentes: { label: 'Top 10 Conferentes · nativo',             padrao: false, exportar: blocoConferentes },
+    mes:         { label: 'Operações — Mês a Mês · nativo',          padrao: false, exportar: blocoMes },
   },
 };

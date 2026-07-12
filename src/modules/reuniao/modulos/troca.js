@@ -6,12 +6,15 @@ import { getDocs } from 'firebase/firestore';
 import { carregarMeta } from '../../gestao-prejuizo/metasHelpers';
 import {
   CORES, adicionarKPIs, adicionarSlideGraficoBarras, adicionarSlideGraficoLinha,
+  adicionarSlideImagem,
   formatarPeriodoBR,
 } from '../templates';
 import {
   parseNum, toISO, brl, numFmt, normCod,
   montarSerieDiariaComMeta, montarSerieMensal, topNPor, montarLabelRNFn,
 } from './_helpers';
+import { capturarParaPNG } from '../captura';
+import { elementoTrocaSlide } from '../slides/TrocaSlide';
 
 async function buscarDados(opts, onProgress) {
   const { col, colRevenda, docRef, rid, dataInicio, dataFim } = opts;
@@ -129,16 +132,40 @@ const blocoGV       = (pptx, d) => adicionarSlideGraficoBarras(pptx, { modulo: '
 const blocoProdutos = (pptx, d) => adicionarSlideGraficoBarras(pptx, { modulo: 'Troca', subtitulo: 'Top 10 Produtos',           periodo: d.periodo, dados: d.porProdutos,  corBarra: CORES.red,   tipoBarra: 'barH' });
 const blocoClientes = (pptx, d) => adicionarSlideGraficoBarras(pptx, { modulo: 'Troca', subtitulo: 'Top 10 Clientes',           periodo: d.periodo, dados: d.porClientes,  corBarra: '64748b',    tipoBarra: 'barH' });
 
+// "Tela completa": renderiza a cara do app (design system + Recharts) fora da
+// tela, captura como PNG e embute como imagem — 1 slide idêntico ao dashboard.
+// Se a captura falhar, NÃO derruba o deck: cai pros slides nativos da Troca.
+async function blocoTela(pptx, d) {
+  try {
+    const { dataUrl, largura, altura } = await capturarParaPNG(elementoTrocaSlide(d), { largura: 1280 });
+    if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image')) {
+      adicionarSlideImagem(pptx, { dataUrl, imgW: largura, imgH: altura });
+      return;
+    }
+    throw new Error('captura retornou vazia');
+  } catch (e) {
+    console.warn('Troca: captura da tela falhou — usando slides nativos como fallback.', e);
+    blocoKPIs(pptx, d);
+    blocoRN(pptx, d);
+    blocoProdutos(pptx, d);
+    blocoGV(pptx, d);
+    blocoClientes(pptx, d);
+    blocoMes(pptx, d);
+    blocoDia(pptx, d);
+  }
+}
+
 export const trocaModulo = {
   key: 'troca', label: 'Troca', cor: 'amber',
   buscarDados,
   blocos: {
-    kpis:     { label: 'Resumo Executivo (KPIs)',  padrao: true, exportar: blocoKPIs },
-    mes:      { label: 'R$ Troca — Mês a Mês',     padrao: true, exportar: blocoMes },
-    dia:      { label: 'R$ Troca — Dia a Dia',     padrao: true, exportar: blocoDia },
-    rn:       { label: 'R$ Troca por RN',          padrao: true, exportar: blocoRN },
-    gv:       { label: 'R$ Troca por GV',          padrao: true, exportar: blocoGV },
-    produtos: { label: 'Top 10 Produtos',          padrao: true, exportar: blocoProdutos },
-    clientes: { label: 'Top 10 Clientes',          padrao: true, exportar: blocoClientes },
+    tela:     { label: 'Tela completa (print do app)', padrao: true,  exportar: blocoTela },
+    kpis:     { label: 'Resumo Executivo (KPIs) · nativo', padrao: false, exportar: blocoKPIs },
+    mes:      { label: 'R$ Troca — Mês a Mês · nativo',    padrao: false, exportar: blocoMes },
+    dia:      { label: 'R$ Troca — Dia a Dia · nativo',    padrao: false, exportar: blocoDia },
+    rn:       { label: 'R$ Troca por RN · nativo',         padrao: false, exportar: blocoRN },
+    gv:       { label: 'R$ Troca por GV · nativo',         padrao: false, exportar: blocoGV },
+    produtos: { label: 'Top 10 Produtos · nativo',         padrao: false, exportar: blocoProdutos },
+    clientes: { label: 'Top 10 Clientes · nativo',         padrao: false, exportar: blocoClientes },
   },
 };

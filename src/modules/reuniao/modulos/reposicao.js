@@ -10,8 +10,10 @@ import { getDocs } from 'firebase/firestore';
 import { carregarMeta } from '../../gestao-prejuizo/metasHelpers';
 import {
   CORES, adicionarKPIs, adicionarSlideGraficoBarras, adicionarSlideGraficoLinha,
-  formatarPeriodoBR,
+  adicionarSlideImagem, formatarPeriodoBR,
 } from '../templates';
+import { capturarParaPNG } from '../captura';
+import { elementoReposicaoSlide } from '../slides/ReposicaoSlide';
 import {
   parseNum, toISO, brl, numFmt, normCod,
   montarSerieDiariaComMeta, montarSerieMensal, topNPor, montarLabelRNFn,
@@ -121,6 +123,32 @@ async function buscarDados(opts, onProgress) {
   };
 }
 
+// "Tela completa": renderiza a cara do app (design system + Recharts) fora da
+// tela, captura como PNG e embute como imagem — 1 slide idêntico ao dashboard.
+// Se a captura falhar, NÃO derruba o deck: cai pros slides nativos da Reposição.
+async function blocoTela(pptx, d) {
+  try {
+    const { dataUrl, largura, altura } = await capturarParaPNG(elementoReposicaoSlide(d), { largura: 1280 });
+    if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image')) {
+      adicionarSlideImagem(pptx, { dataUrl, imgW: largura, imgH: altura });
+      return;
+    }
+    throw new Error('captura retornou vazia');
+  } catch (e) {
+    console.warn('Reposição: captura da tela falhou — usando slides nativos como fallback.', e);
+    blocoKPIs(pptx, d);
+    bMes(pptx, d);
+    bDia(pptx, d);
+    bMotivos(pptx, d);
+    bProdutos(pptx, d);
+    bMotoristas(pptx, d);
+    bAjudantes(pptx, d);
+    bPlacas(pptx, d);
+    bRN(pptx, d);
+    bClientes(pptx, d);
+  }
+}
+
 function blocoKPIs(pptx, d) {
   adicionarKPIs(pptx, {
     modulo: 'Reposição', subtitulo: 'Resumo Executivo', periodo: d.periodo,
@@ -152,15 +180,16 @@ export const reposicaoModulo = {
   key: 'reposicao', label: 'Reposição', cor: 'blue',
   buscarDados,
   blocos: {
-    kpis:       { label: 'Resumo Executivo (KPIs)',  padrao: true,  exportar: blocoKPIs },
-    mes:        { label: 'R$ Reposição — Mês a Mês', padrao: true,  exportar: bMes },
-    dia:        { label: 'R$ Reposição — Dia a Dia', padrao: true,  exportar: bDia },
-    motivos:    { label: 'R$ Reposição por Motivo',  padrao: true,  exportar: bMotivos },
-    produtos:   { label: 'Top 10 Produtos',          padrao: true,  exportar: bProdutos },
-    motoristas: { label: 'Top 10 Motoristas',        padrao: true,  exportar: bMotoristas },
-    ajudantes:  { label: 'Top 10 Ajudantes',         padrao: true,  exportar: bAjudantes },
-    placas:     { label: 'Top 10 Placas',            padrao: true,  exportar: bPlacas },
-    rn:         { label: 'R$ Reposição por RN',      padrao: true,  exportar: bRN },
-    clientes:   { label: 'Top 10 Clientes',          padrao: true,  exportar: bClientes },
+    tela:       { label: 'Tela completa (print do app)',      padrao: true,  exportar: blocoTela },
+    kpis:       { label: 'Resumo Executivo (KPIs) · nativo',  padrao: false, exportar: blocoKPIs },
+    mes:        { label: 'R$ Reposição — Mês a Mês · nativo', padrao: false, exportar: bMes },
+    dia:        { label: 'R$ Reposição — Dia a Dia · nativo', padrao: false, exportar: bDia },
+    motivos:    { label: 'R$ Reposição por Motivo · nativo',  padrao: false, exportar: bMotivos },
+    produtos:   { label: 'Top 10 Produtos · nativo',          padrao: false, exportar: bProdutos },
+    motoristas: { label: 'Top 10 Motoristas · nativo',        padrao: false, exportar: bMotoristas },
+    ajudantes:  { label: 'Top 10 Ajudantes · nativo',         padrao: false, exportar: bAjudantes },
+    placas:     { label: 'Top 10 Placas · nativo',            padrao: false, exportar: bPlacas },
+    rn:         { label: 'R$ Reposição por RN · nativo',      padrao: false, exportar: bRN },
+    clientes:   { label: 'Top 10 Clientes · nativo',          padrao: false, exportar: bClientes },
   },
 };

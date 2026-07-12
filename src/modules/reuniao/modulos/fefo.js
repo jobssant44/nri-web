@@ -9,9 +9,12 @@
 import { getDocs, query, where, orderBy } from 'firebase/firestore';
 import {
   CORES, adicionarKPIs, adicionarSlideGraficoBarras,
+  adicionarSlideImagem,
   formatarPeriodoBR,
 } from '../templates';
 import { intFmt, toISO } from './_helpers';
+import { capturarParaPNG } from '../captura';
+import { elementoFefoSlide } from '../slides/FefoSlide';
 
 // Parse "DD/MM/AAAA" ou "AAAA-MM-DD" → Date (UTC midnight pra evitar timezone)
 function parseAnyDate(str) {
@@ -128,6 +131,26 @@ async function buscarDados(opts, onProgress) {
   };
 }
 
+// "Tela completa": renderiza a cara do dashboard (design system + Recharts) fora
+// da tela, captura como PNG e embute como imagem — 1 slide coerente com o app.
+// Se a captura falhar, NÃO derruba o deck: cai pros slides nativos do FEFO.
+async function blocoTela(pptx, d) {
+  try {
+    const { dataUrl, largura, altura } = await capturarParaPNG(elementoFefoSlide(d), { largura: 1280 });
+    if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image')) {
+      adicionarSlideImagem(pptx, { dataUrl, imgW: largura, imgH: altura });
+      return;
+    }
+    throw new Error('captura retornou vazia');
+  } catch (e) {
+    console.warn('FEFO: captura da tela falhou — usando slides nativos como fallback.', e);
+    blocoKPIs(pptx, d);
+    blocoDistribuicao(pptx, d);
+    blocoCriticos(pptx, d);
+    blocoVencendo(pptx, d);
+  }
+}
+
 const blocoKPIs = (pptx, d) => adicionarKPIs(pptx, {
   modulo: 'Gestão de FEFO',
   subtitulo: `Resumo Executivo  ·  Foto em ${d.refLabel}`,
@@ -157,9 +180,10 @@ export const fefoModulo = {
   key: 'fefo', label: 'Gestão de FEFO', cor: 'green',
   buscarDados,
   blocos: {
-    kpis:          { label: 'Resumo Executivo (KPIs)',                padrao: true, exportar: blocoKPIs },
-    distribuicao:  { label: 'Distribuição por Status',                 padrao: true, exportar: blocoDistribuicao },
-    criticos:      { label: 'Top 10 Produtos com Coletas Críticas',    padrao: true, exportar: blocoCriticos },
-    vencendo:      { label: 'Top 10 Produtos Vencendo',                padrao: true, exportar: blocoVencendo },
+    tela:          { label: 'Tela completa (print do app)',            padrao: true,  exportar: blocoTela },
+    kpis:          { label: 'Resumo Executivo (KPIs) · nativo',        padrao: false, exportar: blocoKPIs },
+    distribuicao:  { label: 'Distribuição por Status · nativo',        padrao: false, exportar: blocoDistribuicao },
+    criticos:      { label: 'Top 10 Produtos com Coletas Críticas · nativo', padrao: false, exportar: blocoCriticos },
+    vencendo:      { label: 'Top 10 Produtos Vencendo · nativo',       padrao: false, exportar: blocoVencendo },
   },
 };
