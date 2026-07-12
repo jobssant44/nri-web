@@ -121,8 +121,10 @@ export async function gerarReuniaoPPT({
       for (const [blocoKey, bloco] of Object.entries(mod.blocos)) {
         if (!blocosSelecionados.includes(blocoKey)) continue;
         log(`${mod.label} — ${bloco.label}`);
-        await bloco.exportar(pptx, dados);
-        totalSlides++;
+        // Blocos podem retornar quantos slides adicionaram (ex.: blocoTela em
+        // fallback adiciona os nativos). Sem retorno numérico, conta 1.
+        const qtd = await bloco.exportar(pptx, dados);
+        totalSlides += Number.isFinite(qtd) && qtd > 0 ? qtd : 1;
       }
     } catch (e) {
       console.error(`Erro no módulo ${mod.key}:`, e);

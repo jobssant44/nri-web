@@ -1,111 +1,129 @@
 /**
  * Exportador do módulo Gestão de FEFO pra Reunião.
  *
- * Diferente de outros módulos: FEFO mostra uma FOTO do estoque na data fim
- * (ou hoje se não informada). Coletas de validade antigas no `inventory_logs`
- * são consultadas, e calculamos o prazo até validade a partir da data fim.
- * Status: Vencido (prazo<0) · Segregar (≤30) · Atenção (≤60) · OK (>60).
+ * Desde 2026-07-12 o cálculo REUSA o mesmo pipeline da tela GestaoFEFOPage
+ * (gestaoIdadeHelpers): carregarLogsContagem + avaliarPalete + perda FEFO
+ * consolidada + preços + curva ABC atual. O slide "tela" é o print do
+ * planificador (tabela) — idêntico ao que o supervisor vê no app.
+ *
+ * A "foto" é a contagem MAIS RECENTE dentro do período selecionado
+ * (mesmo default da tela: Data da Contagem = mais recente).
+ * Status (avaliarPalete): Vencido (<0) · Segregar (≤30) · Atenção (31–45) · OK (>45).
  */
-import { getDocs, query, where, orderBy } from 'firebase/firestore';
 import {
   CORES, adicionarKPIs, adicionarSlideGraficoBarras,
   adicionarSlideImagem,
   formatarPeriodoBR,
 } from '../templates';
-import { intFmt, toISO } from './_helpers';
+import { intFmt } from './_helpers';
 import { capturarParaPNG } from '../captura';
 import { elementoFefoSlide } from '../slides/FefoSlide';
-
-// Parse "DD/MM/AAAA" ou "AAAA-MM-DD" → Date (UTC midnight pra evitar timezone)
-function parseAnyDate(str) {
-  if (!str) return null;
-  const s = String(str).trim();
-  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
-  return null;
-}
-
-function diasEntre(a, b) {
-  if (!a || !b) return null;
-  return Math.floor((a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24));
-}
+import {
+  avaliarPalete, tsToDate, resolverPZV,
+  carregarLogsContagem, carregarProdutosMap, carregarPZVMap, carregarVendaMediaMap,
+  calcularPerdaFEFOConsolidada,
+} from '../../gestao-idade/gestaoIdadeHelpers';
+import { carregarMapaCurvaComFallback } from '../../gerenciamento-estoque/shared/curvaLookup';
+import { carregarPrecosMap, getPrecoProduto } from '../../../utils/precos';
 
 async function buscarDados(opts, onProgress) {
-  const { col, dataInicio, dataFim } = opts;
+  const { col, colRevenda, docRef, rid, dataInicio, dataFim } = opts;
   const log = msg => onProgress && onProgress(msg);
 
   log('FEFO — buscando coletas…');
-  // Filtra inventory_logs do período por criadoEm (mesmo padrão dos outros módulos)
-  let logs = [];
-  try {
-    const corte = new Date();
-    corte.setMonth(corte.getMonth() - 12); // últimos 12 meses pra cobrir período generoso
-    const snap = await getDocs(query(
-      col('inventory_logs'),
-      where('criadoEm', '>=', corte.toISOString()),
-      orderBy('criadoEm', 'desc'),
-    ));
-    logs = snap.docs.map(d => d.data());
-  } catch {
-    // Fallback sem filtro (índice ausente)
-    const snap = await getDocs(col('inventory_logs'));
-    logs = snap.docs.map(d => d.data());
-  }
+  const hoje = new Date();
 
-  log('FEFO — agregando…');
+  // MESMAS fontes E janelas da GestaoFEFOPage — pros números baterem com a tela:
+  //  - logs SEM bounds (fallback 6 meses): a perda FEFO consolidada encadeia
+  //    lotes de contagens diferentes do mesmo produto, então o pool precisa
+  //    ser o mesmo da página. O período da reunião só escolhe a "foto" abaixo.
+  //  - venda média no default da tela (últimos 30 dias terminando hoje).
+  const [logs, produtosMap, pzvMap, vendaMap, precosMap, curvaInfo] = await Promise.all([
+    carregarLogsContagem({ col }),
+    carregarProdutosMap({ col }),
+    carregarPZVMap({ col }),
+    carregarVendaMediaMap({ col, docRef, rid, diasJanela: 30 }),
+    carregarPrecosMap({ col }),
+    carregarMapaCurvaComFallback({
+      docRefFn: docRef, colFn: col, colRevendaFn: colRevenda, rid,
+      ano: hoje.getFullYear(), mes: hoje.getMonth() + 1,
+    }),
+  ]);
+  const curvaAtualMap = curvaInfo?.mapa || {};
 
-  // Filtra por filtro de data se houver (em criadoEm ou createdAt)
-  const dentroPeriodo = logs.filter(l => {
-    const iso = toISO(l.dataColeta || l.criadoEm) || (l.criadoEm || '').slice(0, 10);
-    if (!iso) return true;
-    if (dataInicio && iso < dataInicio) return false;
-    if (dataFim    && iso > dataFim)   return false;
-    return true;
+  log('FEFO — avaliando paletes…');
+  // Perda FEFO consolidada (lotes do mesmo produto compartilham a venda média).
+  const perdaFEFOMap = calcularPerdaFEFOConsolidada(logs, produtosMap, vendaMap, hoje);
+
+  const avaliadas = logs.map(l => {
+    const cod     = String(l.productCode || '').trim();
+    const produto = produtosMap[cod];
+    const a = avaliarPalete({
+      log: l,
+      dataReferencia: tsToDate(l.timestamp) || new Date(),
+      produto,
+      pzvDias: resolverPZV(cod, pzvMap, produto),
+      vendaMediaCxDia: vendaMap[cod] || 0,
+      curvaProduto: curvaAtualMap[cod] || l.productCurva,
+      quantPerdaPreCalculada: perdaFEFOMap.get(l),
+    });
+    a._ts = tsToDate(l.timestamp);
+    const precoUnit = getPrecoProduto(cod, precosMap, 'caixa');
+    a.rsPerda = (precoUnit != null && a.quantPerda > 0)
+      ? a.quantPerda * precoUnit
+      : (a.quantPerda > 0 ? null : 0);
+    return a;
   });
 
-  // Filtra logs excluídos e contagens (não coletas de validade)
-  const coletas = dentroPeriodo.filter(l => {
-    if (l.excluido) return false;
-    if (l.origem === 'manual-web-estoque' || l.origem === 'manual-mobile-estoque') return false;
-    return !!l.validade;
-  });
+  // "Foto" = contagem mais recente DENTRO do período da reunião (mesmo default
+  // da tela, que abre na contagem mais recente). dataInicio/dataFim são ISO
+  // 'YYYY-MM-DD' — comparação de string funciona.
+  const datas = [...new Set(avaliadas
+    .filter(a => a._ts)
+    .map(a => `${a._ts.getFullYear()}-${String(a._ts.getMonth() + 1).padStart(2, '0')}-${String(a._ts.getDate()).padStart(2, '0')}`)
+  )]
+    .filter(k => (!dataInicio || k >= dataInicio) && (!dataFim || k <= dataFim))
+    .sort().reverse();
+  const dataSel = datas[0] || null;
 
-  // Data de referência: dataFim se informada, senão hoje
-  const refDate = dataFim ? parseAnyDate(dataFim) : new Date();
+  const linhas = avaliadas
+    .filter(a => {
+      // Sem contagem no período → slide vazio ("Sem contagens no período").
+      if (!dataSel || !a._ts) return false;
+      const k = `${a._ts.getFullYear()}-${String(a._ts.getMonth() + 1).padStart(2, '0')}-${String(a._ts.getDate()).padStart(2, '0')}`;
+      return k === dataSel;
+    })
+    // Ordena por prazo asc (críticos primeiro) — default da tela; nulls por último.
+    .sort((a, b) => {
+      if (a.prazo == null && b.prazo == null) return 0;
+      if (a.prazo == null) return 1;
+      if (b.prazo == null) return -1;
+      return a.prazo - b.prazo;
+    });
 
-  // Calcula prazo até validade
-  const comPrazo = coletas.map(l => {
-    const dt = parseAnyDate(l.validade);
-    const prazo = dt ? diasEntre(dt, refDate) : null;
-    let status = 'ok';
-    if (prazo == null) status = 'sem_validade';
-    else if (prazo < 0)  status = 'vencido';
-    else if (prazo <= 30) status = 'segregar';
-    else if (prazo <= 60) status = 'atencao';
-    return { ...l, prazo, status };
-  });
+  const dataContagem = dataSel
+    ? `${dataSel.slice(8, 10)}/${dataSel.slice(5, 7)}/${dataSel.slice(0, 4)}`
+    : '—';
 
-  const total       = comPrazo.length;
-  const qtdVencido  = comPrazo.filter(l => l.status === 'vencido').length;
-  const qtdSegregar = comPrazo.filter(l => l.status === 'segregar').length;
-  const qtdAtencao  = comPrazo.filter(l => l.status === 'atencao').length;
-  const qtdOK       = comPrazo.filter(l => l.status === 'ok').length;
+  // Agregados pros blocos nativos (mesmos thresholds do avaliarPalete).
+  const total       = linhas.length;
+  const qtdVencido  = linhas.filter(l => l.status === 'vencido').length;
+  const qtdSegregar = linhas.filter(l => l.status === 'segregar').length;
+  const qtdAtencao  = linhas.filter(l => l.status === 'atencao').length;
+  const qtdOK       = linhas.filter(l => l.status === 'ok').length;
 
   const distribuicao = [
-    { name: 'Vencido',    value: qtdVencido },
-    { name: 'Segregar (≤30d)', value: qtdSegregar },
-    { name: 'Atenção (≤60d)', value: qtdAtencao },
-    { name: 'OK (>60d)',  value: qtdOK },
+    { name: 'Vencido',          value: qtdVencido },
+    { name: 'Segregar (≤30d)',  value: qtdSegregar },
+    { name: 'Atenção (31–45d)', value: qtdAtencao },
+    { name: 'OK (>45d)',        value: qtdOK },
   ].filter(d => d.value > 0);
 
-  // Top 10 produtos com mais coletas críticas (vencido + segregar + atenção)
   const mapCrit = {};
-  comPrazo
-    .filter(l => l.status !== 'ok' && l.status !== 'sem_validade')
+  linhas
+    .filter(l => l.status === 'vencido' || l.status === 'segregar' || l.status === 'atencao')
     .forEach(l => {
-      const k = `${l.productCode || '—'} - ${(l.productName || l.productCode || '').slice(0, 28)}`;
+      const k = `${l.productCode || '—'} - ${(l.descricao || '').slice(0, 28)}`;
       mapCrit[k] = (mapCrit[k] || 0) + 1;
     });
   const topCriticos = Object.entries(mapCrit)
@@ -113,19 +131,19 @@ async function buscarDados(opts, onProgress) {
     .sort((a, b) => b.value - a.value)
     .slice(0, 10);
 
-  // Top 10 vencendo (menor prazo positivo)
-  const topVencendo = comPrazo
+  const topVencendo = linhas
     .filter(l => l.prazo != null && l.prazo >= 0)
-    .sort((a, b) => a.prazo - b.prazo)
     .slice(0, 10)
     .map(l => ({
-      name: `${l.productCode || '—'} - ${(l.productName || l.productCode || '').slice(0, 24)}  (${l.prazo}d)`,
+      name: `${l.productCode || '—'} - ${(l.descricao || '').slice(0, 24)}  (${l.prazo}d)`,
       value: l.prazo,
     }));
 
   return {
     periodo: formatarPeriodoBR(dataInicio, dataFim),
-    refLabel: refDate ? `${String(refDate.getUTCDate()).padStart(2,'0')}/${String(refDate.getUTCMonth()+1).padStart(2,'0')}/${refDate.getUTCFullYear()}` : '—',
+    refLabel: dataContagem,
+    dataContagem,
+    linhas,
     total, qtdVencido, qtdSegregar, qtdAtencao, qtdOK,
     distribuicao, topCriticos, topVencendo,
   };
@@ -139,7 +157,7 @@ async function blocoTela(pptx, d) {
     const { dataUrl, largura, altura } = await capturarParaPNG(elementoFefoSlide(d), { largura: 1280 });
     if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image')) {
       adicionarSlideImagem(pptx, { dataUrl, imgW: largura, imgH: altura });
-      return;
+      return 1;
     }
     throw new Error('captura retornou vazia');
   } catch (e) {
@@ -148,19 +166,20 @@ async function blocoTela(pptx, d) {
     blocoDistribuicao(pptx, d);
     blocoCriticos(pptx, d);
     blocoVencendo(pptx, d);
+    return 4; // fallback adiciona 4 slides — o orquestrador soma o retorno
   }
 }
 
 const blocoKPIs = (pptx, d) => adicionarKPIs(pptx, {
   modulo: 'Gestão de FEFO',
-  subtitulo: `Resumo Executivo  ·  Foto em ${d.refLabel}`,
+  subtitulo: `Resumo Executivo  ·  Contagem de ${d.refLabel}`,
   periodo: d.periodo,
   kpis: [
     { label: 'TOTAL COLETAS',  valor: intFmt(d.total),       cor: CORES.blue },
     { label: 'VENCIDO',         valor: intFmt(d.qtdVencido),  cor: '64748B',    sub: 'Prazo < 0 dias' },
     { label: 'SEGREGAR',        valor: intFmt(d.qtdSegregar), cor: CORES.red,   sub: '≤ 30 dias' },
-    { label: 'ATENÇÃO',         valor: intFmt(d.qtdAtencao),  cor: CORES.amber, sub: '31 a 60 dias' },
-    { label: 'OK',              valor: intFmt(d.qtdOK),       cor: CORES.green, sub: '> 60 dias' },
+    { label: 'ATENÇÃO',         valor: intFmt(d.qtdAtencao),  cor: CORES.amber, sub: '31 a 45 dias' },
+    { label: 'OK',              valor: intFmt(d.qtdOK),       cor: CORES.green, sub: '> 45 dias' },
   ],
 });
 const blocoDistribuicao = (pptx, d) => adicionarSlideGraficoBarras(pptx, {
