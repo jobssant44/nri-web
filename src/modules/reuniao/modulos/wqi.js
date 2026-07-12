@@ -134,7 +134,9 @@ async function buscarDados(opts, onProgress) {
   // Top embalagens
   const mapEmb = {};
   linhas.forEach(l => {
-    const e = String(l.descricao || l.produto || '').trim() || '(sem descrição)';
+    const c = String(l.produto || '').trim();
+    const d = String(l.descricao || '').trim();
+    const e = (c || d) ? (c ? (d ? `${c} - ${d}` : c) : d) : '(sem descrição)';
     mapEmb[e] = (mapEmb[e] || 0) + parseNum(l.valor);
   });
   const porEmbalagem = Object.entries(mapEmb)

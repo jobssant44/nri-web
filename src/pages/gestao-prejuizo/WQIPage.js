@@ -227,7 +227,8 @@ function QuebraPorAjudante({ onVoltar, linhasBase, classificacoes, colaboradores
   const topProdutos = useMemo(() => {
     const map = {};
     classificadas.forEach(l => {
-      const k = l.descricao || l.produto || '—';
+      const c = l.produto, d = l.descricao;
+      const k = c ? (d ? `${c} - ${d}` : String(c)) : (d || '—');
       map[k] = (map[k] || 0) + parseNum(l.valor);
     });
     return Object.entries(map).map(([nome, valor]) => ({ nome, valor })).sort((a, b) => b.valor - a.valor).slice(0, 6);
@@ -456,7 +457,8 @@ export default function WQIPage() {
   const topEmbalagem = useMemo(() => {
     const map = {};
     filtradas.forEach(l => {
-      const e = l.descricao || l.produto || '(Em branco)';
+      const c = l.produto, d = l.descricao;
+      const e = c ? (d ? `${c} - ${d}` : String(c)) : (d || '(Em branco)');
       map[e] = (map[e] || 0) + parseNum(l.valor);
     });
     return Object.entries(map)

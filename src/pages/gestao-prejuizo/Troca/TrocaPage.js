@@ -67,7 +67,10 @@ function isoParaBR(iso) {
   return `${dd}/${mm}/${yyyy}`;
 }
 
-const getNome    = l => l.descricao || l.codProduto || '—';
+const getNome    = l => {
+  const c = l.codProduto || l.produto, d = l.descricao;
+  return c ? (d ? `${c} - ${d}` : String(c)) : (d || '—');
+};
 const getCliente = l => l.nomeCliente || l.cliente || '—';
 // Código do RN bruto (sem zeros à esquerda). Aceita tanto `rn` quanto `vendedor`
 // (relatorio_030237 grava como `vendedor`; mapeamentos antigos usavam `rn`).

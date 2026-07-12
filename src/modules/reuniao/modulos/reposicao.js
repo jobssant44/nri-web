@@ -104,7 +104,10 @@ async function buscarDados(opts, onProgress) {
 
   // Top sem requerer match (RN/Produto/Cliente)
   const porRN        = topNPor(linhas, l => labelRN(l.rnCod),                       10);
-  const porProdutos  = topNPor(linhas, l => l.descricao || l.codProduto || '—',     10);
+  const porProdutos  = topNPor(linhas, l => {
+    const c = l.produto, d = l.descricao;  // reposicao: código real é l.produto (não codProduto)
+    return c ? (d ? `${c} - ${d}` : String(c)) : (d || '—');
+  }, 10);
   const porClientes  = topNPor(linhas, l => l.nomeCliente || l.cliente || '—',      10);
 
   return {

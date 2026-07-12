@@ -70,8 +70,11 @@ async function buscarDados(opts, onProgress) {
 
   // Por RN (com label código - nome)
   const porRN = topNPor(linhas, l => labelRN(l.rnCod), 10);
-  // Por Produtos
-  const porProdutos = topNPor(linhas, l => l.descricao || l.codProduto || '—', 10);
+  // Por Produtos (rótulo "código - descrição")
+  const porProdutos = topNPor(linhas, l => {
+    const c = l.codProduto || l.produto, d = l.descricao;
+    return c ? (d ? `${c} - ${d}` : String(c)) : (d || '—');
+  }, 10);
   // Por Clientes
   const porClientes = topNPor(linhas, l => l.nomeCliente || l.cliente || '—', 10);
 

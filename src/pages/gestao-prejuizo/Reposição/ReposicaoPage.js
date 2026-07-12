@@ -80,7 +80,10 @@ function normNF(nota) {
 }
 
 // ─── Acessores de campos ──────────────────────────────────────────────────────
-const getNome    = l => l.descricao || l.codProduto || '—';
+const getNome    = l => {
+  const c = l.codProduto || l.produto, d = l.descricao;
+  return c ? (d ? `${c} - ${d}` : String(c)) : (d || '—');
+};
 const getCliente = l => l.nomeCliente || l.cliente || '—';
 const getRN = l => {
   const rn = String(l.rn || '').trim();
