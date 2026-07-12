@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import {
   Package, RefreshCw, TrendingUp, Warehouse, Map,
-  Clock, TrendingDown, ClipboardList, Scale, Truck, Timer,
+  Clock, TrendingDown, Truck, Timer,
   DoorOpen, ListChecks,
   LogOut, Pin, PinOff, Building2, Settings, ChevronDown, Upload, Presentation,
 } from 'lucide-react';
@@ -110,16 +110,6 @@ const TODOS_GRUPOS = [
     ],
   },
   {
-    label: 'PAVG',
-    Icon: ClipboardList,
-    moduloSlug: 'pavg',
-    itens: [
-      { path: '/pavg/conciliacao', label: 'Conciliação',         todos: true },
-      // Importação migrada pro hub central /importacoes em 2026-05-24:
-      // { path: '/pavg/importar',    label: 'Importar relatórios', supervisor: true },
-    ],
-  },
-  {
     label: 'Gestão MDP',
     Icon: Truck,
     moduloSlug: 'mpd',
@@ -161,16 +151,6 @@ const TODOS_GRUPOS = [
       { path: '/tma/dashboard', label: 'Dashboard',          todos: true },
       // Importação migrada pro hub central /importacoes em 2026-05-24:
       // { path: '/tma/importar',  label: 'Importar relatório', supervisor: true },
-    ],
-  },
-  {
-    label: 'Conciliação de Estoque',
-    Icon: Scale,
-    moduloSlug: 'conciliacao',
-    itens: [
-      { path: '/conciliacao-estoque/diaria',   label: 'Conciliação Diária', todos: true },
-      // Importação migrada pro hub central /importacoes em 2026-05-24:
-      // { path: '/conciliacao-estoque/importar', label: 'Importar 02.05.02',  supervisor: true },
     ],
   },
   {

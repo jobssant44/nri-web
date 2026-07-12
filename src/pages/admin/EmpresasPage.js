@@ -11,10 +11,8 @@ const TODOS_MODULOS = [
   { slug: 'armazem',        label: 'Mapa do Armazém' },
   { slug: 'gestao-idade',   label: 'Gestão de Idade' },
   { slug: 'prejuizo',       label: 'Gestão de Prejuízo' },
-  { slug: 'pavg',           label: 'PAVG' },
   { slug: 'mpd',            label: 'Gestão MDP' },
   { slug: 'tma',            label: 'TMA' },
-  { slug: 'conciliacao',    label: 'Conciliação de Estoque' },
 ];
 
 export default function EmpresasPage() {

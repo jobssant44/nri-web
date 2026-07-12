@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import {
   Package, RefreshCw, TrendingUp, Warehouse, Map,
-  Clock, TrendingDown, ClipboardList, Scale, Truck, Timer,
+  Clock, TrendingDown, Truck, Timer,
 } from 'lucide-react';
 import { D } from '../design';
 
@@ -16,10 +16,8 @@ const MODULOS_INFO = {
   armazem:        { label: 'Mapa do Armazém',                  Icon: Map,           path: '/armazem/layout',        desc: 'Visualização interativa do layout' },
   'gestao-idade': { label: 'Gestão de Idade',                  Icon: Clock,         path: '/home',                  desc: 'Em breve' },
   prejuizo:       { label: 'Gestão de Prejuízo',               Icon: TrendingDown,  path: '/prejuizo/wqi',          desc: 'WQI, trocas, reposição e refugo de fábrica' },
-  pavg:           { label: 'PAVG',                             Icon: ClipboardList, path: '/pavg/conciliacao',      desc: 'Conciliação de relatórios PAVG' },
   mpd:            { label: 'Gestão MDP',                       Icon: Truck,         path: '/gestao-mpd/efc',        desc: 'EFC, EFD, TI e histograma de rotas' },
   tma:            { label: 'TMA',                              Icon: Timer,         path: '/tma/dashboard',         desc: 'Tempo médio de atendimento por operação' },
-  conciliacao:    { label: 'Conciliação de Estoque',           Icon: Scale,         path: '/conciliacao-estoque/diaria', desc: 'Conciliação diária 02.05.02' },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

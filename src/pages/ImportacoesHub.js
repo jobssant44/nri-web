@@ -72,11 +72,6 @@ const CATEGORIAS = [
         rota: '/estoque/importar-retroativa',
       },
       {
-        titulo: 'Conciliação 02.05.02',
-        descricao: 'Relatório de conciliação de estoque',
-        rota: '/conciliacao-estoque/importar',
-      },
-      {
         titulo: 'Prejuízo',
         descricao: 'Relatórios de prejuízo (WQI, troca, reposição)',
         rota: '/prejuizo/importar',
@@ -90,11 +85,6 @@ const CATEGORIAS = [
         titulo: 'TMA',
         descricao: 'Tempo Médio de Atendimento',
         rota: '/tma/importar',
-      },
-      {
-        titulo: 'PAVG',
-        descricao: 'Vendas PAVG',
-        rota: '/pavg/importar',
       },
     ],
   },

@@ -42,10 +42,6 @@ import CadastrosPrejuizoPage from './pages/gestao-prejuizo/CadastrosPrejuizoPage
 import TrocaPage from './pages/gestao-prejuizo/Troca/TrocaPage';
 import ReposicaoPage from './pages/gestao-prejuizo/Reposição/ReposicaoPage';
 import PrePickingPage from './pages/PrePickingPage';
-import ImportarRelatoriosPAVG from './pages/pavg/ImportarRelatoriosPAVG';
-import ConciliacaoPAVG from './pages/pavg/ConciliacaoPAVG';
-import ImportarConciliacaoPage from './pages/conciliacao-estoque/ImportarConciliacaoPage';
-import ConciliacaoDiariaPage from './pages/conciliacao-estoque/ConciliacaoDiariaPage';
 import ImportarRelatoriosMPD from './pages/gestao-mpd/ImportarRelatoriosMPD';
 import ImportarRelatorioTMA from './pages/tma/ImportarRelatorioTMA';
 import DashboardTMA from './pages/tma/DashboardTMA';
@@ -184,17 +180,9 @@ function AppInner() {
             <Route path="/prejuizo/importar"       element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarRelatoriosPrejuizo />} />
             <Route path="/prejuizo/cadastros"      element={guardaSup ? <Navigate to={guardaSup} /> : <CadastrosPrejuizoPage />} />
 
-            {/* PAVG */}
-            <Route path="/pavg/conciliacao"        element={<ConciliacaoPAVG />} />
-            <Route path="/pavg/importar"           element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarRelatoriosPAVG />} />
-
             {/* TMA */}
             <Route path="/tma/dashboard"           element={<DashboardTMA />} />
             <Route path="/tma/importar"            element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarRelatorioTMA />} />
-
-            {/* Conciliação de Estoque */}
-            <Route path="/conciliacao-estoque/diaria"   element={<ConciliacaoDiariaPage />} />
-            <Route path="/conciliacao-estoque/importar" element={guardaSup ? <Navigate to={guardaSup} /> : <ImportarConciliacaoPage />} />
 
             {/* Plano de Ação */}
             <Route path="/plano-acao"          element={<Navigate to="/plano-acao/painel" replace />} />
