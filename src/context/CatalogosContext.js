@@ -73,6 +73,10 @@ export function CatalogosProvider({ children }) {
   // Refs pra evitar fetches duplicados (race entre componentes que pedem
   // a mesma coleção simultaneamente)
   const fetchingRef = useRef({});
+  // Geração do contexto: incrementa a cada troca de empresa/revenda. Fetches
+  // em voo carregam a geração em que nasceram — se ela mudou quando resolvem,
+  // o resultado é descartado (é da empresa/revenda anterior).
+  const genRef = useRef(0);
 
   // Identifica empresa atual (pra reset quando trocar)
   const empresaAtualId = empresaSelecionada?.id ?? empresa?.id ?? usuario?.empresaId ?? null;
@@ -82,6 +86,7 @@ export function CatalogosProvider({ children }) {
   // ignorado nas deps; usamos `empresaAtualId` como sinal real de troca)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    genRef.current += 1;
     setProdutos(null);
     setLocations(null);
     setPickingConfig(null);
@@ -91,42 +96,34 @@ export function CatalogosProvider({ children }) {
   }, [empresaAtualId, rid]);
 
   // ─── Eager load de produtos e locations ────────────────────────────────
-  // Carrega assim que houver empresa válida. Se já tiver carregado, pula.
+  // Auto-recuperável: roda sempre que produtos/locations estiverem null
+  // (mount, troca de empresa/revenda ou invalidarProdutos/Locations) e
+  // refaz só o que falta. Antes dependia só de empresaAtualId — trocar de
+  // revenda (ou invalidar) zerava o cache e NUNCA recarregava, matando o
+  // autocomplete de produtos da sessão inteira (bug corrigido em 2026-07-12).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!empresaAtualId) return;
     if (produtos !== null && locations !== null) return;
 
-    let cancelado = false;
-    (async () => {
-      try {
-        const tasks = [];
-        if (produtos === null && !fetchingRef.current.produtos) {
-          fetchingRef.current.produtos = true;
-          tasks.push(
-            getAllDocsPaged(col('produtos')).then(lista => {
-              if (cancelado) return;
-              setProdutos(lista);
-            }).finally(() => { fetchingRef.current.produtos = false; })
-          );
-        }
-        if (locations === null && !fetchingRef.current.locations) {
-          fetchingRef.current.locations = true;
-          tasks.push(
-            getAllDocsPaged(col('locations')).then(lista => {
-              if (cancelado) return;
-              setLocations(lista);
-            }).finally(() => { fetchingRef.current.locations = false; })
-          );
-        }
-        await Promise.all(tasks);
-      } catch (e) {
-        console.error('[CatalogosContext] falha no eager load:', e);
-      }
-    })();
-
-    return () => { cancelado = true; };
-  }, [empresaAtualId]);
+    const gen = genRef.current;
+    if (produtos === null && !fetchingRef.current.produtos) {
+      fetchingRef.current.produtos = true;
+      getAllDocsPaged(col('produtos'))
+        .then(lista => { if (genRef.current === gen) setProdutos(lista); })
+        .catch(e => console.error('[CatalogosContext] falha ao carregar produtos:', e))
+        // Só libera a flag se ainda for a geração dona dela — um fetch antigo
+        // não pode liberar a flag do fetch novo (dispararia leitura duplicada).
+        .finally(() => { if (genRef.current === gen) fetchingRef.current.produtos = false; });
+    }
+    if (locations === null && !fetchingRef.current.locations) {
+      fetchingRef.current.locations = true;
+      getAllDocsPaged(col('locations'))
+        .then(lista => { if (genRef.current === gen) setLocations(lista); })
+        .catch(e => console.error('[CatalogosContext] falha ao carregar locations:', e))
+        .finally(() => { if (genRef.current === gen) fetchingRef.current.locations = false; });
+    }
+  }, [empresaAtualId, rid, produtos, locations]);
 
   // ─── Helpers lazy ───────────────────────────────────────────────────────
   const obterPickingConfig = useCallback(async () => {
