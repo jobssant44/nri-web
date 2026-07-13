@@ -34,13 +34,18 @@ export function RelatoriosMPDProvider({ children }) {
   const [carregando,     setCarregando]     = useState(false);
   const [erro,           setErro]           = useState(null);
 
-  // Evita re-entrada se o useEffect dispara várias vezes (StrictMode/foco)
-  const fetchingRef = useRef(false);
+  // Geração do cache: incrementa a cada troca de usuário/revenda. Fetch em voo
+  // carrega a geração em que nasceu — se mudou quando resolve, é descartado
+  // (era da revenda anterior). fetchingGenRef marca qual geração tem fetch em
+  // voo (uma geração antiga em voo não bloqueia o fetch da nova).
+  const genRef = useRef(0);
+  const fetchingGenRef = useRef(-1);
 
   const carregar = useCallback(async () => {
-    if (fetchingRef.current) return;
     if (!usuario) return; // sem auth, nem tenta — evita read sem permissão
-    fetchingRef.current = true;
+    const gen = genRef.current;
+    if (fetchingGenRef.current === gen) return; // já tem fetch desta geração
+    fetchingGenRef.current = gen;
     setCarregando(true);
     setErro(null);
     try {
@@ -49,6 +54,7 @@ export function RelatoriosMPDProvider({ children }) {
         getDoc(docRef('metas_mpd', rid || 'global')),
         getDocs(col('relatoriomotoristas')),
       ]);
+      if (genRef.current !== gen) return; // resultado de revenda/usuário antigo
 
       const novasLinhas = snapLinhas.docs.map(d => d.data());
 
@@ -69,34 +75,40 @@ export function RelatoriosMPDProvider({ children }) {
       setMotoristasMap(mmap);
       setMetas(novasMetas);
     } catch (e) {
-      setErro(e);
+      if (genRef.current === gen) setErro(e);
       console.warn('[RelatoriosMPDContext] erro ao carregar:', e?.message || e);
     } finally {
-      setCarregando(false);
-      fetchingRef.current = false;
+      if (genRef.current === gen) setCarregando(false);
+      if (fetchingGenRef.current === gen) fetchingGenRef.current = -1;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usuario, rid]);
 
-  // Eager load — carrega 1× quando o usuário loga (igual CatalogosContext)
+  // Reset quando usuário OU revenda mudam — os dados são por revenda
+  // (colRevenda), então trocar de revenda invalida o cache. Antes só o
+  // logout resetava: trocar revenda deixava dados STALE da revenda anterior.
   useEffect(() => {
-    if (!usuario) {
-      // Logout / troca de usuário → reseta cache
-      setLinhas(null);
-      setMotoristasMap(null);
-      setMetas(null);
-      return;
-    }
-    if (linhas === null && !fetchingRef.current) {
-      carregar();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    genRef.current += 1;
+    setLinhas(null);
+    setMotoristasMap(null);
+    setMetas(null);
   }, [usuario, rid]);
 
-  // Botão "Atualizar" das páginas chama isso — força refetch
+  // Carrega sempre que o cache estiver vazio (mount, pós-reset, recarregar()).
+  // Auto-recuperável: antes o recarregar() zerava `linhas` esperando este
+  // efeito re-executar, mas `linhas` não estava nas deps — o botão Atualizar
+  // deixava as telas MPD vazias pra sempre (bug corrigido em 2026-07-13).
+  useEffect(() => {
+    if (!usuario) return;
+    if (linhas === null) carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usuario, rid, linhas, carregar]);
+
+  // Força refetch (pós-importação e botão "Atualizar" das páginas)
   const recarregar = useCallback(() => {
-    if (fetchingRef.current) return;
-    setLinhas(null);   // dispara o useEffect acima → carregar()
+    setLinhas(null);
+    setMotoristasMap(null);
+    setMetas(null);
   }, []);
 
   return (

@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
+import { useRelatoriosMPD } from '../../context/RelatoriosMPDContext';
 import * as XLSX from 'xlsx';
 
 // ─── Campos do relatório 03.11.20 ────────────────────────────────────────────
@@ -166,6 +167,7 @@ function extrairLinhas(rows, campos, pularHeader, filtroPlaca) {
 
 function Card031120() {
   const { col, db, stamp } = useDb();
+  const { recarregar } = useRelatoriosMPD();
   const [fase, setFase] = useState('idle');
   const [mensagem, setMensagem] = useState('');
   const [dados, setDados] = useState(null);
@@ -227,6 +229,7 @@ function Card031120() {
       setMensagem(`${dados.total} linha(s) salvas com sucesso.`);
       setDados(null);
       if (inputRef.current) inputRef.current.value = '';
+      recarregar(); // invalida o cache das telas MPD (EFC/EFD/TI/Histograma)
     } catch (err) {
       setFase('erro');
       setMensagem(`Erro ao salvar: ${err.message}`);
@@ -322,6 +325,7 @@ function Card031120() {
 
 function CardMotoristas() {
   const { col, db, stamp } = useDb();
+  const { recarregar } = useRelatoriosMPD();
   const [fase, setFase] = useState('idle');
   const [mensagem, setMensagem] = useState('');
   const [dados, setDados] = useState(null);
@@ -383,6 +387,7 @@ function CardMotoristas() {
       setMensagem(`${dados.total} motorista(s) salvo(s) com sucesso.`);
       setDados(null);
       if (inputRef.current) inputRef.current.value = '';
+      recarregar(); // invalida o cache das telas MPD (EFC/EFD/TI/Histograma)
     } catch (err) {
       setFase('erro');
       setMensagem(`Erro ao salvar: ${err.message}`);
