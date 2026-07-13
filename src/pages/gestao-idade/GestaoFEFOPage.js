@@ -3,7 +3,7 @@ import { updateDoc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
 import { useUser } from '../../context/UserContext';
 import { NIVEIS_SUPERVISOR } from '../admin/ConfigurarEmpresaPage';
-import { useSessionFilter } from '../../hooks/useSessionFilter';
+import { useLocalFilter } from '../../hooks/useLocalFilter';
 import {
   D, PageContainer, PageHeader, EmptyState, FilterBar, FilterField,
   BotaoClear, sInput, tdStyle,
@@ -154,18 +154,18 @@ export default function GestaoFEFOPage() {
   const [modoEdicao, setModoEdicao] = useState(false); // toggle do topo: mostra ações (editar/excluir) por linha
 
   // Filtros
-  const [dataContagemSel, setDataContagemSel] = useSessionFilter('fefo:data', '');
-  const [filtroBusca, setFiltroBusca] = useSessionFilter('fefo:busca', '');
-  const [filtroLocal, setFiltroLocal] = useSessionFilter('fefo:local', 'Todos');
-  const [filtroCurva, setFiltroCurva] = useSessionFilter('fefo:curva', 'Todas');
-  const [filtroEmbalagem, setFiltroEmbalagem] = useSessionFilter('fefo:emb', 'Todas');
-  const [filtroStatus, setFiltroStatus] = useSessionFilter('fefo:status', 'Todos');
-  const [filtroShelfLife60, setFiltroShelfLife60] = useSessionFilter('fefo:sl60', false);
-  const [sortKey, setSortKey] = useSessionFilter('fefo:sortKey', 'prazo');
-  const [sortDir, setSortDir] = useSessionFilter('fefo:sortDir', 'asc');
+  const [dataContagemSel, setDataContagemSel] = useLocalFilter('fefo:data', '');
+  const [filtroBusca, setFiltroBusca] = useLocalFilter('fefo:busca', '');
+  const [filtroLocal, setFiltroLocal] = useLocalFilter('fefo:local', 'Todos');
+  const [filtroCurva, setFiltroCurva] = useLocalFilter('fefo:curva', 'Todas');
+  const [filtroEmbalagem, setFiltroEmbalagem] = useLocalFilter('fefo:emb', 'Todas');
+  const [filtroStatus, setFiltroStatus] = useLocalFilter('fefo:status', 'Todos');
+  const [filtroShelfLife60, setFiltroShelfLife60] = useLocalFilter('fefo:sl60', false);
+  const [sortKey, setSortKey] = useLocalFilter('fefo:sortKey', 'prazo');
+  const [sortDir, setSortDir] = useLocalFilter('fefo:sortDir', 'asc');
   // Janela da Venda Média (default: últimos 30 dias)
-  const [vendaInicio, setVendaInicio] = useSessionFilter('fefo:vmInicio', '');
-  const [vendaFim,    setVendaFim]    = useSessionFilter('fefo:vmFim',    '');
+  const [vendaInicio, setVendaInicio] = useLocalFilter('fefo:vmInicio', '');
+  const [vendaFim,    setVendaFim]    = useLocalFilter('fefo:vmFim',    '');
 
   // Recarrega quando muda a janela da Venda Média (recalcula vendaMap + cobertura)
   // eslint-disable-next-line react-hooks/exhaustive-deps

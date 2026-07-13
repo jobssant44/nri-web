@@ -4,7 +4,7 @@ import {
   Tooltip, ResponsiveContainer, BarChart, LabelList, Cell,
 } from 'recharts';
 import { useDb } from '../../utils/db';
-import { useSessionFilter } from '../../hooks/useSessionFilter';
+import { useLocalFilter } from '../../hooks/useLocalFilter';
 import {
   D, PageContainer, PageHeader, EmptyState, ChartCard,
   KPICardPrimary, KPICardSecondary, FilterBar, FilterField, sInput, tdStyle,
@@ -22,7 +22,7 @@ export default function EstoquePickingPage() {
   const [linhas, setLinhas] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const [dataContagemSel, setDataContagemSel] = useSessionFilter('exp:data', '');
+  const [dataContagemSel, setDataContagemSel] = useLocalFilter('exp:data', '');
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { carregar(); }, []);

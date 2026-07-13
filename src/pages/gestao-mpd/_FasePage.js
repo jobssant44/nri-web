@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useRelatoriosMPD } from '../../context/RelatoriosMPDContext';
+import { useLocalFilter } from '../../hooks/useLocalFilter';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
@@ -1076,10 +1077,11 @@ export default function FasePage({ fase, faseCodigo: faseCod }) {
   const carregando = !pronto;
 
   // Filtros / UI continuam locais (estado de tela, não dado de servidor)
-  const [filtros, setFiltros]       = useState(FILTROS_VAZIOS);
-  const [busca, setBusca]               = useState('');
-  const [ordenacao, setOrdenacao]       = useState({ campo: 'dataEmissao', direcao: 'desc' });
-  const [janelaDias, setJanelaDias]     = useState('mes');
+  // Filtros persistidos em localStorage por fase (EFC/EFD não compartilham).
+  const [filtros, setFiltros]       = useLocalFilter(`mpd:fase:${fase}:filtros`, FILTROS_VAZIOS);
+  const [busca, setBusca]               = useLocalFilter(`mpd:fase:${fase}:busca`, '');
+  const [ordenacao, setOrdenacao]       = useLocalFilter(`mpd:fase:${fase}:ordenacao`, { campo: 'dataEmissao', direcao: 'desc' });
+  const [janelaDias, setJanelaDias]     = useLocalFilter(`mpd:fase:${fase}:janela`, 'mes');
 
   // Metas derivadas de `metas` + `fase`. Antes setávamos em 4 useState dentro
   // do useEffect do fetch; agora memo-derivado é mais simples e re-roda

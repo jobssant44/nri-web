@@ -19,9 +19,10 @@
 // MultiSelectDropdown, ChartCard, etc.) pra manter consistência visual com EFC/EFD/TI.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useMemo, useCallback } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useRelatoriosMPD } from '../../context/RelatoriosMPDContext';
+import { useLocalFilter } from '../../hooks/useLocalFilter';
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, LabelList, Cell,
@@ -152,10 +153,11 @@ export default function HistogramaPage() {
   const { linhas, pronto } = useRelatoriosMPD();
   const carregando = !pronto;
   // faseId controla o card ativo. Default: 'carregamento'.
-  const [faseId, setFaseId]         = useState('carregamento');
+  const [faseId, setFaseId]         = useLocalFilter('mpd:histograma:faseId', 'carregamento');
   // Filtros globais: frota (multi), data início/fim. Mesma estrutura usada
   // nas páginas TI/EFC/EFD pra consistência (importado FILTROS_VAZIOS).
-  const [filtros, setFiltros]       = useState(FILTROS_VAZIOS);
+  // Persistido em localStorage.
+  const [filtros, setFiltros]       = useLocalFilter('mpd:histograma:filtros', FILTROS_VAZIOS);
 
   // Fase ativa (objeto completo). Sempre tem 1 — default 'carregamento'.
   const faseAtiva = useMemo(
@@ -201,7 +203,7 @@ export default function HistogramaPage() {
 
   const setGlobal = useCallback((campo, valor) => {
     setFiltros(f => ({ ...f, [campo]: valor }));
-  }, []);
+  }, [setFiltros]);
 
   const temFiltro = !!(filtros.frota?.length || filtros.dataInicio || filtros.dataFim);
 

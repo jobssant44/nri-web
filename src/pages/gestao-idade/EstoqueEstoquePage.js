@@ -4,7 +4,7 @@ import {
   XAxis, YAxis, Tooltip, ResponsiveContainer, LabelList,
 } from 'recharts';
 import { useDb } from '../../utils/db';
-import { useSessionFilter } from '../../hooks/useSessionFilter';
+import { useLocalFilter } from '../../hooks/useLocalFilter';
 import {
   D, PageContainer, PageHeader, EmptyState, ChartCard,
   KPICardPrimary, KPICardSecondary, FilterBar, FilterField, sInput, tdStyle,
@@ -21,9 +21,9 @@ export default function EstoqueEstoquePage() {
   const [linhas, setLinhas] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const [filtroLocal, setFiltroLocal] = useSessionFilter('eee:local', 'Estoque');
-  const [filtroCurva, setFiltroCurva] = useSessionFilter('eee:curva', 'Todas');
-  const [filtroData, setFiltroData] = useSessionFilter('eee:data', '');
+  const [filtroLocal, setFiltroLocal] = useLocalFilter('eee:local', 'Estoque');
+  const [filtroCurva, setFiltroCurva] = useLocalFilter('eee:curva', 'Todas');
+  const [filtroData, setFiltroData] = useLocalFilter('eee:data', '');
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { carregar(); }, []);

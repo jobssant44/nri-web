@@ -29,6 +29,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useRelatoriosMPD } from '../../context/RelatoriosMPDContext';
+import { useLocalFilter } from '../../hooks/useLocalFilter';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine, Brush,
@@ -539,10 +540,11 @@ export default function TIBasePage({ tipo = 'total' }) {
   const carregando = !pronto;
 
   // Estado local de UI (filtros, ordenação, busca) — não vem do servidor
-  const [filtros, setFiltros]       = useState(FILTROS_VAZIOS);
-  const [busca, setBusca]               = useState('');
-  const [ordenacao, setOrdenacao]       = useState({ campo: 'dataEmissao', direcao: 'desc' });
-  const [janelaDias, setJanelaDias]     = useState('mes');
+  // Filtros persistidos em localStorage por tipo de TI (total/físico/financeiro).
+  const [filtros, setFiltros]       = useLocalFilter(`mpd:ti:${tipo}:filtros`, FILTROS_VAZIOS);
+  const [busca, setBusca]               = useLocalFilter(`mpd:ti:${tipo}:busca`, '');
+  const [ordenacao, setOrdenacao]       = useLocalFilter(`mpd:ti:${tipo}:ordenacao`, { campo: 'dataEmissao', direcao: 'desc' });
+  const [janelaDias, setJanelaDias]     = useLocalFilter(`mpd:ti:${tipo}:janela`, 'mes');
 
   // Metas derivadas do Context. Memo-derivado em vez de useState+effect —
   // re-roda quando `metas` ou `tipo` mudam.
@@ -694,10 +696,10 @@ export default function TIBasePage({ tipo = 'total' }) {
   // ── Filtros (handlers de toggle e set) ──
   const setGlobal = useCallback((campo, valor) => {
     setFiltros(f => ({ ...f, [campo]: valor }));
-  }, []);
+  }, [setFiltros]);
   const toggle = useCallback((campo, valor, event) => {
     setFiltros(f => ({ ...f, [campo]: toggleMulti(f[campo], valor, event) }));
-  }, []);
+  }, [setFiltros]);
 
   const temFiltroGlobal = !!(filtros.frota?.length || filtros.conferente?.length || filtros.caixa?.length || filtros.dataInicio || filtros.dataFim);
   const temFiltroChart  = !!(filtros.data || filtros.motorista || filtros.placa);

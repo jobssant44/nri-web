@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, ReferenceLine, Cell, LabelList,
 } from 'recharts';
 import { useDb } from '../../utils/db';
-import { useSessionFilter } from '../../hooks/useSessionFilter';
+import { useLocalFilter } from '../../hooks/useLocalFilter';
 import {
   D, PageContainer, PageHeader, EmptyState, ChartCard,
   KPICardPrimary, KPICardSecondary, FilterBar, FilterField, sInput, tdStyle,
@@ -24,8 +24,8 @@ export default function StockAgeIndexPage() {
   const [linhas, setLinhas] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const [anoSel, setAnoSel] = useSessionFilter('sai:ano', '');
-  const [mesSel, setMesSel] = useSessionFilter('sai:mes', '');
+  const [anoSel, setAnoSel] = useLocalFilter('sai:ano', '');
+  const [mesSel, setMesSel] = useLocalFilter('sai:mes', '');
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { carregar(); }, []);
