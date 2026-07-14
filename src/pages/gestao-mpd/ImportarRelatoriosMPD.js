@@ -1,8 +1,9 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
+import { addDoc, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { useDb } from '../../utils/db';
 import { useRelatoriosMPD } from '../../context/RelatoriosMPDContext';
+import { HistoricoImportacoes } from '../../modules/importacoes/HistoricoImportacoes';
 import * as XLSX from 'xlsx';
 
 // ─── Campos do relatório 03.11.20 ────────────────────────────────────────────
@@ -168,6 +169,7 @@ function extrairLinhas(rows, campos, pularHeader, filtroPlaca) {
 function Card031120() {
   const { col, db, stamp } = useDb();
   const { recarregar } = useRelatoriosMPD();
+  const [reloadHist, setReloadHist] = useState(0);
   const [fase, setFase] = useState('idle');
   const [mensagem, setMensagem] = useState('');
   const [dados, setDados] = useState(null);
@@ -207,27 +209,31 @@ function Card031120() {
     setFase('salvando');
     setMensagem('');
     try {
+      // Formato NOVO (padrão do 03.02.37 desde 2026-07-13): 1 doc por
+      // importação com `linhas[]` — o Histórico enxerga e permite excluir.
+      // Grava PRIMEIRO — se falhar, os dados antigos continuam intactos.
+      await addDoc(col('relatorio031120'), {
+        importadoEm: new Date(),
+        nomeArquivo: dados.nomeArquivo,
+        totalLinhas: dados.total,
+        linhas: dados.linhas,
+        ...stamp(),
+      });
+
+      // Migração implícita: apaga docs no formato antigo (1 por linha, sem
+      // `linhas[]`). Só roda depois do addDoc ter sucesso.
       const snap = await getDocs(col('relatorio031120'));
-      for (let i = 0; i < snap.docs.length; i += 450) {
+      const antigos = snap.docs.filter(d => !Array.isArray(d.data().linhas));
+      for (let i = 0; i < antigos.length; i += 450) {
         const batch = writeBatch(db);
-        snap.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
+        antigos.slice(i, i + 450).forEach(d => batch.delete(d.ref));
         await batch.commit();
       }
-      for (let i = 0; i < dados.linhas.length; i += 450) {
-        const batch = writeBatch(db);
-        dados.linhas.slice(i, i + 450).forEach(linha => {
-          batch.set(doc(col('relatorio031120')), {
-            ...linha,
-            importadoEm: new Date().toISOString(),
-            nomeArquivo: dados.nomeArquivo,
-            ...stamp(),
-          });
-        });
-        await batch.commit();
-      }
+
       setFase('salvo');
       setMensagem(`${dados.total} linha(s) salvas com sucesso.`);
       setDados(null);
+      setReloadHist(k => k + 1);
       if (inputRef.current) inputRef.current.value = '';
       recarregar(); // invalida o cache das telas MPD (EFC/EFD/TI/Histograma)
     } catch (err) {
@@ -317,6 +323,13 @@ function Card031120() {
       {fase === 'idle' && (
         <div style={s.placeholder}>Selecione um arquivo CSV ou Excel para visualizar e salvar</div>
       )}
+
+      <HistoricoImportacoes
+        colName="relatorio031120"
+        campoData="dataEmissao"
+        labelPeriodo="Emissão"
+        reloadKey={reloadHist}
+      />
     </div>
   );
 }

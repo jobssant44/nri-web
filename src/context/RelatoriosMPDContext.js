@@ -56,7 +56,17 @@ export function RelatoriosMPDProvider({ children }) {
       ]);
       if (genRef.current !== gen) return; // resultado de revenda/usuário antigo
 
-      const novasLinhas = snapLinhas.docs.map(d => d.data());
+      // Achata a coleção `relatorio031120`:
+      //  - Formato NOVO (padrão 03.02.37 desde 2026-07-13): 1 doc por
+      //    importação, com { linhas: [...] } — espalha em cada linha.
+      //  - Formato ANTIGO (1 doc por linha): mantém back-compat até a próxima
+      //    importação, que migra o dataset apagando os antigos.
+      const novasLinhas = [];
+      snapLinhas.docs.forEach(d => {
+        const dt = d.data();
+        if (Array.isArray(dt.linhas)) novasLinhas.push(...dt.linhas);
+        else novasLinhas.push(dt);
+      });
 
       // Mapa { codigo: nome } com normalização de zeros à esquerda — mesma
       // lógica que estava duplicada nas 3 páginas MPD.
