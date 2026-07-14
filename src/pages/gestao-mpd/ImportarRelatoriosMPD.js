@@ -173,7 +173,56 @@ function Card031120() {
   const [fase, setFase] = useState('idle');
   const [mensagem, setMensagem] = useState('');
   const [dados, setDados] = useState(null);
+  const [qtdAntigos, setQtdAntigos] = useState(null); // docs no formato antigo (sem linhas[])
+  const [checandoAntigos, setChecandoAntigos] = useState(false);
+  const [limpando, setLimpando] = useState(false);
   const inputRef = useRef(null);
+
+  // Detecta se existem docs no formato antigo (1 por linha, sem `linhas[]`).
+  // Rodado sob demanda pelo botão de limpar — não pesa no load da página.
+  async function checarAntigos() {
+    setChecandoAntigos(true);
+    try {
+      const snap = await getDocs(col('relatorio031120'));
+      const n = snap.docs.filter(d => !Array.isArray(d.data().linhas)).length;
+      setQtdAntigos(n);
+    } catch {
+      setQtdAntigos(null);
+    } finally {
+      setChecandoAntigos(false);
+    }
+  }
+
+  async function limparAntigos() {
+    if (!qtdAntigos) return;
+    const ok = window.confirm(
+      `Excluir ${qtdAntigos} linha(s) importada(s) no formato antigo?\n\n` +
+      `São dados que estão nas telas MPD (EFC/EFD/TI) mas NÃO aparecem no ` +
+      `Histórico porque foram gravados antes da mudança de formato.\n\n` +
+      `Após excluir, as telas MPD ficarão vazias até você importar um arquivo novo. Não dá pra desfazer.`
+    );
+    if (!ok) return;
+    setLimpando(true);
+    try {
+      const snap = await getDocs(col('relatorio031120'));
+      const antigos = snap.docs.filter(d => !Array.isArray(d.data().linhas));
+      for (let i = 0; i < antigos.length; i += 450) {
+        const batch = writeBatch(db);
+        antigos.slice(i, i + 450).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+      setQtdAntigos(0);
+      setMensagem(`${antigos.length} linha(s) do formato antigo excluída(s). Importe um arquivo novo para popular as telas.`);
+      setFase('salvo');
+      recarregar();
+      setReloadHist(k => k + 1);
+    } catch (err) {
+      setMensagem(`Erro ao limpar: ${err.message}`);
+      setFase('erro');
+    } finally {
+      setLimpando(false);
+    }
+  }
 
   async function handleArquivo(e) {
     const arquivo = e.target.files?.[0];
@@ -330,6 +379,35 @@ function Card031120() {
         labelPeriodo="Emissão"
         reloadKey={reloadHist}
       />
+
+      {/* Ferramenta de migração — visível só enquanto existem docs no formato antigo.
+          Uma vez limpo, o botão some pra sempre. */}
+      <div style={{ marginTop: 12, padding: '10px 12px', background: '#fefce8', border: '1px solid #fde68a', borderRadius: 8, fontSize: 12, color: '#78350f' }}>
+        {qtdAntigos === null ? (
+          <button
+            onClick={checarAntigos}
+            disabled={checandoAntigos}
+            style={{ background: 'transparent', border: 'none', color: '#78350f', textDecoration: 'underline', cursor: 'pointer', fontSize: 12, padding: 0 }}
+          >
+            {checandoAntigos ? '⏳ Verificando…' : 'Verificar se há importações antigas (não aparecem no histórico)'}
+          </button>
+        ) : qtdAntigos === 0 ? (
+          <span>✓ Sem importações no formato antigo. Tudo aparece no histórico acima.</span>
+        ) : (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>
+              <strong>{qtdAntigos.toLocaleString('pt-BR')}</strong> linha(s) importada(s) antes da mudança de formato — nas telas MPD, mas fora do histórico.
+            </span>
+            <button
+              onClick={limparAntigos}
+              disabled={limpando}
+              style={{ padding: '6px 12px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: limpando ? 'not-allowed' : 'pointer', opacity: limpando ? 0.6 : 1 }}
+            >
+              {limpando ? '⏳ Excluindo…' : '🗑 Excluir tudo'}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
