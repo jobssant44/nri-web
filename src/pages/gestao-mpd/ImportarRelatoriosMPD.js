@@ -36,20 +36,15 @@ function dataParaBR(d) {
   return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 }
 
-// Normaliza string de data pra sempre devolver DD/MM/AAAA, aceitando:
-//   - "AAAA-MM-DD"      (ISO — comum em CSVs novos da AMBEV)
-//   - "AAAA/MM/DD"      (ISO com barra)
-//   - "DD/MM/AAAA"      (BR)
-//   - "DD-MM-AAAA"      (BR com hífen)
-//   - "MM/DD/AAAA"      (US — quando exportado de locale en-US)
-//
-// Estratégia: se primeiro ou segundo número > 12 → desambígua sozinho;
-// se ambos ≤ 12 → assume DD/MM (BR é o padrão do sistema).
-function normalizarStringData(s) {
+// Normaliza string de data pra DD/MM/AAAA. `formato` explícito ('br'|'us')
+// tem prioridade sobre a heurística (usado quando detectarFormatoData decidiu).
+//   - "AAAA-MM-DD" / "AAAA/MM/DD" (ISO — sem ambiguidade)
+//   - "DD/MM/AAAA" (BR)  ou  "MM/DD/AAAA" (US)
+function normalizarStringData(s, formato) {
   if (!s) return s;
   const str = String(s).trim();
 
-  // ── 1) ISO: AAAA-MM-DD ou AAAA/MM/DD (com hora opcional depois)
+  // ── 1) ISO: AAAA-MM-DD (não é ambíguo)
   const iso = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
   if (iso) {
     const ano = iso[1];
@@ -60,36 +55,62 @@ function normalizarStringData(s) {
     }
   }
 
-  // ── 2) PP/SS/AAAA (com barra ou hífen)
+  // ── 2) PP/SS/AAAA (barra ou hífen)
   const m = str.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})$/);
   if (m) {
     const p1 = parseInt(m[1], 10);
     const p2 = parseInt(m[2], 10);
     const ano = m[3];
     let dia, mes;
-    if (p1 > 12)      { dia = p1; mes = p2; }   // DD/MM (BR)
-    else if (p2 > 12) { dia = p2; mes = p1; }   // MM/DD (US) — normaliza
-    else              { dia = p1; mes = p2; }   // ambíguo → DD/MM
+    if (p1 > 12)      { dia = p1; mes = p2; }        // só cabe DD/MM
+    else if (p2 > 12) { dia = p2; mes = p1; }        // só cabe MM/DD
+    else if (formato === 'us') { dia = p2; mes = p1; } // arquivo US detectado
+    else              { dia = p1; mes = p2; }        // default BR (ou 'br')
     if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
       return `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${ano}`;
     }
   }
 
-  return str; // não reconheceu → retorna como veio (parseDataBR no FasePage ainda tenta)
+  return str;
 }
 
-function celulaParaString(val, isDate = false) {
+// Detecta se o arquivo inteiro vem em BR ou US, olhando TODAS as células de
+// data e contando quantas só cabem em cada formato (p1>12 → só BR, p2>12 → só
+// US). Empate ou zero-zero → BR (padrão histórico do app).
+function detectarFormatoData(rows, campos, idxPorCampo, inicio) {
+  let br = 0, us = 0;
+  const camposData = campos.filter(c => c.isDate);
+  for (let i = inicio; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) continue;
+    for (const c of camposData) {
+      const idx = idxPorCampo[c.campo];
+      if (idx < 0) continue;
+      const val = row[idx];
+      if (typeof val !== 'string') continue;
+      const m = String(val).trim().match(/^(\d{1,2})[/\-](\d{1,2})[/\-]\d{4}$/);
+      if (!m) continue;
+      const p1 = +m[1], p2 = +m[2];
+      if (p1 > 12 && p2 <= 12) br++;
+      else if (p2 > 12 && p1 <= 12) us++;
+    }
+  }
+  const fmt = us > br ? 'us' : 'br';
+  console.log(`[Importar 03.11.20] Formato de data detectado: ${fmt.toUpperCase()} (sinais BR=${br}, US=${us}). Datas ambíguas serão interpretadas como ${fmt === 'us' ? 'MM/DD' : 'DD/MM'}.`);
+  return fmt;
+}
+
+function celulaParaString(val, isDate = false, formato) {
   if (val === null || val === undefined) return '';
-  // Date object (caso cellDates: true em algum momento)
+  // Date object (caso o XLSX entregue como Date apesar do raw:true)
   if (val instanceof Date) return dataParaBR(val);
-  // Serial numérico do Excel
+  // Serial numérico do Excel — origem confiável, sem ambiguidade BR/US
   if (isDate && typeof val === 'number' && val > 1) {
     const d = new Date(Math.round((val - 25569) * 86400 * 1000));
     if (!isNaN(d.getTime())) return dataParaBR(d);
   }
   const str = String(val).trim();
-  // String de data — normaliza MM/DD → DD/MM se necessário
-  if (isDate) return normalizarStringData(str);
+  if (isDate) return normalizarStringData(str, formato);
   return str;
 }
 
@@ -100,9 +121,12 @@ function parsearArquivo(file) {
     reader.onload = (ev) => {
       try {
         const data = new Uint8Array(ev.target.result);
-        const wb = XLSX.read(data, { type: 'array' });
+        // raw:true → não deixa o XLSX aplicar formatação nem virar Date
+        // automágico. Datas viram serial numérico (tratado no celulaParaString)
+        // ou string crua (tratado por normalizarStringData + formato detectado).
+        const wb = XLSX.read(data, { type: 'array', raw: true, cellDates: false });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
         resolve(rows);
       } catch (e) {
         reject(new Error('Erro ao processar o arquivo: ' + e.message));
@@ -147,6 +171,10 @@ function extrairLinhas(rows, campos, pularHeader, filtroPlaca) {
   }
 
   const inicio = pularHeader ? 1 : 0;
+  // Detecta o formato de data do ARQUIVO inteiro antes de parsear linha a
+  // linha. Assim uma célula ambígua como "01/07/2026" ganha a interpretação
+  // certa pelo contexto do arquivo todo (não vira sempre BR default).
+  const formato = detectarFormatoData(rows, campos, idxPorCampo, inicio);
   const linhas = [];
   for (let i = inicio; i < rows.length; i++) {
     const row = rows[i];
@@ -154,7 +182,7 @@ function extrairLinhas(rows, campos, pularHeader, filtroPlaca) {
     const obj = {};
     campos.forEach(({ campo, isDate }) => {
       const idx = idxPorCampo[campo];
-      obj[campo] = idx >= 0 ? celulaParaString(row[idx], isDate) : '';
+      obj[campo] = idx >= 0 ? celulaParaString(row[idx], isDate, formato) : '';
     });
     const vazia = campos.every(({ campo }) => !obj[campo]);
     if (vazia) continue;
@@ -245,6 +273,14 @@ function Card031120() {
         setMensagem('Nenhuma linha com Placa preenchida encontrada (pré-filtro ativo).');
         return;
       }
+      // Diagnóstico: mostra o que veio cru do XLSX vs o que foi gravado —
+      // ajuda a confirmar se o formato de data está saindo certo.
+      console.log('[Importar 03.11.20] Amostra crua do XLSX (primeiras 3 linhas de dados):',
+        rows.slice(1, 4).map(r => ({ Emissao: r[5], DtOper: r[6], tipoEmissao: typeof r[5] }))
+      );
+      console.log('[Importar 03.11.20] Amostra parseada (primeiras 3 linhas):',
+        linhas.slice(0, 3).map(l => ({ dataEmissao: l.dataEmissao, dataOperacao: l.dataOperacao }))
+      );
       setDados({ linhas, total: linhas.length, nomeArquivo: arquivo.name });
       setFase('preview');
     } catch (err) {
